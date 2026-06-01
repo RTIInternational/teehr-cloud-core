@@ -1,0 +1,167 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-bootstrap
+  labels:
+    app: polaris-bootstrap
+spec:
+  ttlSecondsAfterFinished: 100
+  template:
+    metadata:
+      labels:
+        app: polaris-bootstrap
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: polaris-bootstrap
+          image: prefecthq/prefect:3.2.0-python3.10
+          env:
+            - name: POLARIS_MANAGEMENT_URL
+              value: "http://polaris:8181"
+            - name: POLARIS_ROOT_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: root-credentials
+            - name: POLARIS_REALM_NAME
+              value: "teehr"
+          command:
+            - python
+            - -c
+            - |
+              import json
+              import os
+              import sys
+              import requests
+
+              MGMT_URL = os.environ["POLARIS_MANAGEMENT_URL"]
+              ROOT_CREDS = os.environ["POLARIS_ROOT_CREDENTIALS"]
+              REALM = os.environ.get("POLARIS_REALM_NAME", "teehr")
+
+              # Read warehouse path from ConfigMap volume mount
+              with open("/config/warehouse") as f:
+                  WAREHOUSE = f.read().strip()
+
+              username, password = ROOT_CREDS.split(":", 1)
+
+              print(f"[polaris-bootstrap] Authenticating with Polaris management API at {MGMT_URL}")
+
+              # Obtain initial token from Polaris internal token service
+              token_resp = requests.post(
+                  f"{MGMT_URL}/api/catalog/v1/oauth/tokens",
+                  headers={"X-Polaris-Realm": REALM},
+                  data={
+                      "grant_type": "client_credentials",
+                      "client_id": username,
+                      "client_secret": password,
+                      "scope": "PRINCIPAL_ROLE:ALL",
+                  },
+              )
+              token_resp.raise_for_status()
+              token = token_resp.json()["access_token"]
+              print("[polaris-bootstrap] Token obtained successfully")
+
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "X-Polaris-Realm": REALM,
+                  "Content-Type": "application/json",
+              }
+
+              def mgmt(method, path, **kwargs):
+                  url = f"{MGMT_URL}/api/management/v1{path}"
+                  resp = getattr(requests, method)(url, headers=headers, **kwargs)
+                  if resp.status_code not in (200, 201, 204, 409):
+                      print(f"  ERROR {resp.status_code}: {resp.text}", file=sys.stderr)
+                      resp.raise_for_status()
+                  return resp
+
+              # Load ACL config
+              with open("/config/acl-config.json") as f:
+                  config = json.load(f)
+
+              catalog_name = config["catalog"]
+              print(f"[polaris-bootstrap] Creating catalog: {catalog_name}")
+
+              # Create catalog
+              mgmt("post", "/catalogs", json={
+                  "name": catalog_name,
+                  "type": "INTERNAL",
+                  "properties": {"default-base-location": WAREHOUSE},
+                  "storageConfigInfo": {
+                      "storageType": "S3",
+                      "allowedLocations": [WAREHOUSE],
+                  },
+              })
+              print(f"  catalog '{catalog_name}' created (or already exists)")
+
+              # Create catalog-level admin principal role
+              admin_pr = "catalog_admin"
+              mgmt("post", "/principal-roles", json={"name": admin_pr})
+              print(f"  principal role '{admin_pr}' created")
+
+              # Grant catalog admin privileges
+              mgmt("post", f"/catalogs/{catalog_name}/catalog-roles", json={
+                  "name": "catalog_admin_role"
+              })
+              for priv in ["CATALOG_MANAGE_CONTENT", "CATALOG_MANAGE_METADATA"]:
+                  mgmt("put", f"/catalogs/{catalog_name}/catalog-roles/catalog_admin_role/grants", json={
+                      "type": "catalog",
+                      "privilege": priv,
+                  })
+              mgmt("put", f"/principal-roles/{admin_pr}/catalog-roles/{catalog_name}", json={
+                  "name": "catalog_admin_role"
+              })
+              print(f"  catalog admin grants assigned")
+
+              # Process namespaces and roles from ACL config
+              for ns_config in config["namespaces"]:
+                  ns_name = ns_config["name"]
+                  print(f"[polaris-bootstrap] Processing namespace: {ns_name}")
+
+                  # Create namespace in catalog via catalog REST API
+                  ns_resp = requests.post(
+                      f"{MGMT_URL}/api/catalog/v1/{catalog_name}/namespaces",
+                      headers={**headers},
+                      json={"namespace": [ns_name]},
+                  )
+                  if ns_resp.status_code not in (200, 201, 409):
+                      ns_resp.raise_for_status()
+                  print(f"  namespace '{ns_name}' created (or already exists)")
+
+                  for role_config in ns_config["roles"]:
+                      pr_name = role_config["polaris_principal_role"]
+                      cr_name = role_config["polaris_catalog_role"]
+                      privileges = role_config["privileges"]
+
+                      print(f"  creating principal role: {pr_name}, catalog role: {cr_name}")
+
+                      # Create principal role
+                      mgmt("post", "/principal-roles", json={"name": pr_name})
+
+                      # Create catalog role
+                      mgmt("post", f"/catalogs/{catalog_name}/catalog-roles", json={"name": cr_name})
+
+                      # Grant namespace privileges to catalog role
+                      for priv in privileges:
+                          mgmt("put", f"/catalogs/{catalog_name}/catalog-roles/{cr_name}/grants", json={
+                              "type": "namespace",
+                              "namespace": [ns_name],
+                              "privilege": priv,
+                          })
+
+                      # Assign catalog role to principal role
+                      mgmt("put", f"/principal-roles/{pr_name}/catalog-roles/{catalog_name}", json={
+                          "name": cr_name
+                      })
+
+                      print(f"    privileges and catalog role assigned")
+
+              print("[polaris-bootstrap] Bootstrap complete!")
+          volumeMounts:
+            - name: acl-config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: acl-config
+          configMap:
+            name: polaris-acl-config

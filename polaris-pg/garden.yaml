@@ -1,0 +1,12 @@
+kind: Deploy
+type: kubernetes
+name: polaris-database
+description: K8s Deploy Polaris Catalog Database
+dependencies:
+  - deploy.secrets
+environments:
+  - local
+  - remote
+spec:
+  manifestFiles:
+  - ./manifests/polaris-pg.yaml

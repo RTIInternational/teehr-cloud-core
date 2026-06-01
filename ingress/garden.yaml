@@ -70,6 +70,22 @@ dependencies:
 environments:
   - local
   - remote
+---
+kind: Deploy
+type: kubernetes
+name: polaris-ingress
+spec:
+  manifestTemplates:
+    - manifests/polaris.yaml.tpl
+dependencies:
+  - deploy.cert-manager
+  - deploy.letsencrypt
+  - deploy.cert
+  - deploy.contour
+  - deploy.polaris
+environments:
+  - local
+  - remote
 # ---
 # kind: Deploy
 # type: kubernetes

@@ -43,6 +43,16 @@ spec:
                 secretKeyRef:
                   name: teehr-api-secrets
                   key: client-secret
+            - name: TRINO_POLARIS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: trino-polaris-secrets
+                  key: client-secret
+            - name: SPARK_POLARIS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spark-polaris-secrets
+                  key: client-secret
             - name: SMTP_HOST
               valueFrom:
                 configMapKeyRef:

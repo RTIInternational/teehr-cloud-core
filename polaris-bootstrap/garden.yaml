@@ -1,0 +1,32 @@
+kind: Deploy
+type: kubernetes
+name: polaris-acl-config
+description: K8s Deploy Polaris ACL ConfigMap
+dependencies:
+  - deploy.secrets
+environments:
+  - local
+  - remote
+spec:
+  manifestTemplates:
+    - ./manifests/acl-config.yaml.tpl
+---
+kind: Deploy
+type: exec
+name: polaris-bootstrap
+description: Run Polaris bootstrap job to create catalog, namespaces, and ACL grants
+dependencies:
+  - deploy.polaris
+  - deploy.polaris-acl-config
+  - deploy.keycloak-bootstrap
+environments:
+  - local
+  - remote
+spec:
+  deployCommand:
+    - bash
+    - -c
+    - >-
+      kubectl -n "${environment.namespace}" delete job polaris-bootstrap --ignore-not-found=true &&
+      kubectl -n "${environment.namespace}" apply -f ./manifests/bootstrap-job.yaml &&
+      kubectl -n "${environment.namespace}" wait --for=condition=Complete job/polaris-bootstrap --timeout=120s

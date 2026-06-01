@@ -33,7 +33,12 @@ data:
           { "name": "admin" },
           { "name": "basic-user" },
           { "name": "jupyter-user" },
-          { "name": "iceberg-user" }
+          { "name": "iceberg-user" },
+          { "name": "iceberg-catalog-admin" },
+          { "name": "iceberg-namespace-public-read" },
+          { "name": "iceberg-namespace-public-write" },
+          { "name": "iceberg-namespace-restricted-read" },
+          { "name": "iceberg-namespace-restricted-write" }
         ]
       },
       "groups": [
@@ -73,6 +78,26 @@ data:
               "view-realm"
             ]
           }
+        },
+        {
+          "name": "iceberg-public-readers",
+          "realmRoles": ["iceberg-namespace-public-read"]
+        },
+        {
+          "name": "iceberg-public-writers",
+          "realmRoles": ["iceberg-namespace-public-write", "iceberg-namespace-public-read"]
+        },
+        {
+          "name": "iceberg-restricted-readers",
+          "realmRoles": ["iceberg-namespace-restricted-read"]
+        },
+        {
+          "name": "iceberg-restricted-writers",
+          "realmRoles": ["iceberg-namespace-restricted-write", "iceberg-namespace-restricted-read"]
+        },
+        {
+          "name": "iceberg-catalog-admins",
+          "realmRoles": ["iceberg-catalog-admin"]
         }
       ],
       "defaultGroups": [
@@ -164,6 +189,54 @@ data:
           ],
           "webOrigins": [
             "https://prefect.${var.hostname}"
+          ]
+        },
+        {
+          "clientId": "trino-polaris",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "secret": "$(env:TRINO_POLARIS_CLIENT_SECRET)",
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "spark-polaris",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "secret": "$(env:SPARK_POLARIS_CLIENT_SECRET)",
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
           ]
         }
       ]
