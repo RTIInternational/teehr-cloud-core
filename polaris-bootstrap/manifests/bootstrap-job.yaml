@@ -49,7 +49,7 @@ spec:
               # Obtain initial token from Polaris internal token service
               token_resp = requests.post(
                   f"{MGMT_URL}/api/catalog/v1/oauth/tokens",
-                  headers={"X-Polaris-Realm": REALM},
+                  headers={"X-Iceberg-Access-Realm": REALM},
                   data={
                       "grant_type": "client_credentials",
                       "client_id": username,
@@ -63,7 +63,7 @@ spec:
 
               headers = {
                   "Authorization": f"Bearer {token}",
-                  "X-Polaris-Realm": REALM,
+                  "X-Iceberg-Access-Realm": REALM,
                   "Content-Type": "application/json",
               }
 
