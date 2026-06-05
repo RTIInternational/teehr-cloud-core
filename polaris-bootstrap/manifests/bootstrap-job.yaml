@@ -23,8 +23,6 @@ spec:
                 secretKeyRef:
                   name: polaris-secrets
                   key: root-credentials
-            - name: POLARIS_REALM_NAME
-              value: "teehr"
           command:
             - python
             - -c
@@ -32,136 +30,236 @@ spec:
               import json
               import os
               import sys
+
               import requests
 
-              MGMT_URL = os.environ["POLARIS_MANAGEMENT_URL"]
+              MGMT_URL = os.environ.get("POLARIS_MANAGEMENT_URL", "http://polaris:8181")
               ROOT_CREDS = os.environ["POLARIS_ROOT_CREDENTIALS"]
-              REALM = os.environ.get("POLARIS_REALM_NAME", "teehr")
-
-              # Read warehouse path from ConfigMap volume mount
-              with open("/config/warehouse") as f:
-                  WAREHOUSE = f.read().strip()
-
               username, password = ROOT_CREDS.split(":", 1)
 
-              print(f"[polaris-bootstrap] Authenticating with Polaris management API at {MGMT_URL}")
+              SUCCESS_CODES = (200, 201, 204, 409)
 
-              # Obtain initial token from Polaris internal token service
-              token_resp = requests.post(
-                  f"{MGMT_URL}/api/catalog/v1/oauth/tokens",
-                  headers={"X-Iceberg-Access-Realm": REALM},
-                  data={
-                      "grant_type": "client_credentials",
-                      "client_id": username,
-                      "client_secret": password,
-                      "scope": "PRINCIPAL_ROLE:ALL",
-                  },
-              )
-              token_resp.raise_for_status()
-              token = token_resp.json()["access_token"]
-              print("[polaris-bootstrap] Token obtained successfully")
+              def is_duplicate_error(resp):
+                  return resp.status_code == 500 and "duplicate key" in resp.text.lower()
 
-              headers = {
-                  "Authorization": f"Bearer {token}",
-                  "X-Iceberg-Access-Realm": REALM,
-                  "Content-Type": "application/json",
-              }
+              def realm_headers(realm, token=None, content_type="application/json"):
+                  headers = {
+                      "X-Polaris-Realm": realm,
+                  }
+                  if token:
+                      headers["Authorization"] = f"Bearer {token}"
+                  if content_type:
+                      headers["Content-Type"] = content_type
+                  return headers
 
-              def mgmt(method, path, **kwargs):
+              def request_token(realm):
+                  token_resp = requests.post(
+                      f"{MGMT_URL}/api/catalog/v1/oauth/tokens",
+                      headers=realm_headers(realm, content_type="application/x-www-form-urlencoded"),
+                      data={
+                          "grant_type": "client_credentials",
+                          "client_id": username,
+                          "client_secret": password,
+                          "scope": "PRINCIPAL_ROLE:ALL",
+                          "realm": realm,
+                      },
+                  )
+                  token_resp.raise_for_status()
+                  return token_resp.json()["access_token"]
+
+              def mgmt(method, realm, token, path, **kwargs):
                   url = f"{MGMT_URL}/api/management/v1{path}"
-                  resp = getattr(requests, method)(url, headers=headers, **kwargs)
-                  if resp.status_code not in (200, 201, 204, 409):
-                      print(f"  ERROR {resp.status_code}: {resp.text}", file=sys.stderr)
-                      resp.raise_for_status()
+                  resp = getattr(requests, method)(url, headers=realm_headers(realm, token=token), **kwargs)
+
+                  if resp.status_code in SUCCESS_CODES or is_duplicate_error(resp):
+                      return resp
+
+                  print(f"ERROR {resp.status_code}: {resp.text}", file=sys.stderr)
+                  resp.raise_for_status()
                   return resp
 
-              # Load ACL config
-              with open("/config/acl-config.json") as f:
+              def ensure_namespace(realm, token, catalog_name, namespace):
+                  resp = requests.post(
+                      f"{MGMT_URL}/api/catalog/v1/{catalog_name}/namespaces",
+                      headers=realm_headers(realm, token=token),
+                      json={"namespace": [namespace]},
+                  )
+                  if resp.status_code in SUCCESS_CODES or is_duplicate_error(resp):
+                      return
+                  resp.raise_for_status()
+
+              def grant_to_catalog_role(realm, token, catalog_name, catalog_role, grant, fallback_namespace=None):
+                  payload = {
+                      "type": grant["type"],
+                      "privilege": grant["privilege"],
+                  }
+
+                  if grant["type"] in ("namespace", "table"):
+                      namespace = grant.get("namespace") or fallback_namespace
+                      if not namespace:
+                          raise ValueError("Namespace/table grant missing namespace")
+                      payload["namespace"] = [namespace]
+
+                  if grant["type"] == "table":
+                      table_name = grant.get("table")
+                      if not table_name:
+                          raise ValueError("Table grant missing table")
+                      payload["table"] = table_name
+
+                  mgmt(
+                      "put",
+                      realm,
+                      token,
+                      f"/catalogs/{catalog_name}/catalog-roles/{catalog_role}/grants",
+                      json=payload,
+                  )
+
+              def create_role_bindings(realm, token, catalog_name, role_bindings, namespace=None):
+                  for role_cfg in role_bindings:
+                      principal_role = role_cfg["principal_role"]
+                      catalog_role = role_cfg["catalog_role"]
+
+                      mgmt("post", realm, token, "/principal-roles", json={"name": principal_role})
+                      mgmt("post", realm, token, f"/catalogs/{catalog_name}/catalog-roles", json={"name": catalog_role})
+
+                      for grant_cfg in role_cfg.get("grants", []):
+                          for privilege in grant_cfg.get("privileges", []):
+                              grant_to_catalog_role(
+                                  realm,
+                                  token,
+                                  catalog_name,
+                                  catalog_role,
+                                  {
+                                      "type": grant_cfg["type"],
+                                      "namespace": grant_cfg.get("namespace"),
+                                      "table": grant_cfg.get("table"),
+                                      "privilege": privilege,
+                                  },
+                                  fallback_namespace=namespace,
+                              )
+
+                      mgmt(
+                          "put",
+                          realm,
+                          token,
+                          f"/principal-roles/{principal_role}/catalog-roles/{catalog_name}",
+                          json={"name": catalog_role},
+                      )
+
+              with open("/config/acl-config.json", encoding="utf-8") as f:
                   config = json.load(f)
 
-              catalog_name = config["catalog"]
-              print(f"[polaris-bootstrap] Creating catalog: {catalog_name}")
+              realms_cfg = config.get("realms", [])
+              if not realms_cfg:
+                  raise ValueError("acl-config.json must define a non-empty 'realms' list")
 
-              # Create catalog
-              mgmt("post", "/catalogs", json={
-                  "name": catalog_name,
-                  "type": "INTERNAL",
-                  "properties": {"default-base-location": WAREHOUSE},
-                  "storageConfigInfo": {
-                      "storageType": "S3",
-                      "allowedLocations": [WAREHOUSE],
-                  },
-              })
-              print(f"  catalog '{catalog_name}' created (or already exists)")
+              for realm_cfg in realms_cfg:
+                  realm = realm_cfg["realm"]
+                  catalog_name = realm_cfg["catalog"]
+                  warehouse = realm_cfg["warehouse"]
+                  storage_type = realm_cfg.get("storage_type", "S3")
+                  allowed_locations = realm_cfg.get("allowed_locations") or [warehouse]
 
-              # Create catalog-level admin principal role
-              admin_pr = "catalog_admin"
-              mgmt("post", "/principal-roles", json={"name": admin_pr})
-              print(f"  principal role '{admin_pr}' created")
+                  print(f"[polaris-bootstrap] realm={realm} catalog={catalog_name}")
+                  token = request_token(realm)
 
-              # Grant catalog admin privileges
-              mgmt("post", f"/catalogs/{catalog_name}/catalog-roles", json={
-                  "name": "catalog_admin_role"
-              })
-              for priv in ["CATALOG_MANAGE_CONTENT", "CATALOG_MANAGE_METADATA"]:
-                  mgmt("put", f"/catalogs/{catalog_name}/catalog-roles/catalog_admin_role/grants", json={
-                      "type": "catalog",
-                      "privilege": priv,
-                  })
-              mgmt("put", f"/principal-roles/{admin_pr}/catalog-roles/{catalog_name}", json={
-                  "name": "catalog_admin_role"
-              })
-              print(f"  catalog admin grants assigned")
-
-              # Process namespaces and roles from ACL config
-              for ns_config in config["namespaces"]:
-                  ns_name = ns_config["name"]
-                  print(f"[polaris-bootstrap] Processing namespace: {ns_name}")
-
-                  # Create namespace in catalog via catalog REST API
-                  ns_resp = requests.post(
-                      f"{MGMT_URL}/api/catalog/v1/{catalog_name}/namespaces",
-                      headers={**headers},
-                      json={"namespace": [ns_name]},
+                  mgmt(
+                      "post",
+                      realm,
+                      token,
+                      "/catalogs",
+                      json={
+                          "name": catalog_name,
+                          "type": "INTERNAL",
+                          "properties": {"default-base-location": warehouse},
+                          "storageConfigInfo": {
+                              "storageType": storage_type,
+                              "allowedLocations": allowed_locations,
+                          },
+                      },
                   )
-                  if ns_resp.status_code not in (200, 201, 409):
-                      ns_resp.raise_for_status()
-                  print(f"  namespace '{ns_name}' created (or already exists)")
 
-                  for role_config in ns_config["roles"]:
-                      pr_name = role_config["polaris_principal_role"]
-                      cr_name = role_config["polaris_catalog_role"]
-                      privileges = role_config["privileges"]
+                  admin_cfg = realm_cfg.get("admin")
+                  if admin_cfg:
+                      create_role_bindings(
+                          realm,
+                          token,
+                          catalog_name,
+                          [
+                              {
+                                  "principal_role": admin_cfg["principal_role"],
+                                  "catalog_role": admin_cfg.get("catalog_role", "catalog_admin_role"),
+                                  "grants": [
+                                      {
+                                          "type": "catalog",
+                                          "privileges": admin_cfg.get(
+                                              "privileges",
+                                              ["CATALOG_MANAGE_CONTENT", "CATALOG_MANAGE_METADATA"],
+                                          ),
+                                      }
+                                  ],
+                              }
+                          ],
+                      )
 
-                      print(f"  creating principal role: {pr_name}, catalog role: {cr_name}")
+                  namespace_set = set()
+                  for ns_policy in realm_cfg.get("namespace_policies", []):
+                      namespace_set.add(ns_policy["namespace"])
+                  for table_policy in realm_cfg.get("table_policies", []):
+                      namespace_set.add(table_policy["namespace"])
 
-                      # Create principal role
-                      mgmt("post", "/principal-roles", json={"name": pr_name})
+                  for namespace in sorted(namespace_set):
+                      ensure_namespace(realm, token, catalog_name, namespace)
 
-                      # Create catalog role
-                      mgmt("post", f"/catalogs/{catalog_name}/catalog-roles", json={"name": cr_name})
+                  for ns_policy in realm_cfg.get("namespace_policies", []):
+                      create_role_bindings(
+                          realm,
+                          token,
+                          catalog_name,
+                          ns_policy.get("roles", []),
+                          namespace=ns_policy["namespace"],
+                      )
 
-                      # Grant namespace privileges to catalog role
-                      for priv in privileges:
-                          mgmt("put", f"/catalogs/{catalog_name}/catalog-roles/{cr_name}/grants", json={
-                              "type": "namespace",
-                              "namespace": [ns_name],
-                              "privilege": priv,
-                          })
+                  for table_policy in realm_cfg.get("table_policies", []):
+                      table_namespace = table_policy["namespace"]
+                      table_name = table_policy["table"]
+                      normalized_roles = []
 
-                      # Assign catalog role to principal role
-                      mgmt("put", f"/principal-roles/{pr_name}/catalog-roles/{catalog_name}", json={
-                          "name": cr_name
-                      })
+                      for role_cfg in table_policy.get("roles", []):
+                          normalized_roles.append(
+                              {
+                                  "principal_role": role_cfg["principal_role"],
+                                  "catalog_role": role_cfg["catalog_role"],
+                                  "grants": [
+                                      {
+                                          "type": "table",
+                                          "namespace": table_namespace,
+                                          "table": table_name,
+                                          "privileges": grant_cfg.get("privileges", []),
+                                      }
+                                      for grant_cfg in role_cfg.get("grants", [])
+                                  ],
+                              }
+                          )
 
-                      print(f"    privileges and catalog role assigned")
+                      create_role_bindings(
+                          realm,
+                          token,
+                          catalog_name,
+                          normalized_roles,
+                          namespace=table_namespace,
+                      )
 
-              print("[polaris-bootstrap] Bootstrap complete!")
+              print("[polaris-bootstrap] Bootstrap complete")
           volumeMounts:
             - name: acl-config
-              mountPath: /config
+              mountPath: /config/acl-config.json
+              subPath: acl-config.json
               readOnly: true
       volumes:
         - name: acl-config
           configMap:
             name: polaris-acl-config
+            items:
+              - key: acl-config.json
+                path: acl-config.json

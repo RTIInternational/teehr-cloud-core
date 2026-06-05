@@ -29,4 +29,4 @@ spec:
     - >-
       kubectl -n "${environment.namespace}" delete job polaris-bootstrap --ignore-not-found=true &&
       kubectl -n "${environment.namespace}" apply -f ./manifests/bootstrap-job.yaml &&
-      kubectl -n "${environment.namespace}" wait --for=condition=Complete job/polaris-bootstrap --timeout=120s
+      kubectl -n "${environment.namespace}" wait --for=condition=Complete job/polaris-bootstrap --timeout=600s

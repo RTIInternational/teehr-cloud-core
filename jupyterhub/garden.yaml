@@ -150,12 +150,13 @@ spec:
             secretKeyRef:
               name: jupyter-user-secrets
               key: api-key
-        REMOTE_CATALOG_TYPE: ${var.iceberg.catalogType}
-        REMOTE_CATALOG_REST_URI: ${var.iceberg.catalogUri}
-        REMOTE_WAREHOUSE_S3_PATH: ${var.iceberg.catalogWarehouse}
-        REMOTE_CATALOG_S3_ENDPOINT: ${var.iceberg.catalogS3Endpoint}
-        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.iceberg.catalogS3PathStyleAccess}
-        IN_CLUSTER: ${var.iceberg.inCluster}
+        REMOTE_CATALOG_TYPE: ${var.polaris.catalogType}
+        REMOTE_CATALOG_REST_URI: ${var.polaris.catalogUri}
+        REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.catalogWarehouse}
+        REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
+        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
+        IN_CLUSTER: ${var.polaris.inCluster}
+        POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
       extraFiles:
         jupyter_config:
           mountPath: /etc/jupyter/jupyter_notebook_config.py
@@ -332,12 +333,13 @@ spec:
         TEEHR_SPARK_IMAGE: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
         TEEHR_NAMESPACE: ${environment.namespace}
         AWS_REGION: ${var.aws.region}
-        REMOTE_CATALOG_TYPE: ${var.iceberg.catalogType}
-        REMOTE_CATALOG_REST_URI: ${var.iceberg.catalogUri}
-        REMOTE_WAREHOUSE_S3_PATH: ${var.iceberg.catalogWarehouse}
-        REMOTE_CATALOG_S3_ENDPOINT: ${var.iceberg.catalogS3Endpoint}
-        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.iceberg.catalogS3PathStyleAccess}
-        IN_CLUSTER: ${var.iceberg.inCluster}
+        REMOTE_CATALOG_TYPE: ${var.polaris.catalogType}
+        REMOTE_CATALOG_REST_URI: ${var.polaris.catalogUri}
+        REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.catalogWarehouse}
+        REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
+        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
+        IN_CLUSTER: ${var.polaris.inCluster}
+        POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
         TRINO_HOST: ${var.trino.host}
         TRINO_PORT: ${var.trino.port}
         TRINO_CATALOG: ${var.trino.catalog}

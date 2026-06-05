@@ -20,10 +20,6 @@ data:
     polaris.authentication.type=mixed
     polaris.oidc.principal-mapper.name-claim-path=preferred_username
 
-    # In Polaris 1.5.0, mappings are structured as direct lists
-    polaris.oidc.principal-roles-mapper.mappings[0].regex=(.+)
-    polaris.oidc.principal-roles-mapper.mappings[0].replacement=PRINCIPAL_ROLE:$1
-
     # Quarkus OIDC Service Identity Configuration
     quarkus.oidc.application-type=service
     quarkus.oidc.roles.role-claim-path=realm_access/roles

@@ -25,11 +25,16 @@ spec:
         - name: schema-bootstrap
           image: apache/polaris-admin-tool:1.5.0
           imagePullPolicy: IfNotPresent
-          args:
-            - bootstrap
-            - --realm=teehr
-            - -c=teehr,root,secret123
-            - -p
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              ROOT_USER="${ROOT_CREDENTIALS%%:*}"
+              ROOT_PASSWORD="${ROOT_CREDENTIALS#*:}"
+              exec bootstrap \
+                --realm="${POLARIS_BOOTSTRAP_REALM}" \
+                -c="${POLARIS_BOOTSTRAP_REALM},${ROOT_USER},${ROOT_PASSWORD}" \
+                -p
           env:
             # Core persistence assignment
             - name: POLARIS_PERSISTENCE_TYPE
@@ -37,7 +42,14 @@ spec:
             - name: POLARIS_PERSISTENCE_AUTO_BOOTSTRAP_TYPES
               value: relational-jdbc
             - name: POLARIS_REALM_CONTEXT_REALMS
-              value: teehr
+              value: ${var.polaris.realmsCsv}
+            - name: POLARIS_BOOTSTRAP_REALM
+              value: ${var.polaris.defaultRealm}
+            - name: ROOT_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: root-credentials
 
             # FIXED: Explicit lowercase system translations to force Agroal activation
             - name: quarkus_datasource_db-kind
@@ -64,10 +76,8 @@ spec:
           image: apache/polaris:1.5.0
           imagePullPolicy: IfNotPresent
           env:
-            # FIX 1: Force the server runtime to recognize your specific realm!
             - name: POLARIS_REALM_CONTEXT_REALMS
-              value: teehr
-            # Keep main container aligned to the relational-jdbc metastore
+              value: ${var.polaris.realmsCsv}
             - name: POLARIS_PERSISTENCE_TYPE
               value: relational-jdbc
             - name: QUARKUS_DATASOURCE_JDBC_URL
