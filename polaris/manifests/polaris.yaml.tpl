@@ -25,16 +25,11 @@ spec:
         - name: schema-bootstrap
           image: apache/polaris-admin-tool:1.5.0
           imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -ec
-            - |
-              ROOT_USER="${ROOT_CREDENTIALS%%:*}"
-              ROOT_PASSWORD="${ROOT_CREDENTIALS#*:}"
-              exec bootstrap \
-                --realm="${POLARIS_BOOTSTRAP_REALM}" \
-                -c="${POLARIS_BOOTSTRAP_REALM},${ROOT_USER},${ROOT_PASSWORD}" \
-                -p
+          args:
+            - bootstrap
+            - --realm=$(POLARIS_BOOTSTRAP_REALM)
+            - -c=$(POLARIS_BOOTSTRAP_REALM),$(ROOT_USERNAME),$(ROOT_PASSWORD)
+            - -p
           env:
             # Core persistence assignment
             - name: POLARIS_PERSISTENCE_TYPE
@@ -45,13 +40,18 @@ spec:
               value: ${var.polaris.realmsCsv}
             - name: POLARIS_BOOTSTRAP_REALM
               value: ${var.polaris.defaultRealm}
-            - name: ROOT_CREDENTIALS
+            - name: ROOT_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: polaris-secrets
-                  key: root-credentials
+                  key: root-username
+            - name: ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: root-password
 
-            # FIXED: Explicit lowercase system translations to force Agroal activation
+            # Explicit lowercase system translations to force Agroal activation
             - name: quarkus_datasource_db-kind
               value: postgresql
             - name: quarkus_datasource_jdbc_url
