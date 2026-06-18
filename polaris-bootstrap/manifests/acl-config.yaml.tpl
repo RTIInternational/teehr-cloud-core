@@ -88,7 +88,13 @@ data:
               ]
             }
           ],
-          "table_policies": []
+          "table_policies": [],
+          "principals": [
+            {
+              "name": "spark-polaris",
+              "principal_role": "iceberg-catalog-admin"
+            }
+          ]
         }
       ]
     }

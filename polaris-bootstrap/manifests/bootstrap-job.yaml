@@ -23,12 +23,25 @@ spec:
                 secretKeyRef:
                   name: polaris-secrets
                   key: root-credentials
+            - name: KEYCLOAK_URL
+              value: "http://keycloak-service.teehr-hub.svc.cluster.local:8080"
+            - name: KEYCLOAK_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-secrets
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-secrets
+                  key: password
           command:
             - python
             - -c
             - |
               import json
               import os
+              import subprocess
               import sys
 
               import requests
@@ -250,11 +263,35 @@ spec:
                           namespace=table_namespace,
                       )
 
+                  # Sync Keycloak users to Polaris principals via shared script.
+                  # Role assignment is omitted — the OIDC role mapper handles it at auth time.
+                  subprocess.run(
+                      ["python", "/scripts/sync_principals.py"],
+                      check=True,
+                      env={**os.environ, "POLARIS_REALM": realm},
+                  )
+
+                  # Service account principals (static list from acl-config).
+                  # These authenticate via client credentials (not OIDC user tokens),
+                  # so their principal role must be assigned explicitly here.
+                  for principal_cfg in realm_cfg.get("principals", []):
+                      principal_name = principal_cfg["name"]
+                      principal_role = principal_cfg["principal_role"]
+                      print(f"[polaris-bootstrap] Ensuring service principal: {principal_name}")
+                      mgmt("post", realm, token, "/principals",
+                           json={"name": principal_name, "type": "USER", "properties": {}})
+                      mgmt("put", realm, token,
+                           f"/principals/{principal_name}/principal-roles",
+                           json={"name": principal_role})
+
               print("[polaris-bootstrap] Bootstrap complete")
           volumeMounts:
             - name: acl-config
               mountPath: /config/acl-config.json
               subPath: acl-config.json
+              readOnly: true
+            - name: sync-script
+              mountPath: /scripts
               readOnly: true
       volumes:
         - name: acl-config
@@ -263,3 +300,6 @@ spec:
             items:
               - key: acl-config.json
                 path: acl-config.json
+        - name: sync-script
+          configMap:
+            name: polaris-sync-principals-script

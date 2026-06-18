@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-sync-principals-script
+data:
+  sync_principals.py: |
+    """
+    Syncs all enabled Keycloak realm users into Polaris as principal entities.
+    Role assignment is intentionally omitted: the Polaris OIDC role mapper maps
+    realm_access.roles claims to PRINCIPAL_ROLE:<name> at authentication time.
+
+    Required environment variables:
+      POLARIS_MANAGEMENT_URL   e.g. http://polaris:8181
+      POLARIS_ROOT_CREDENTIALS e.g. root:secret (used only to obtain a management token)
+      POLARIS_REALM            e.g. teehr
+      KEYCLOAK_URL             e.g. http://keycloak-service:8080
+      KEYCLOAK_ADMIN_USER      Keycloak admin username
+      KEYCLOAK_ADMIN_PASSWORD  Keycloak admin password
+    """
+    import os
+    import sys
+    import requests
+
+    MGMT_URL = os.environ["POLARIS_MANAGEMENT_URL"]
+    REALM = os.environ["POLARIS_REALM"]
+    ROOT_CREDS = os.environ["POLARIS_ROOT_CREDENTIALS"]
+    KC_URL = os.environ["KEYCLOAK_URL"]
+    KC_ADMIN_USER = os.environ["KEYCLOAK_ADMIN_USER"]
+    KC_ADMIN_PASSWORD = os.environ["KEYCLOAK_ADMIN_PASSWORD"]
+    _root_user, _root_password = ROOT_CREDS.split(":", 1)
+
+
+    def get_polaris_token():
+        resp = requests.post(
+            f"{MGMT_URL}/api/catalog/v1/oauth/tokens",
+            headers={"X-Polaris-Realm": REALM, "Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "client_credentials",
+                "client_id": _root_user,
+                "client_secret": _root_password,
+                "scope": "PRINCIPAL_ROLE:ALL",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+
+    def get_keycloak_token():
+        resp = requests.post(
+            f"{KC_URL}/realms/master/protocol/openid-connect/token",
+            data={
+                "grant_type": "password",
+                "client_id": "admin-cli",
+                "username": KC_ADMIN_USER,
+                "password": KC_ADMIN_PASSWORD,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+
+    def iter_keycloak_users(kc_token):
+        first = 0
+        max_per_page = 100
+        while True:
+            resp = requests.get(
+                f"{KC_URL}/admin/realms/{REALM}/users",
+                headers={"Authorization": f"Bearer {kc_token}"},
+                params={"first": first, "max": max_per_page, "enabled": "true"},
+            )
+            resp.raise_for_status()
+            page = resp.json()
+            if not page:
+                break
+            yield from page
+            if len(page) < max_per_page:
+                break
+            first += max_per_page
+
+
+    def ensure_principal(polaris_token, principal_name):
+        resp = requests.post(
+            f"{MGMT_URL}/api/management/v1/principals",
+            headers={
+                "X-Polaris-Realm": REALM,
+                "Authorization": f"Bearer {polaris_token}",
+                "Content-Type": "application/json",
+            },
+            json={"name": principal_name, "type": "USER", "properties": {}},
+        )
+        if resp.status_code in (200, 201, 204, 409):
+            return
+        print(f"ERROR creating principal '{principal_name}': {resp.status_code} {resp.text}", file=sys.stderr)
+        resp.raise_for_status()
+
+
+    polaris_token = get_polaris_token()
+    kc_token = get_keycloak_token()
+
+    synced = 0
+    for user in iter_keycloak_users(kc_token):
+        name = user.get("username")
+        if name:
+            ensure_principal(polaris_token, name)
+            synced += 1
+
+    print(f"[polaris-principal-sync] Synced {synced} principals from Keycloak realm '{REALM}'")

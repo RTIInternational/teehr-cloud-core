@@ -1,7 +1,7 @@
 kind: Deploy
 type: kubernetes
 name: polaris-acl-config
-description: K8s Deploy Polaris ACL ConfigMap
+description: K8s Deploy Polaris ACL ConfigMap and shared sync script
 dependencies:
   - deploy.secrets
 environments:
@@ -10,6 +10,21 @@ environments:
 spec:
   manifestTemplates:
     - ./manifests/acl-config.yaml.tpl
+    - ./manifests/polaris-sync-principals-script.yaml
+---
+kind: Deploy
+type: kubernetes
+name: polaris-principal-sync
+description: CronJob that syncs enabled Keycloak users to Polaris principals every 5 minutes
+dependencies:
+  - deploy.secrets
+  - deploy.polaris-bootstrap
+environments:
+  - local
+  - remote
+spec:
+  manifestTemplates:
+    - ./manifests/polaris-principal-sync-cronjob.yaml.tpl
 ---
 kind: Deploy
 type: exec

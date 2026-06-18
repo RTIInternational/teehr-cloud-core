@@ -21,15 +21,38 @@ spec:
         app: polaris
     spec:
       serviceAccountName: polaris
+      ${if environment.name == "local"}
+      hostAliases:
+        - ip: "${var.polaris.keycloakIngressIp}"
+          hostnames:
+            - "auth.${var.hostname}"
+      ${endif}
       initContainers:
         - name: schema-bootstrap
           image: apache/polaris-admin-tool:1.5.0
           imagePullPolicy: IfNotPresent
-          args:
-            - bootstrap
-            - --realm=$(POLARIS_BOOTSTRAP_REALM)
-            - -c=$(POLARIS_BOOTSTRAP_REALM),$(ROOT_USERNAME),$(ROOT_PASSWORD)
-            - -p
+          command:
+            - /bin/sh
+            - -c
+            - |
+              JAR=/deployments/polaris-admin-tool.jar
+              echo "Found jar: $JAR"
+              OUTPUT=$(java $JAVA_OPTS -jar "$JAR" bootstrap \
+                --realm="$POLARIS_BOOTSTRAP_REALM" \
+                -c "$POLARIS_BOOTSTRAP_REALM,$ROOT_USERNAME,$ROOT_PASSWORD" \
+                -p 2>&1)
+              EXIT_CODE=$?
+              echo "$OUTPUT"
+              if [ $EXIT_CODE -eq 0 ]; then
+                echo "Bootstrap succeeded."
+                exit 0
+              fi
+              if echo "$OUTPUT" | grep -q "already been bootstrapped"; then
+                echo "Metastore already bootstrapped — skipping."
+                exit 0
+              fi
+              echo "Bootstrap failed with unexpected error (exit code $EXIT_CODE)."
+              exit $EXIT_CODE
           env:
             # Core persistence assignment
             - name: POLARIS_PERSISTENCE_TYPE
@@ -94,7 +117,7 @@ spec:
                   key: password
             ${if environment.name == "local"}
             - name: QUARKUS_OIDC_AUTH_SERVER_URL
-              value: ${var.polaris.oauthServerUri}
+              value: ${var.polaris.oidcIssuerUri}
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -112,7 +135,7 @@ spec:
             ${endif}
             ${if environment.name != "local"}
             - name: QUARKUS_OIDC_AUTH_SERVER_URL
-              value: ${var.polaris.oauthServerUri}
+              value: ${var.polaris.oidcIssuerUri}
             ${endif}
             - name: AWS_REGION
               value: us-east-2
