@@ -1,0 +1,37 @@
+kind: Deploy
+type: helm
+name: cert-manager
+environments:
+  - local
+spec:
+  chart:
+    name: cert-manager
+    repo: https://charts.jetstack.io
+    version: "v1.12.0"
+  namespace: cert-manager
+  values:
+    installCRDs: true
+---
+kind: Deploy
+type: kubernetes
+name: letsencrypt
+description: K8s Lets Encrypt
+spec:
+  manifestFiles:
+    - "./manifests/letsencrypt-self-signed.yaml"
+dependencies:
+  - deploy.cert-manager
+environments:
+  - local
+---
+kind: Deploy
+type: kubernetes
+name: cert
+description: K8s Cert
+spec:
+  manifestTemplates:
+    - "./manifests/cert.yaml.tpl"
+dependencies:
+  - deploy.letsencrypt
+environments:
+  - local

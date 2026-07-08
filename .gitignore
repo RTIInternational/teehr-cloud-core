@@ -1,0 +1,13 @@
+.env
+secret-config.yaml
+.terraform
+.DS_Store
+.garden
+.venv/
+data/
+.ipynb_checkpoints
+secrets.remote.yaml
+secrets.remote.yaml:Zone.Identifier
+__pycache__/
+.python-version
+*.egg-info
