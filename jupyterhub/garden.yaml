@@ -781,11 +781,11 @@ spec:
           environment:
             TEEHR_PROJECT_ID: "FFF"
 
-    # prePuller:
-    #   hook:
-    #     enabled: false
-    #   continuous:
-    #     enabled: false
+    prePuller:
+      hook:
+        enabled: false
+      continuous:
+        enabled: false
 
     scheduling:
       userScheduler:
