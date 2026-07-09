@@ -7,7 +7,7 @@ spec:
   dnsNames:
   - hub.${var.hostname}
   issuerRef:
-    name: letsencrypt-prod
+    name: ${var.certificateIssuerName}
     kind: ClusterIssuer
   secretName: hub.${var.hostname}-tls
 ---
@@ -20,22 +20,9 @@ spec:
   dnsNames:
   - minio.${var.hostname}
   issuerRef:
-    name: letsencrypt-prod
+    name: ${var.certificateIssuerName}
     kind: ClusterIssuer
   secretName: minio.${var.hostname}-tls
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: ${var.hostname}-panel-cert
-spec:
-  commonName: panel.${var.hostname}
-  dnsNames:
-  - panel.${var.hostname}
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  secretName: panel.${var.hostname}-tls
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -46,22 +33,9 @@ spec:
   dnsNames:
   - api.${var.hostname}
   issuerRef:
-    name: letsencrypt-prod
+    name: ${var.certificateIssuerName}
     kind: ClusterIssuer
   secretName: api.${var.hostname}-tls
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: ${var.hostname}-dashboards-cert
-spec:
-  commonName: dashboards.${var.hostname}
-  dnsNames:
-  - dashboards.${var.hostname}
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  secretName: dashboards.${var.hostname}-tls
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -72,7 +46,7 @@ spec:
   dnsNames:
   - auth.${var.hostname}
   issuerRef:
-    name: letsencrypt-prod
+    name: ${var.certificateIssuerName}
     kind: ClusterIssuer
   secretName: auth.${var.hostname}-tls
 ---
@@ -85,6 +59,6 @@ spec:
   dnsNames:
   - prefect.${var.hostname}
   issuerRef:
-    name: letsencrypt-prod
+    name: ${var.certificateIssuerName}
     kind: ClusterIssuer
   secretName: prefect.${var.hostname}-tls
