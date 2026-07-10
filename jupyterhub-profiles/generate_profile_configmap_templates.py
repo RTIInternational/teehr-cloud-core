@@ -35,28 +35,20 @@ def render_template(source_json: Path, output_tpl: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--base-dir",
+        "--spec",
         type=Path,
-        default=Path(__file__).resolve().parent,
-        help="Base directory containing profile JSON and manifests/",
+        required=True,
+        help="Path to input profile-list JSON",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Path to output ConfigMap template",
     )
     args = parser.parse_args()
 
-    base_dir = args.base_dir
-    templates_to_render = [
-        (
-            base_dir / "profile-list.local.json",
-            base_dir / "manifests" / "jupyterhub-profile-list-local.configmap.yaml.tpl",
-        ),
-        (
-            base_dir / "profile-list.remote.json",
-            base_dir / "manifests" / "jupyterhub-profile-list-remote.configmap.yaml.tpl",
-        ),
-    ]
-
-    for source_json, output_tpl in templates_to_render:
-        if source_json.exists():
-            render_template(source_json=source_json, output_tpl=output_tpl)
+    render_template(source_json=args.spec, output_tpl=args.out)
     return 0
 
 

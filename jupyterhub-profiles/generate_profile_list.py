@@ -181,28 +181,22 @@ def generate(specs_path: Path, out_path: Path) -> None:
 
 
 def main() -> int:
-    default_specs_candidates = [
-        Path("jupyterhub-profiles/profile-list.remote.projects.json"),
-        Path("jupyterhub-profiles/profile-list.example.projects.json"),
-    ]
-    default_specs = next((p for p in default_specs_candidates if p.exists()), default_specs_candidates[0])
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--specs",
+        "--spec",
         type=Path,
-        default=default_specs,
+        required=True,
         help="Path to project specs JSON",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("jupyterhub-profiles/profile-list.remote.json"),
+        required=True,
         help="Output profile list path",
     )
     args = parser.parse_args()
 
-    generate(args.specs, args.out)
+    generate(args.spec, args.out)
     return 0
 
 
