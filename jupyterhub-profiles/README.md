@@ -1,6 +1,7 @@
 # JupyterHub Profile List Contract
 
-This directory defines the client-owned profile contract for JupyterHub spawn options.
+This directory defines the shared profile contract and baseline generators for
+JupyterHub spawn options.
 
 ## Why this exists
 
@@ -25,9 +26,22 @@ Minimum required key per profile:
 
 Everything else is passed through to JupyterHub/KubeSpawner unchanged.
 
-## Delivery pattern for client repos
+## Repository roles
 
-Recommended pattern in a client repo:
+This module is now split across repositories:
+
+- `teehr-cloud-core/jupyterhub-profiles` owns:
+   - Contract shape and validation expectations.
+   - Generator logic (`generate_profile_list_remote.py`,
+      `generate_profile_configmap_templates.py`).
+   - Local payload (`profile-list.local.json`) and local ConfigMap template.
+- Deployment repositories (for example `teehr-hub/jupyterhub-profiles`) own:
+   - Remote project inputs (`profile-list.remote.projects.json`).
+   - Generated remote payload/template used in their own remote deployment flow.
+
+## Delivery pattern for deployment repos
+
+Recommended pattern in a deployment repo:
 
 1. Create a ConfigMap named `jupyterhub-profile-list`.
 2. Add a key `profile-list.json` containing contract JSON.
@@ -50,27 +64,62 @@ payloads used by in-repo ConfigMaps:
 
 ## Remote profile generation
 
-`profile-list.remote.json` can be generated from a compact project spec file:
+`profile-list.remote.json` can be generated from a compact project spec file.
+In this repo, the default source is:
 
-- Specs: `profile-list.remote.projects.json`
-- Generator: `generate_profile_list_remote.py`
+- `profile-list.example.projects.json`
+
+In deployment repos, the source is typically:
+
+- `profile-list.remote.projects.json`
+
+Generator:
+
+- `generate_profile_list_remote.py`
 
 From repo root:
 
 ```bash
-python3 jupyterhub/profiles/generate_profile_list_remote.py
+python3 jupyterhub-profiles/generate_profile_list_remote.py
 ```
 
-To add a new project, add one object to `profile-list.remote.projects.json`
-and regenerate. The generator handles per-project `TEEHR_PROJECT_ID`,
-nodegroup suffixing, and optional FIRO HEFS image choices.
+To add a new project in a deployment repo, add one object to
+`profile-list.remote.projects.json` and regenerate. The generator handles
+per-project `TEEHR_PROJECT_ID`, nodegroup suffixing, and optional FIRO HEFS
+image choices.
 
-These are intended to move into the client repository later.
+## Render ConfigMap templates from JSON
 
-## Suggested migration sequence
+The Kubernetes manifest templates in `manifests/` are generated from profile
+JSON to avoid drift.
 
-1. Copy current profile list into client JSON.
-2. Deploy ConfigMap and verify profile rendering in JupyterHub UI.
-3. Remove static `singleuser.profileList` from `garden.yaml` after cutover.
-4. Move this contract and loader into `teehr-cloud-core` and keep JSON in each
-   client repository.
+From repo root:
+
+```bash
+python3 jupyterhub-profiles/generate_profile_configmap_templates.py
+```
+
+## Pull flow for a new deployment repository
+
+Use this sequence when a deployment repo starts from `teehr-cloud-core`:
+
+1. Copy/pull the latest files from this directory:
+   - `generate_profile_list_remote.py`
+   - `generate_profile_configmap_templates.py`
+   - Contract README updates relevant to profile format changes.
+2. In the deployment repo, create or update
+   `jupyterhub-profiles/profile-list.remote.projects.json` for that
+   environment.
+3. Run:
+   - `python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_list_remote.py --specs jupyterhub-profiles/profile-list.remote.projects.json --out jupyterhub-profiles/profile-list.remote.json`
+   - `python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_configmap_templates.py --base-dir jupyterhub-profiles`
+4. Commit generated outputs with source changes:
+   - `profile-list.remote.json`
+   - `manifests/jupyterhub-profile-list-remote.configmap.yaml.tpl`
+5. Run the deployment repo's remote Garden deployment flow.
+
+## Notes
+
+- `generate_profile_configmap_templates.py` renders local and/or remote
+   templates based on whichever `profile-list.*.json` files exist.
+- This lets remote-only deployment repos omit local profile assets.

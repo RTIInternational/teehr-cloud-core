@@ -43,14 +43,20 @@ def main() -> int:
     args = parser.parse_args()
 
     base_dir = args.base_dir
-    render_template(
-        source_json=base_dir / "profile-list.local.json",
-        output_tpl=base_dir / "manifests" / "jupyterhub-profile-list-local.configmap.yaml.tpl",
-    )
-    render_template(
-        source_json=base_dir / "profile-list.remote.json",
-        output_tpl=base_dir / "manifests" / "jupyterhub-profile-list-remote.configmap.yaml.tpl",
-    )
+    templates_to_render = [
+        (
+            base_dir / "profile-list.local.json",
+            base_dir / "manifests" / "jupyterhub-profile-list-local.configmap.yaml.tpl",
+        ),
+        (
+            base_dir / "profile-list.remote.json",
+            base_dir / "manifests" / "jupyterhub-profile-list-remote.configmap.yaml.tpl",
+        ),
+    ]
+
+    for source_json, output_tpl in templates_to_render:
+        if source_json.exists():
+            render_template(source_json=source_json, output_tpl=output_tpl)
     return 0
 
 
