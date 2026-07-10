@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate jupyterhub/profiles/profile-list.remote.json from project specs.
+"""Generate a profile-list JSON payload from project specs.
 
 This keeps profile boilerplate in one place while allowing per-project
 customization for project id, nodegroup suffix, and optional extra choices.

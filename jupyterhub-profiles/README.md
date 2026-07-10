@@ -32,7 +32,7 @@ This module is now split across repositories:
 
 - `teehr-cloud-core/jupyterhub-profiles` owns:
    - Contract shape and validation expectations.
-   - Generator logic (`generate_profile_list_remote.py`,
+   - Generator logic (`generate_profile_list.py`,
       `generate_profile_configmap_templates.py`).
    - Local payload (`profile-list.local.json`) and local ConfigMap template.
 - Deployment repositories (for example `teehr-hub/jupyterhub-profiles`) own:
@@ -75,12 +75,12 @@ In deployment repos, the source is typically:
 
 Generator:
 
-- `generate_profile_list_remote.py`
+- `generate_profile_list.py`
 
 From repo root:
 
 ```bash
-python3 jupyterhub-profiles/generate_profile_list_remote.py
+python3 jupyterhub-profiles/generate_profile_list.py
 ```
 
 To add a new project in a deployment repo, add one object to
@@ -104,14 +104,14 @@ python3 jupyterhub-profiles/generate_profile_configmap_templates.py
 Use this sequence when a deployment repo starts from `teehr-cloud-core`:
 
 1. Copy/pull the latest files from this directory:
-   - `generate_profile_list_remote.py`
+   - `generate_profile_list.py`
    - `generate_profile_configmap_templates.py`
    - Contract README updates relevant to profile format changes.
 2. In the deployment repo, create or update
    `jupyterhub-profiles/profile-list.remote.projects.json` for that
    environment.
 3. Run:
-   - `python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_list_remote.py --specs jupyterhub-profiles/profile-list.remote.projects.json --out jupyterhub-profiles/profile-list.remote.json`
+   - `python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_list.py --specs jupyterhub-profiles/profile-list.remote.projects.json --out jupyterhub-profiles/profile-list.remote.json`
    - `python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_configmap_templates.py --base-dir jupyterhub-profiles`
 4. Commit generated outputs with source changes:
    - `profile-list.remote.json`
