@@ -10,10 +10,11 @@ spec:
     - bash
     - -c
     - >-
-      kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.6.1/kubernetes/keycloaks.k8s.keycloak.org-v1.yml &&
-      kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.6.1/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml &&
-      kubectl create namespace "${environment.namespace}" --dry-run=client -o yaml | kubectl apply -f - &&
-      kubectl -n "${environment.namespace}" delete deployment keycloak-operator --ignore-not-found=true &&
-      kubectl -n "${environment.namespace}" apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.6.1/kubernetes/kubernetes.yml &&
-      kubectl patch clusterrolebinding keycloak-operator-clusterrole-binding --type='json' -p='[{"op":"replace","path":"/subjects/0/namespace","value":"${environment.namespace}"}]' &&
-      kubectl -n "${environment.namespace}" rollout status deployment/keycloak-operator --timeout=180s
+      KUBE_CONTEXT='${environment.name == "local" ? "kind-kind" : var.remoteCluster.contextArn}' &&
+      kubectl --context "$KUBE_CONTEXT" apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.6.1/kubernetes/keycloaks.k8s.keycloak.org-v1.yml &&
+      kubectl --context "$KUBE_CONTEXT" apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.6.1/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml &&
+      kubectl --context "$KUBE_CONTEXT" create namespace "${environment.namespace}" --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - &&
+      kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" delete deployment keycloak-operator --ignore-not-found=true &&
+      kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.6.1/kubernetes/kubernetes.yml &&
+      kubectl --context "$KUBE_CONTEXT" patch clusterrolebinding keycloak-operator-clusterrole-binding --type='json' -p='[{"op":"replace","path":"/subjects/0/namespace","value":"${environment.namespace}"}]' &&
+      kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" rollout status deployment/keycloak-operator --timeout=180s

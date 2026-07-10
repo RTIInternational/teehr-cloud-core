@@ -11,6 +11,8 @@ environments:
 spec:
   deployCommand:
     - kubectl
+    - --context
+    - ${var.remoteCluster.contextArn}
     - apply
     - --server-side
     - -f
