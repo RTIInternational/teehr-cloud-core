@@ -1,0 +1,10 @@
+[
+  {
+    "project_id": "TEEHR",
+    "display_name": "TEEHR Project",
+    "description": "Choose this profile for work related to the TEEHR Project.",
+    "default": true,
+    "nodegroup_suffix": "",
+    "include_hefs_choices": false
+  }
+]
