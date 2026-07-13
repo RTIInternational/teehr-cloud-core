@@ -51,7 +51,7 @@ python3 jupyterhub-profiles/generate_profile_list.py \
   --out jupyterhub-profiles/profile-list.local.json
 ```
 
-3. Generate the ConfigMap template from that JSON:
+3. Generate the ConfigMap template from the profile list JSON:
 
 ```bash
 python3 jupyterhub-profiles/generate_profile_configmap_templates.py \
@@ -66,7 +66,7 @@ python3 jupyterhub-profiles/generate_profile_configmap_templates.py \
 Use this flow in the deployment repo, where remote configs live. The scripts
 still come from this repo through the submodule path.
 
-1. In the deployment repo, update
+1. In the deployment repo, create or update
    `jupyterhub-profiles/profile-list.remote.projects.json`.
 2. Generate remote profile list JSON:
 
@@ -76,7 +76,7 @@ python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_list.py \
   --out jupyterhub-profiles/profile-list.remote.json
 ```
 
-3. Generate remote ConfigMap template:
+3. Generate remote ConfigMap template from the profile list JSON:
 
 ```bash
 python3 teehr-cloud-core/jupyterhub-profiles/generate_profile_configmap_templates.py \
