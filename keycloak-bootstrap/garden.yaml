@@ -29,6 +29,7 @@ spec:
     - bash
     - -c
     - >-
-      kubectl -n "${environment.namespace}" delete job keycloak-bootstrap --ignore-not-found=true &&
-      kubectl -n "${environment.namespace}" apply -f ./manifests/bootstrap-job.yaml &&
-      kubectl -n "${environment.namespace}" wait --for=condition=Complete job/keycloak-bootstrap --timeout=300s
+      KUBE_CONTEXT='${environment.name == "local" ? "kind-kind" : var.remoteCluster.contextArn}' &&
+      kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" delete job keycloak-bootstrap --ignore-not-found=true &&
+      kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" apply -f ./manifests/bootstrap-job.yaml &&
+      kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" wait --for=condition=Complete job/keycloak-bootstrap --timeout=300s

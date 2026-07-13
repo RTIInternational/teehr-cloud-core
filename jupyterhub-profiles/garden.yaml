@@ -1,0 +1,11 @@
+# Deploy local JupyterHub profile list config map
+kind: Deploy
+type: kubernetes
+name: jupyterhub-profile-list-local
+environments:
+  - local
+dependencies:
+  - build.teehr-jupyter-driver-image-edge
+spec:
+  manifestTemplates:
+    - manifests/jupyterhub-profile-list-local.configmap.yaml.tpl
