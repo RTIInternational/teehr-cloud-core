@@ -182,21 +182,50 @@ def generate(specs_path: Path, out_path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=False)
+    mode.add_argument(
+        "--local",
+        action="store_true",
+        help="Generate local profile list using repo defaults",
+    )
+    mode.add_argument(
+        "--remote",
+        action="store_true",
+        help="Generate remote profile list using deployment defaults",
+    )
     parser.add_argument(
         "--spec",
         type=Path,
-        required=True,
         help="Path to project specs JSON",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        required=True,
         help="Output profile list path",
     )
     args = parser.parse_args()
 
-    generate(args.spec, args.out)
+    using_explicit_paths = args.spec is not None or args.out is not None
+    using_mode = args.local or args.remote
+
+    if using_explicit_paths and using_mode:
+        parser.error("Use either --local/--remote or --spec/--out, not both.")
+
+    if using_explicit_paths:
+        if args.spec is None or args.out is None:
+            parser.error("--spec and --out must be provided together.")
+        specs = args.spec
+        out = args.out
+    elif args.local:
+        specs = Path("jupyterhub-profiles/profile-list.example.projects.json")
+        out = Path("jupyterhub-profiles/profile-list.local.json")
+    elif args.remote:
+        specs = Path("jupyterhub-profiles/profile-list.remote.projects.json")
+        out = Path("jupyterhub-profiles/profile-list.remote.json")
+    else:
+        parser.error("Provide --local, --remote, or both --spec and --out.")
+
+    generate(specs, out)
     return 0
 
 
