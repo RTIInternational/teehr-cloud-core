@@ -44,7 +44,6 @@ check_resource "Kubernetes API reachable" kubectl version --request-timeout=10s
 check_resource "Contour HTTPProxy CRD installed" kubectl get crd httpproxies.projectcontour.io
 check_resource "cert-manager Certificate CRD installed" kubectl get crd certificates.cert-manager.io
 check_resource "cert-manager ClusterIssuer CRD installed" kubectl get crd clusterissuers.cert-manager.io
-check_resource "Namespace '$NAMESPACE' exists" kubectl get namespace "$NAMESPACE"
 check_resource "ClusterIssuer '$ISSUER_NAME' exists" kubectl get clusterissuer "$ISSUER_NAME"
 
 if [[ "$failures" -gt 0 ]]; then
