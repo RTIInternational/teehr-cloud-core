@@ -48,6 +48,17 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 3. JupyterHub authorization is also group-based, not based on the admin realm role.
 4. Iceberg REST auth rollout is deferred per plan and appears not fully enforced for end-user role mapping yet.
 
+## Local Test Users
+
+Local environments now seed two Keycloak users automatically via a local-only bootstrap job:
+
+| User type | Default username | Default password | Group membership |
+|---|---|---|---|
+| Admin test user | admin | admin |basic-user, iceberg-user, jupyter-admin, key-management-admin, prefect-admin, webapi-admin |
+| Regular test user | user | user |basic-user, jupyter-user |
+
+To add more personas as permissions evolve, update user entries and group assignments in `keycloak-bootstrap/manifests/local-users-configmap.yaml.tpl`.
+
 ## Code and Config References
 
 - Frontend authenticated-route guard: [frontend/src/App.jsx](../frontend/src/App.jsx#L16)
