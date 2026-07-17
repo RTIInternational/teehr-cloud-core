@@ -58,10 +58,6 @@ spec:
   manifestTemplates:
     - manifests/polaris.yaml.tpl
 dependencies:
-  - deploy.cert-manager
-  - deploy.letsencrypt
-  - deploy.cert
-  - deploy.contour
   - deploy.polaris
 environments:
   - local
