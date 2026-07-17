@@ -5,6 +5,7 @@ Utility functions for OGC API compliance.
 import json
 import time
 from datetime import UTC, datetime
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 
@@ -15,6 +16,7 @@ def prepare_for_serialization(
     df: pd.DataFrame,
     datetime_columns: list[str] | None = None,
     replace_nan: bool = True,
+    replace_inf: bool = True,
 ) -> pd.DataFrame:
     """Prepare DataFrame for JSON serialization.
 
@@ -28,6 +30,8 @@ def prepare_for_serialization(
                           ['created_at', 'updated_at'] if None.
         replace_nan: If True, replaces NaN values with None in all columns
                      for JSON compliance. Defaults to True.
+        replace_inf: If True, replaces inf and -inf values with None in all
+                     columns for JSON compliance. Defaults to True.
 
     Returns:
         DataFrame ready for JSON serialization
@@ -45,6 +49,10 @@ def prepare_for_serialization(
     # Replace NaN/NaT with None for JSON serialization
     if replace_nan:
         df = df.astype(object).where(pd.notna(df), None)
+
+    # Replace inf/-inf with None for JSON serialization
+    if replace_inf:
+        df = df.replace([np.inf, -np.inf], None)
 
     return df
 
