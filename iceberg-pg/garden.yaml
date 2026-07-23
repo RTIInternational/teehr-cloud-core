@@ -2,6 +2,7 @@ kind: Deploy
 type: kubernetes
 name: iceberg-database
 description: K8s Deploy Iceberg Catalog Database
+disabled: true
 dependencies:
   - deploy.secrets
 environments:

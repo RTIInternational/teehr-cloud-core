@@ -44,7 +44,7 @@ spec:
                 - name: sync-script
                   mountPath: /scripts
                   readOnly: true
-        volumes:
-          - name: sync-script
-            configMap:
-              name: polaris-sync-principals-script
+          volumes:
+            - name: sync-script
+              configMap:
+                name: polaris-sync-principals-script

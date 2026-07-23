@@ -21,12 +21,6 @@ spec:
         app: polaris
     spec:
       serviceAccountName: polaris
-      ${if environment.name == "local"}
-      hostAliases:
-        - ip: "${var.polaris.keycloakIngressIp}"
-          hostnames:
-            - "auth.${var.hostname}"
-      ${endif}
       initContainers:
         - name: schema-bootstrap
           image: apache/polaris-admin-tool:1.5.0

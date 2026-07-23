@@ -52,6 +52,13 @@ spec:
 
               SUCCESS_CODES = (200, 201, 204, 409)
 
+              def parse_bool(value):
+                  if isinstance(value, bool):
+                      return value
+                  if value is None:
+                      return None
+                  return str(value).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+
               def is_duplicate_error(resp):
                   return resp.status_code == 500 and "duplicate key" in resp.text.lower()
 
@@ -100,6 +107,67 @@ spec:
                   if resp.status_code in SUCCESS_CODES or is_duplicate_error(resp):
                       return
                   resp.raise_for_status()
+
+              def ensure_catalog(realm, token, catalog_name, properties, storage_config_info):
+                  get_resp = requests.get(
+                      f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                      headers=realm_headers(realm, token=token, content_type=None),
+                  )
+
+                  if get_resp.status_code == 404:
+                      mgmt(
+                          "post",
+                          realm,
+                          token,
+                          "/catalogs",
+                          json={
+                              "name": catalog_name,
+                              "type": "INTERNAL",
+                              "properties": properties,
+                              "storageConfigInfo": storage_config_info,
+                          },
+                      )
+                      return
+
+                  get_resp.raise_for_status()
+                  current = get_resp.json()
+                  current_entity_version = current.get("entityVersion")
+                  if current_entity_version is None:
+                      raise ValueError(f"Catalog '{catalog_name}' missing entityVersion")
+
+                  update_payload = {
+                      "currentEntityVersion": current_entity_version,
+                      "properties": properties,
+                      "storageConfigInfo": storage_config_info,
+                  }
+
+                  update_resp = requests.put(
+                      f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                      headers=realm_headers(realm, token=token),
+                      json=update_payload,
+                  )
+
+                  if update_resp.status_code in SUCCESS_CODES:
+                      return
+
+                  # Retry once on optimistic-concurrency conflict.
+                  if update_resp.status_code == 409:
+                      refreshed = requests.get(
+                          f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                          headers=realm_headers(realm, token=token, content_type=None),
+                      )
+                      refreshed.raise_for_status()
+                      update_payload["currentEntityVersion"] = refreshed.json()["entityVersion"]
+                      update_resp = requests.put(
+                          f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                          headers=realm_headers(realm, token=token),
+                          json=update_payload,
+                      )
+                      if update_resp.status_code in SUCCESS_CODES:
+                          return
+
+                  print(f"ERROR {update_resp.status_code}: {update_resp.text}", file=sys.stderr)
+                  update_resp.raise_for_status()
 
               def grant_to_catalog_role(realm, token, catalog_name, catalog_role, grant, fallback_namespace=None):
                   payload = {
@@ -171,25 +239,50 @@ spec:
                   catalog_name = realm_cfg["catalog"]
                   warehouse = realm_cfg["warehouse"]
                   storage_type = realm_cfg.get("storage_type", "S3")
+                  s3_endpoint = realm_cfg.get("s3_endpoint")
+                  path_style_access = realm_cfg.get("path_style_access")
+                  s3_region = realm_cfg.get("s3_region")
+                  sts_unavailable = realm_cfg.get("sts_unavailable")
                   allowed_locations = realm_cfg.get("allowed_locations") or [warehouse]
 
                   print(f"[polaris-bootstrap] realm={realm} catalog={catalog_name}")
                   token = request_token(realm)
 
-                  mgmt(
-                      "post",
+                  storage_config_info = {
+                      "storageType": storage_type,
+                      "allowedLocations": allowed_locations,
+                  }
+                  catalog_properties = {
+                      "default-base-location": warehouse,
+                  }
+                  if s3_endpoint:
+                      storage_config_info["endpoint"] = s3_endpoint
+                      catalog_properties["s3.endpoint"] = s3_endpoint
+                      catalog_properties["table-default.s3.endpoint"] = s3_endpoint
+                  if path_style_access is not None:
+                      path_style_access_bool = parse_bool(path_style_access)
+                      storage_config_info["pathStyleAccess"] = path_style_access_bool
+                      catalog_properties["s3.path-style-access"] = str(
+                          path_style_access_bool
+                      ).lower()
+                      catalog_properties["table-default.s3.path-style-access"] = str(
+                          path_style_access_bool
+                      ).lower()
+                  if s3_region:
+                      storage_config_info["region"] = s3_region
+                      catalog_properties["s3.region"] = s3_region
+                      catalog_properties["table-default.s3.region"] = s3_region
+                  if sts_unavailable is not None:
+                      storage_config_info["stsUnavailable"] = parse_bool(sts_unavailable)
+                  catalog_properties["s3.remote-signing-enabled"] = "false"
+                  catalog_properties["table-default.s3.remote-signing-enabled"] = "false"
+
+                  ensure_catalog(
                       realm,
                       token,
-                      "/catalogs",
-                      json={
-                          "name": catalog_name,
-                          "type": "INTERNAL",
-                          "properties": {"default-base-location": warehouse},
-                          "storageConfigInfo": {
-                              "storageType": storage_type,
-                              "allowedLocations": allowed_locations,
-                          },
-                      },
+                      catalog_name,
+                      catalog_properties,
+                      storage_config_info,
                   )
 
                   admin_cfg = realm_cfg.get("admin")

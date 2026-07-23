@@ -54,6 +54,7 @@ spec:
             - openid
             - profile
             - email
+            - offline_access
           claim_groups_key: groups
           allowed_groups:
             - jupyter-user
@@ -128,8 +129,14 @@ spec:
         auth-state: |
           c.Authenticator.enable_auth_state = True
           async def auth_state_hook(spawner, auth_state):
-              if auth_state and "access_token" in auth_state:
-                  spawner.environment["POLARIS_USER_TOKEN"] = auth_state["access_token"]
+            spawner.environment["POLARIS_CLIENT_ID"] = os.environ.get("OAUTH_CLIENT_ID", "jupyterhub")
+            client_secret = os.environ.get("OAUTH_CLIENT_SECRET")
+            if client_secret:
+              spawner.environment["POLARIS_CLIENT_SECRET"] = client_secret
+            if auth_state and "access_token" in auth_state:
+              spawner.environment["POLARIS_USER_TOKEN"] = auth_state["access_token"]
+            if auth_state and "refresh_token" in auth_state:
+              spawner.environment["POLARIS_REFRESH_TOKEN"] = auth_state["refresh_token"]
           c.Spawner.auth_state_hook = auth_state_hook
         cull-kernels: |
           c.MappingKernelManager.cull_idle_timeout = 3600
@@ -163,7 +170,7 @@ spec:
               key: api-key
         REMOTE_CATALOG_TYPE: ${var.polaris.catalogType}
         REMOTE_CATALOG_REST_URI: ${var.polaris.catalogUri}
-        REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.defaultRealm}
+        REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.catalogWarehouse}
         REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
         REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
         IN_CLUSTER: ${var.polaris.inCluster}
@@ -259,6 +266,7 @@ spec:
             - openid
             - profile
             - email
+            - offline_access
           claim_groups_key: groups
           allowed_groups:
             - jupyter-user
@@ -332,8 +340,14 @@ spec:
         auth-state: |
           c.Authenticator.enable_auth_state = True
           async def auth_state_hook(spawner, auth_state):
-              if auth_state and "access_token" in auth_state:
-                  spawner.environment["POLARIS_USER_TOKEN"] = auth_state["access_token"]
+            spawner.environment["POLARIS_CLIENT_ID"] = os.environ.get("OAUTH_CLIENT_ID", "jupyterhub")
+            client_secret = os.environ.get("OAUTH_CLIENT_SECRET")
+            if client_secret:
+              spawner.environment["POLARIS_CLIENT_SECRET"] = client_secret
+            if auth_state and "access_token" in auth_state:
+              spawner.environment["POLARIS_USER_TOKEN"] = auth_state["access_token"]
+            if auth_state and "refresh_token" in auth_state:
+              spawner.environment["POLARIS_REFRESH_TOKEN"] = auth_state["refresh_token"]
           c.Spawner.auth_state_hook = auth_state_hook
         cull-kernels: |
           c.MappingKernelManager.cull_idle_timeout = 3600

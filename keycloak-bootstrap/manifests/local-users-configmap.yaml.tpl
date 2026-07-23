@@ -26,6 +26,7 @@ data:
           "groups": [
             "/basic-user",
             "/iceberg-user",
+            "/iceberg-catalog-admins",
             "/jupyter-admin",
             "/key-management-admin",
             "/prefect-admin",

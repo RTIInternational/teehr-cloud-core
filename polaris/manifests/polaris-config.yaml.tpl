@@ -32,6 +32,10 @@ data:
     quarkus.oidc.tenant-enabled=true
     quarkus.oidc.application-type=service
     quarkus.oidc.client-id=jupyterhub
+    # Keycloak advertises external hostnames in discovery metadata; disable discovery
+    # so Polaris uses the configured auth-server-url and internal JWKS path directly.
+    quarkus.oidc.discovery-enabled=false
+    quarkus.oidc.jwks-path=/protocol/openid-connect/certs
     quarkus.tls.trust-all=true
     quarkus.oidc.connection-delay=PT10S
     quarkus.oidc.connection-retry-count=5
@@ -45,4 +49,5 @@ data:
     # Storage Properties Integration
     polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3","GCS","AZURE","FILE"]
     polaris.features."ALLOW_INSECURE_STORAGE_TYPES"=true
+    polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"=${var.polaris.skipCredentialSubscopingIndirection}
     polaris.readiness.ignore-severe-issues=true

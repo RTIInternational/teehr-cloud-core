@@ -11,6 +11,10 @@ data:
           "catalog": "${var.polaris.defaultRealm}",
           "warehouse": "${var.polaris.catalogWarehouse}",
           "storage_type": "S3",
+          "s3_endpoint": "${var.polaris.catalogS3Endpoint}",
+          "path_style_access": "${var.polaris.catalogS3PathStyleAccess}",
+          "s3_region": "${var.polaris.catalogS3Region}",
+          "sts_unavailable": ${var.polaris.storageStsUnavailable},
           "allowed_locations": [
             "${var.polaris.catalogWarehouse}"
           ],

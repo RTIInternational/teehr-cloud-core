@@ -5,9 +5,9 @@ metadata:
 data:
   sync_principals.py: |
     """
-    Syncs all enabled Keycloak realm users into Polaris as principal entities.
-    Role assignment is intentionally omitted: the Polaris OIDC role mapper maps
-    realm_access.roles claims to PRINCIPAL_ROLE:<name> at authentication time.
+    Syncs all enabled Keycloak realm users into Polaris as principal entities
+    and grants matching Polaris principal roles for Keycloak realm roles with
+    the iceberg-* prefix.
 
     Required environment variables:
       POLARIS_MANAGEMENT_URL   e.g. http://polaris:8181
@@ -78,6 +78,15 @@ data:
             first += max_per_page
 
 
+    def get_keycloak_realm_roles(kc_token, user_id):
+        resp = requests.get(
+            f"{KC_URL}/admin/realms/{REALM}/users/{user_id}/role-mappings/realm/composite",
+            headers={"Authorization": f"Bearer {kc_token}"},
+        )
+        resp.raise_for_status()
+        return [role.get("name") for role in resp.json() if role.get("name")]
+
+
     def ensure_principal(polaris_token, principal_name):
         resp = requests.post(
             f"{MGMT_URL}/api/management/v1/principals",
@@ -94,14 +103,73 @@ data:
         resp.raise_for_status()
 
 
+    def ensure_principal_role(polaris_token, principal_role):
+        resp = requests.post(
+            f"{MGMT_URL}/api/management/v1/principal-roles",
+            headers={
+                "X-Polaris-Realm": REALM,
+                "Authorization": f"Bearer {polaris_token}",
+                "Content-Type": "application/json",
+            },
+            json={"name": principal_role},
+        )
+        if resp.status_code in (200, 201, 204, 409):
+            return
+        print(f"ERROR creating principal role '{principal_role}': {resp.status_code} {resp.text}", file=sys.stderr)
+        resp.raise_for_status()
+
+
+    def _is_duplicate_grant_error(resp):
+        if resp.status_code != 500:
+            return False
+        body = (resp.text or "").lower()
+        return (
+            "duplicate key value violates unique constraint" in body
+            or "grant_records_pkey" in body
+            or "sql-state '23505'" in body
+            or "already exists" in body
+        )
+
+
+    def ensure_principal_role_binding(polaris_token, principal_name, principal_role):
+        ensure_principal_role(polaris_token, principal_role)
+        resp = requests.put(
+            f"{MGMT_URL}/api/management/v1/principals/{principal_name}/principal-roles",
+            headers={
+                "X-Polaris-Realm": REALM,
+                "Authorization": f"Bearer {polaris_token}",
+                "Content-Type": "application/json",
+            },
+            json={"name": principal_role},
+        )
+        if resp.status_code in (200, 201, 204, 409) or _is_duplicate_grant_error(resp):
+            return
+        print(
+            f"ERROR binding principal role '{principal_role}' to principal '{principal_name}': "
+            f"{resp.status_code} {resp.text}",
+            file=sys.stderr,
+        )
+        resp.raise_for_status()
+
+
     polaris_token = get_polaris_token()
     kc_token = get_keycloak_token()
 
     synced = 0
+    granted = 0
     for user in iter_keycloak_users(kc_token):
         name = user.get("username")
+        user_id = user.get("id")
         if name:
             ensure_principal(polaris_token, name)
+            if user_id:
+                for role_name in get_keycloak_realm_roles(kc_token, user_id):
+                    if role_name.startswith("iceberg-"):
+                        ensure_principal_role_binding(polaris_token, name, role_name)
+                        granted += 1
             synced += 1
 
-    print(f"[polaris-principal-sync] Synced {synced} principals from Keycloak realm '{REALM}'")
+    print(
+        f"[polaris-principal-sync] Synced {synced} principals and ensured {granted} "
+        f"principal-role grants from Keycloak realm '{REALM}'"
+    )

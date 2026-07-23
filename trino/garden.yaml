@@ -36,8 +36,8 @@ spec:
         iceberg.rest-catalog.oauth2.scope=openid
         # S3 Configuration
         fs.native-s3.enabled=true
-        s3.path-style-access=${var.iceberg.catalogS3PathStyleAccess}
-        s3.endpoint=${var.iceberg.catalogS3Endpoint}
+        s3.path-style-access=${var.polaris.catalogS3PathStyleAccess}
+        s3.endpoint=${var.polaris.catalogS3Endpoint}
         s3.region=${var.aws.region}
     accessControl:
       type: configmap
