@@ -12,7 +12,7 @@ spec:
     name: trino
     repo: https://trinodb.github.io/charts
     version: 1.41.0
-  
+
   values:
     server:
       workers: 1
@@ -23,16 +23,21 @@ spec:
     # worker:
     #   nodeSelector:
     #     teehr-hub/nodegroup-name: core-a
+    #         iceberg.rest-catalog.header.X-Polaris-Realm=${var.polaris.defaultRealm} # removed from below. Needed for multi-realm support?
     catalogs:
       iceberg: |-
         connector.name=iceberg
-        iceberg.catalog.type=${var.iceberg.catalogType}
-        iceberg.rest-catalog.uri=${var.iceberg.catalogUri}
-        iceberg.rest-catalog.warehouse=${var.iceberg.catalogWarehouse}
+        iceberg.catalog.type=${var.polaris.catalogType}
+        iceberg.rest-catalog.uri=${var.polaris.catalogUri}
+        iceberg.rest-catalog.warehouse=${var.polaris.catalogWarehouse}
+        iceberg.rest-catalog.security=OAUTH2
+        iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
+        iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
+        iceberg.rest-catalog.oauth2.scope=openid
         # S3 Configuration
         fs.native-s3.enabled=true
-        s3.path-style-access=${var.iceberg.catalogS3PathStyleAccess}
-        s3.endpoint=${var.iceberg.catalogS3Endpoint}
+        s3.path-style-access=${var.polaris.catalogS3PathStyleAccess}
+        s3.endpoint=${var.polaris.catalogS3Endpoint}
         s3.region=${var.aws.region}
     accessControl:
       type: configmap
@@ -61,6 +66,11 @@ spec:
         secretKeyRef:
           name: minio-secrets
           key: secretkey
+    - name: POLARIS_CREDENTIAL
+      valueFrom:
+        secretKeyRef:
+          name: trino-polaris-secrets
+          key: credential
 ---
 # Remote environment deployment
 kind: Deploy
@@ -76,7 +86,7 @@ spec:
     name: trino
     repo: https://trinodb.github.io/charts
     version: 1.41.0
-  
+
   values:
     server:
       workers: "${environment.name == 'local' ? 1 : 2}"
@@ -106,9 +116,13 @@ spec:
     catalogs:
       iceberg: |-
         connector.name=iceberg
-        iceberg.catalog.type=${var.iceberg.catalogType}
-        iceberg.rest-catalog.uri=${var.iceberg.catalogUri}
-        iceberg.rest-catalog.warehouse=${var.iceberg.catalogWarehouse}
+        iceberg.catalog.type=${var.polaris.catalogType}
+        iceberg.rest-catalog.uri=${var.polaris.catalogUri}
+        iceberg.rest-catalog.warehouse=${var.polaris.catalogWarehouse}
+        iceberg.rest-catalog.security=OAUTH2
+        iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
+        iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
+        iceberg.rest-catalog.oauth2.scope=openid
         # S3 Configuration
         fs.native-s3.enabled=true
         s3.region=${var.aws.region}
@@ -127,6 +141,13 @@ spec:
               }
             ]
           }
+
+    env:
+    - name: POLARIS_CREDENTIAL
+      valueFrom:
+        secretKeyRef:
+          name: trino-polaris-secrets
+          key: credential
 
     serviceAccount:
       create: true

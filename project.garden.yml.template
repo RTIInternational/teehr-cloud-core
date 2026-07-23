@@ -13,9 +13,6 @@ variables:
     ssl: "false"
   aws:
     region: us-east-2
-  # remoteCluster:
-  #   contextArn: ""
-  #   ecrRegistry: ""
 
 environments:
   - name: local
@@ -25,13 +22,27 @@ environments:
       certificateIssuerName: letsencrypt-prod
       devTeehrVersion: 267f8a75034132aefe84749af10ab1562a6ac169
       stableTeehrVersion: place-holder # Needed for sync to work for some reason.
-      iceberg:
+      # iceberg:
+      #   inCluster: "true"
+      #   catalogS3PathStyleAccess: "true"
+      #   catalogS3Endpoint: "http://minio:9000"
+      #   catalogType: rest
+      #   catalogUri: http://iceberg-rest:8181
+      #   catalogWarehouse: s3://warehouse/
+      polaris:
         inCluster: "true"
         catalogS3PathStyleAccess: "true"
         catalogS3Endpoint: "http://minio:9000"
+        catalogS3Region: ${var.aws.region}
         catalogType: rest
-        catalogUri: http://iceberg-rest:8181
+        catalogUri: http://polaris:8181/api/catalog
         catalogWarehouse: s3://warehouse/
+        skipCredentialSubscopingIndirection: "true"
+        storageStsUnavailable: "true"
+        defaultRealm: teehr
+        realmsCsv: teehr
+        oauthServerUri: http://keycloak-service:8080/realms/teehr/protocol/openid-connect/token
+        oidcIssuerUri: https://auth.${var.hostname}/realms/teehr
       trino:
         host: trino
         port: "8080"

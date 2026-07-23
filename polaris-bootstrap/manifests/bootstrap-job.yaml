@@ -1,0 +1,398 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-bootstrap
+  labels:
+    app: polaris-bootstrap
+spec:
+  ttlSecondsAfterFinished: 100
+  template:
+    metadata:
+      labels:
+        app: polaris-bootstrap
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: polaris-bootstrap
+          image: prefecthq/prefect:3.2.0-python3.10
+          env:
+            - name: POLARIS_MANAGEMENT_URL
+              value: "http://polaris:8181"
+            - name: POLARIS_ROOT_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: root-credentials
+            - name: KEYCLOAK_URL
+              value: "http://keycloak-service.teehr-hub.svc.cluster.local:8080"
+            - name: KEYCLOAK_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-secrets
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin-secrets
+                  key: password
+          command:
+            - python
+            - -c
+            - |
+              import json
+              import os
+              import subprocess
+              import sys
+
+              import requests
+
+              MGMT_URL = os.environ.get("POLARIS_MANAGEMENT_URL", "http://polaris:8181")
+              ROOT_CREDS = os.environ["POLARIS_ROOT_CREDENTIALS"]
+              username, password = ROOT_CREDS.split(":", 1)
+
+              SUCCESS_CODES = (200, 201, 204, 409)
+
+              def parse_bool(value):
+                  if isinstance(value, bool):
+                      return value
+                  if value is None:
+                      return None
+                  return str(value).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+
+              def is_duplicate_error(resp):
+                  return resp.status_code == 500 and "duplicate key" in resp.text.lower()
+
+              def realm_headers(realm, token=None, content_type="application/json"):
+                  headers = {
+                      "X-Polaris-Realm": realm,
+                  }
+                  if token:
+                      headers["Authorization"] = f"Bearer {token}"
+                  if content_type:
+                      headers["Content-Type"] = content_type
+                  return headers
+
+              def request_token(realm):
+                  token_resp = requests.post(
+                      f"{MGMT_URL}/api/catalog/v1/oauth/tokens",
+                      headers=realm_headers(realm, content_type="application/x-www-form-urlencoded"),
+                      data={
+                          "grant_type": "client_credentials",
+                          "client_id": username,
+                          "client_secret": password,
+                          "scope": "PRINCIPAL_ROLE:ALL",
+                          "realm": realm,
+                      },
+                  )
+                  token_resp.raise_for_status()
+                  return token_resp.json()["access_token"]
+
+              def mgmt(method, realm, token, path, **kwargs):
+                  url = f"{MGMT_URL}/api/management/v1{path}"
+                  resp = getattr(requests, method)(url, headers=realm_headers(realm, token=token), **kwargs)
+
+                  if resp.status_code in SUCCESS_CODES or is_duplicate_error(resp):
+                      return resp
+
+                  print(f"ERROR {resp.status_code}: {resp.text}", file=sys.stderr)
+                  resp.raise_for_status()
+                  return resp
+
+              def ensure_namespace(realm, token, catalog_name, namespace):
+                  resp = requests.post(
+                      f"{MGMT_URL}/api/catalog/v1/{catalog_name}/namespaces",
+                      headers=realm_headers(realm, token=token),
+                      json={"namespace": [namespace]},
+                  )
+                  if resp.status_code in SUCCESS_CODES or is_duplicate_error(resp):
+                      return
+                  resp.raise_for_status()
+
+              def ensure_catalog(realm, token, catalog_name, properties, storage_config_info):
+                  get_resp = requests.get(
+                      f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                      headers=realm_headers(realm, token=token, content_type=None),
+                  )
+
+                  if get_resp.status_code == 404:
+                      mgmt(
+                          "post",
+                          realm,
+                          token,
+                          "/catalogs",
+                          json={
+                              "name": catalog_name,
+                              "type": "INTERNAL",
+                              "properties": properties,
+                              "storageConfigInfo": storage_config_info,
+                          },
+                      )
+                      return
+
+                  get_resp.raise_for_status()
+                  current = get_resp.json()
+                  current_entity_version = current.get("entityVersion")
+                  if current_entity_version is None:
+                      raise ValueError(f"Catalog '{catalog_name}' missing entityVersion")
+
+                  update_payload = {
+                      "currentEntityVersion": current_entity_version,
+                      "properties": properties,
+                      "storageConfigInfo": storage_config_info,
+                  }
+
+                  update_resp = requests.put(
+                      f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                      headers=realm_headers(realm, token=token),
+                      json=update_payload,
+                  )
+
+                  if update_resp.status_code in SUCCESS_CODES:
+                      return
+
+                  # Retry once on optimistic-concurrency conflict.
+                  if update_resp.status_code == 409:
+                      refreshed = requests.get(
+                          f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                          headers=realm_headers(realm, token=token, content_type=None),
+                      )
+                      refreshed.raise_for_status()
+                      update_payload["currentEntityVersion"] = refreshed.json()["entityVersion"]
+                      update_resp = requests.put(
+                          f"{MGMT_URL}/api/management/v1/catalogs/{catalog_name}",
+                          headers=realm_headers(realm, token=token),
+                          json=update_payload,
+                      )
+                      if update_resp.status_code in SUCCESS_CODES:
+                          return
+
+                  print(f"ERROR {update_resp.status_code}: {update_resp.text}", file=sys.stderr)
+                  update_resp.raise_for_status()
+
+              def grant_to_catalog_role(realm, token, catalog_name, catalog_role, grant, fallback_namespace=None):
+                  payload = {
+                      "type": grant["type"],
+                      "privilege": grant["privilege"],
+                  }
+
+                  if grant["type"] in ("namespace", "table"):
+                      namespace = grant.get("namespace") or fallback_namespace
+                      if not namespace:
+                          raise ValueError("Namespace/table grant missing namespace")
+                      payload["namespace"] = [namespace]
+
+                  if grant["type"] == "table":
+                      table_name = grant.get("table")
+                      if not table_name:
+                          raise ValueError("Table grant missing table")
+                      payload["table"] = table_name
+
+                  mgmt(
+                      "put",
+                      realm,
+                      token,
+                      f"/catalogs/{catalog_name}/catalog-roles/{catalog_role}/grants",
+                      json=payload,
+                  )
+
+              def create_role_bindings(realm, token, catalog_name, role_bindings, namespace=None):
+                  for role_cfg in role_bindings:
+                      principal_role = role_cfg["principal_role"]
+                      catalog_role = role_cfg["catalog_role"]
+
+                      mgmt("post", realm, token, "/principal-roles", json={"name": principal_role})
+                      mgmt("post", realm, token, f"/catalogs/{catalog_name}/catalog-roles", json={"name": catalog_role})
+
+                      for grant_cfg in role_cfg.get("grants", []):
+                          for privilege in grant_cfg.get("privileges", []):
+                              grant_to_catalog_role(
+                                  realm,
+                                  token,
+                                  catalog_name,
+                                  catalog_role,
+                                  {
+                                      "type": grant_cfg["type"],
+                                      "namespace": grant_cfg.get("namespace"),
+                                      "table": grant_cfg.get("table"),
+                                      "privilege": privilege,
+                                  },
+                                  fallback_namespace=namespace,
+                              )
+
+                      mgmt(
+                          "put",
+                          realm,
+                          token,
+                          f"/principal-roles/{principal_role}/catalog-roles/{catalog_name}",
+                          json={"name": catalog_role},
+                      )
+
+              with open("/config/acl-config.json", encoding="utf-8") as f:
+                  config = json.load(f)
+
+              realms_cfg = config.get("realms", [])
+              if not realms_cfg:
+                  raise ValueError("acl-config.json must define a non-empty 'realms' list")
+
+              for realm_cfg in realms_cfg:
+                  realm = realm_cfg["realm"]
+                  catalog_name = realm_cfg["catalog"]
+                  warehouse = realm_cfg["warehouse"]
+                  storage_type = realm_cfg.get("storage_type", "S3")
+                  s3_endpoint = realm_cfg.get("s3_endpoint")
+                  path_style_access = realm_cfg.get("path_style_access")
+                  s3_region = realm_cfg.get("s3_region")
+                  sts_unavailable = realm_cfg.get("sts_unavailable")
+                  allowed_locations = realm_cfg.get("allowed_locations") or [warehouse]
+
+                  print(f"[polaris-bootstrap] realm={realm} catalog={catalog_name}")
+                  token = request_token(realm)
+
+                  storage_config_info = {
+                      "storageType": storage_type,
+                      "allowedLocations": allowed_locations,
+                  }
+                  catalog_properties = {
+                      "default-base-location": warehouse,
+                  }
+                  if s3_endpoint:
+                      storage_config_info["endpoint"] = s3_endpoint
+                      catalog_properties["s3.endpoint"] = s3_endpoint
+                      catalog_properties["table-default.s3.endpoint"] = s3_endpoint
+                  if path_style_access is not None:
+                      path_style_access_bool = parse_bool(path_style_access)
+                      storage_config_info["pathStyleAccess"] = path_style_access_bool
+                      catalog_properties["s3.path-style-access"] = str(
+                          path_style_access_bool
+                      ).lower()
+                      catalog_properties["table-default.s3.path-style-access"] = str(
+                          path_style_access_bool
+                      ).lower()
+                  if s3_region:
+                      storage_config_info["region"] = s3_region
+                      catalog_properties["s3.region"] = s3_region
+                      catalog_properties["table-default.s3.region"] = s3_region
+                  if sts_unavailable is not None:
+                      storage_config_info["stsUnavailable"] = parse_bool(sts_unavailable)
+                  catalog_properties["s3.remote-signing-enabled"] = "false"
+                  catalog_properties["table-default.s3.remote-signing-enabled"] = "false"
+
+                  ensure_catalog(
+                      realm,
+                      token,
+                      catalog_name,
+                      catalog_properties,
+                      storage_config_info,
+                  )
+
+                  admin_cfg = realm_cfg.get("admin")
+                  if admin_cfg:
+                      create_role_bindings(
+                          realm,
+                          token,
+                          catalog_name,
+                          [
+                              {
+                                  "principal_role": admin_cfg["principal_role"],
+                                  "catalog_role": admin_cfg.get("catalog_role", "catalog_admin_role"),
+                                  "grants": [
+                                      {
+                                          "type": "catalog",
+                                          "privileges": admin_cfg.get(
+                                              "privileges",
+                                              ["CATALOG_MANAGE_CONTENT", "CATALOG_MANAGE_METADATA"],
+                                          ),
+                                      }
+                                  ],
+                              }
+                          ],
+                      )
+
+                  namespace_set = set()
+                  for ns_policy in realm_cfg.get("namespace_policies", []):
+                      namespace_set.add(ns_policy["namespace"])
+                  for table_policy in realm_cfg.get("table_policies", []):
+                      namespace_set.add(table_policy["namespace"])
+
+                  for namespace in sorted(namespace_set):
+                      ensure_namespace(realm, token, catalog_name, namespace)
+
+                  for ns_policy in realm_cfg.get("namespace_policies", []):
+                      create_role_bindings(
+                          realm,
+                          token,
+                          catalog_name,
+                          ns_policy.get("roles", []),
+                          namespace=ns_policy["namespace"],
+                      )
+
+                  for table_policy in realm_cfg.get("table_policies", []):
+                      table_namespace = table_policy["namespace"]
+                      table_name = table_policy["table"]
+                      normalized_roles = []
+
+                      for role_cfg in table_policy.get("roles", []):
+                          normalized_roles.append(
+                              {
+                                  "principal_role": role_cfg["principal_role"],
+                                  "catalog_role": role_cfg["catalog_role"],
+                                  "grants": [
+                                      {
+                                          "type": "table",
+                                          "namespace": table_namespace,
+                                          "table": table_name,
+                                          "privileges": grant_cfg.get("privileges", []),
+                                      }
+                                      for grant_cfg in role_cfg.get("grants", [])
+                                  ],
+                              }
+                          )
+
+                      create_role_bindings(
+                          realm,
+                          token,
+                          catalog_name,
+                          normalized_roles,
+                          namespace=table_namespace,
+                      )
+
+                  # Sync Keycloak users to Polaris principals via shared script.
+                  # Role assignment is omitted — the OIDC role mapper handles it at auth time.
+                  subprocess.run(
+                      ["python", "/scripts/sync_principals.py"],
+                      check=True,
+                      env={**os.environ, "POLARIS_REALM": realm},
+                  )
+
+                  # Service account principals (static list from acl-config).
+                  # These authenticate via client credentials (not OIDC user tokens),
+                  # so their principal role must be assigned explicitly here.
+                  for principal_cfg in realm_cfg.get("principals", []):
+                      principal_name = principal_cfg["name"]
+                      principal_role = principal_cfg["principal_role"]
+                      print(f"[polaris-bootstrap] Ensuring service principal: {principal_name}")
+                      mgmt("post", realm, token, "/principals",
+                           json={"name": principal_name, "type": "USER", "properties": {}})
+                      mgmt("put", realm, token,
+                           f"/principals/{principal_name}/principal-roles",
+                           json={"name": principal_role})
+
+              print("[polaris-bootstrap] Bootstrap complete")
+          volumeMounts:
+            - name: acl-config
+              mountPath: /config/acl-config.json
+              subPath: acl-config.json
+              readOnly: true
+            - name: sync-script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: acl-config
+          configMap:
+            name: polaris-acl-config
+            items:
+              - key: acl-config.json
+                path: acl-config.json
+        - name: sync-script
+          configMap:
+            name: polaris-sync-principals-script
