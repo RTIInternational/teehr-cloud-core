@@ -3,6 +3,7 @@ Timeseries endpoints (OGC API - GeoJSON and TEEHR TS).
 """
 
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -30,6 +31,43 @@ def _build_string_in_condition(column: str, values: list[str], table_alias: str 
 
     quoted_values = ", ".join(f"'{v}'" for v in sanitized_values)
     return f"{qualified_column} IN ({quoted_values})"
+
+
+def _parse_iso_duration_to_seconds(duration_str: str) -> int:
+    """Parse an ISO 8601 duration string (e.g. 'PT1H', 'PT15M') to total seconds.
+
+    Supports day, hour, minute, and second components only. Year and month
+    components are not supported as they are variable-length.
+
+    Raises ValueError for invalid, unsupported, or zero-length durations.
+    """
+    match = re.fullmatch(
+        r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$",
+        duration_str,
+    )
+    if not match:
+        raise ValueError(
+            f"Invalid or unsupported ISO 8601 duration: '{duration_str}'. "
+            "Year and month components (P[n]Y, P[n]M) are not supported."
+        )
+    days = int(match.group(1) or 0)
+    hours = int(match.group(2) or 0)
+    minutes = int(match.group(3) or 0)
+    seconds = float(match.group(4) or 0)
+    total = days * 86400 + hours * 3600 + minutes * 60 + int(seconds)
+    if total == 0:
+        raise ValueError(f"Duration '{duration_str}' resolves to zero seconds.")
+    return total
+
+
+def _build_duration_condition(column: str, duration_str: str) -> str:
+    """Build a SQL modulo condition filtering rows to those aligned with an ISO 8601 duration.
+
+    Raises ValueError for invalid or unsupported durations (callers should
+    convert this to an HTTP 400 response).
+    """
+    duration_seconds = _parse_iso_duration_to_seconds(duration_str)
+    return f"CAST(to_unixtime({column}) AS BIGINT) % {duration_seconds} = 0"
 
 
 def _empty_response(request: Request, collection_id: str, f: str | None) -> JSONResponse:
@@ -80,6 +118,11 @@ async def get_primary_timeseries_items(
     ),
     configuration_name: list[str] | None = Query(
         None, description="Configuration name filter(s) - can be specified multiple times"
+    ),
+    duration: str | None = Query(
+        None,
+        description="ISO 8601 duration for value_time step filtering (e.g. 'PT1H', 'PT15M'). "
+                    "Only returns rows where value_time aligns to the specified interval.",
     ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
@@ -155,6 +198,14 @@ async def get_primary_timeseries_items(
             )
             if configuration_condition:
                 where_conditions.append(configuration_condition)
+
+        # Filter by duration (value_time step alignment)
+        if duration:
+            try:
+                where_conditions.append(_build_duration_condition("value_time", duration))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
         where_clause = " AND ".join(where_conditions)
 
         # Build query based on format
@@ -231,7 +282,7 @@ async def get_primary_timeseries_items(
                     "Content-Crs": "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>",  # noqa: E501
                 },
             )
-        
+
         if f and f.lower() == "timeseries":
             grouped = df.groupby(
                 [
@@ -304,7 +355,7 @@ async def get_primary_timeseries_items(
             )
 
         return JSONResponse(content=response, media_type="application/json")
-    
+
     except Exception as e:
         logger.error("Primary timeseries error: %s", str(e))
         raise HTTPException(
@@ -331,6 +382,11 @@ async def get_secondary_timeseries_items(
     ),
     configuration_name: list[str] | None = Query(
         None, description="Configuration name filter(s) - can be specified multiple times"
+    ),
+    duration: str | None = Query(
+        None,
+        description="ISO 8601 duration for value_time step filtering (e.g. 'PT1H', 'PT15M'). "
+                    "Only returns rows where value_time aligns to the specified interval.",
     ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
@@ -376,9 +432,9 @@ async def get_secondary_timeseries_items(
             variable_name,
             configuration_name,
         )
-        
+
         where_conditions = []
-        
+
         # Handle location filtering - either primary or secondary
         if primary_location_id and secondary_location_id:
             raise HTTPException(
@@ -447,6 +503,13 @@ async def get_secondary_timeseries_items(
             )
             if configuration_condition:
                 where_conditions.append(configuration_condition)
+
+        # Filter by duration (value_time step alignment)
+        if duration:
+            try:
+                where_conditions.append(_build_duration_condition("st.value_time", duration))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
 
         where_clause = " AND ".join(where_conditions)
 
@@ -544,11 +607,11 @@ async def get_secondary_timeseries_items(
                 unit_name,
                 member,
             ), group in grouped:
-                
+
                 # Handle NaN values from groupby keys - convert to None for JSON
                 ref_time_value = None if pd.isna(reference_time) else reference_time
                 member_value = None if pd.isna(member) else member
-                
+
                 timeseries_data = {
                     "series_type": series_type,
                     "primary_location_id": primary_location_id,
@@ -566,7 +629,7 @@ async def get_secondary_timeseries_items(
             logger.debug("Secondary formatting time: %.3f seconds", format_time)
 
             return JSONResponse(content=data, media_type="application/json")
-        
+
         # Default format: return raw records with pagination metadata
         items = df.to_dict(orient="records")
 
