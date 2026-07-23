@@ -477,6 +477,97 @@ Do not own:
 
 ## Migration Phases
 
+## Token Lifecycle Strategy for Jupyter and Spark
+
+### Problem statement
+
+Current behavior relies on a short-lived user access token being injected into a
+long-lived notebook runtime. Once the token expires, Spark and direct catalog
+operations fail until the user logs out and logs back in.
+
+### Constraints and observations
+
+- Interactive notebook UX requires sessions that may outlive an access token.
+- We should preserve end-user identity at Polaris for authorization and audit.
+- We should avoid exposing long-lived refresh tokens directly in notebook
+   environments unless there is no practical alternative.
+- Spark itself does not provide a complete Keycloak session lifecycle model.
+   Token refresh behavior must be designed at the client/configuration layer.
+
+### Approved direction
+
+#### Short-term (now): Notebook-side token renewal helper
+
+Implement an explicit token renewal path for Jupyter and Spark sessions that:
+
+1. detects token expiration proactively using token `exp` metadata
+2. acquires a fresh user access token before expiry
+3. updates Spark catalog auth configuration in-session
+4. retries failed catalog operations once after token renewal
+
+Short-term implementation notes:
+
+- Keep renewal logic in a small shared helper used by notebooks and example
+   scripts.
+- Do not require a full logout/login roundtrip for normal token expiry.
+- Prefer renewal from a controlled server-side endpoint where possible.
+- If direct refresh is used temporarily, limit scope and lifetime and avoid
+   persisting refresh credentials in notebook files or outputs.
+
+#### Long-term (target): Token broker / exchange service
+
+Introduce a dedicated token broker that mints short-lived Polaris-compatible
+tokens on behalf of the authenticated Jupyter user.
+
+Target flow:
+
+1. user authenticates to JupyterHub with Keycloak
+2. notebook runtime requests a short-lived data-plane token from broker
+3. broker validates caller identity and exchanges/mints token using secure
+    server-side credentials
+4. notebook and Spark use only short-lived access tokens
+5. broker refreshes/exchanges as needed without requiring user relogin
+
+Broker requirements:
+
+- preserve individual user identity and effective groups in resulting token
+- enforce strict caller binding and audience/scope constraints
+- issue short-lived tokens only
+- never expose long-lived broker credentials to notebook runtimes
+- provide auditable logs that correlate user, request, and issued token metadata
+
+### Option assessment
+
+1. Increase Keycloak token TTL only
+    - Pros: fast operational relief
+    - Cons: weakens security posture and does not solve lifecycle architecture
+2. Notebook helper renewal (approved short-term)
+    - Pros: immediate UX improvement, compatible with identity goals
+    - Cons: still transitional without centralized brokering
+3. Service principal for interactive Spark
+    - Pros: simple operational model
+    - Cons: breaks per-user authorization and audit goals for interactive usage
+4. Broker/exchange service (approved target)
+    - Pros: strongest alignment with security + UX + per-user authorization
+    - Cons: requires new service and integration work
+
+### Definition of done
+
+Short-term done when:
+
+- notebooks continue through normal token expiry without manual relogin
+- Spark catalog operations recover automatically after token rotation
+- user identity at Polaris remains user-specific (not collapsed to shared
+   principal)
+
+Long-term done when:
+
+- notebook runtimes no longer require direct refresh-token handling
+- broker-issued short-lived tokens are the standard interactive data-plane
+   credential
+- audit logs can correlate Keycloak identity, notebook request, broker issuance,
+   and Polaris authorization decision
+
 ### Phase 0: Discovery and capability validation
 
 Validate product capabilities and constraints before committing implementation details:
@@ -535,6 +626,12 @@ Deliverables:
 - proof of concept notebook access path
 - audit-context validation notes
 - project namespace proof of concept
+
+Token-lifecycle deliverables for this phase:
+
+- notebook token-renewal helper design
+- Spark in-session token update mechanism
+- relogin-free expiry recovery validation for representative notebooks
 
 ### Phase 3: Spark + Iceberg + Polaris user-context path
 
@@ -609,6 +706,126 @@ Deliverables:
 - migration completion checklist
 - project namespace user guidance
 
+### Phase 7: Token broker and exchange hardening
+
+Move from notebook-managed renewal to broker-managed short-lived credentials:
+
+- implement broker service with strict identity and audience validation
+- integrate JupyterHub/notebook clients with broker endpoint
+- remove notebook dependence on direct refresh-token handling
+- add issuance and exchange audit events with trace correlation
+- define fallback behavior when broker is unavailable
+
+Deliverables:
+
+- broker service design and implementation
+- end-to-end token exchange flow validation for Jupyter + Spark
+- security review of broker scopes, TTLs, and credential storage
+- migration plan to retire temporary notebook-side renewal paths
+
+## AuthManager Prototype Path
+
+Iceberg 1.9+ includes the AuthManager API, which provides a more viable medium-term
+path than notebook-managed token refresh for long-lived Spark sessions.
+
+### Why AuthManager matters here
+
+- Spark currently relies on Iceberg REST catalog auth behavior that does not recover
+   reliably with Keycloak token refresh in long-lived sessions.
+- Updating notebook variables or Spark conf after catalog initialization is not a
+   dependable fix once the REST catalog client is already live.
+- A custom AuthManager moves token acquisition/rotation into the JVM-side catalog
+   auth layer where Spark is actually making catalog requests.
+
+### What is available today
+
+- Iceberg AuthManager API enablement landed in Iceberg 1.9.0.
+- Shared/external AuthManager injection into RESTCatalog was discussed but did not
+   land in core.
+- Therefore, the realistic implementation path is a custom AuthManager class loaded
+   on the Spark classpath and configured through Iceberg auth properties.
+
+### Recommended prototype shape
+
+Build a custom `teehr` AuthManager implementation in Java or Scala that:
+
+1. accepts a stable user/session identifier from the Spark session context or catalog
+    properties
+2. obtains short-lived Polaris-compatible access tokens from a broker endpoint
+3. caches tokens in-memory with proactive refresh ahead of `exp`
+4. returns auth headers to Iceberg REST calls without depending on notebook-side
+    Python token mutation
+5. supports recovery by reacquiring tokens independently of the notebook kernel state
+
+### Strongly preferred token source
+
+Use a broker or local sidecar endpoint, not direct refresh-token handling inside
+Spark catalog properties.
+
+Preferred flow:
+
+1. user authenticates to JupyterHub with Keycloak
+2. notebook runtime receives stable user/session context
+3. Spark AuthManager calls broker with that context
+4. broker validates caller/session and returns a short-lived Polaris access token
+5. AuthManager refreshes from broker as needed for the life of the Spark session
+
+### Why broker-backed is preferred
+
+- avoids storing long-lived refresh credentials in Spark config or executors
+- centralizes audit, policy, and failure handling
+- preserves per-user authorization semantics at Polaris
+- allows independent evolution of Keycloak refresh/exchange logic without pushing
+   auth complexity into notebooks
+
+Concrete prototype artifacts now in this repo:
+
+- broker contract: `docs/polaris-broker-api-contract.md`
+- AuthManager scaffold root: `spark/authmanager-prototype/`
+- prototype manager class: `spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/TeehrBrokerAuthManager.java`
+- prototype session class: `spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/BrokerBackedAuthSession.java`
+
+Prototype property contract used by the manager:
+
+- `rest.auth.teehr.broker.url`
+- `rest.auth.teehr.user-id`
+- `rest.auth.teehr.session-id`
+- `rest.auth.teehr.realm`
+- `rest.auth.teehr.catalog` (default `iceberg`)
+- `rest.auth.teehr.requested-ttl-seconds` (default `600`)
+- `rest.auth.teehr.request-timeout-ms` (default `5000`)
+- `rest.auth.teehr.refresh-skew-seconds` (default `60`)
+
+### Prototype integration points
+
+- package custom AuthManager in a jar available to Spark driver and executors
+- configure Spark Iceberg catalog to use custom auth manager type/class
+- pass only minimal user/session context from notebook to Spark
+- keep current notebook refresh helper as fallback for direct REST/API calls, but
+   do not treat it as the primary fix for Spark session longevity
+
+### Prototype success criteria
+
+1. Spark interactive session survives normal Keycloak access-token expiry without
+    full Spark restart
+2. per-user Polaris authorization still reflects current Keycloak-derived entitlements
+3. no long-lived refresh token is exposed in notebook code or Spark SQL properties
+4. audit logs can correlate notebook user, broker issuance, and Polaris access
+
+### Near-term recommendation while prototyping
+
+- keep longer access-token TTL for user experience stability
+- keep notebook-side proactive refresh for direct API access
+- treat custom AuthManager plus broker as the real fix for Spark session continuity
+
+Execution checklist for this prototype:
+
+1. build the prototype jar from `spark/authmanager-prototype/`
+2. place jar on Spark driver and executor classpaths
+3. configure `spark.sql.catalog.<catalog>.rest.auth.type` to the custom class name
+4. provide the `rest.auth.teehr.*` properties via Spark config
+5. validate session behavior across at least one access-token expiration window
+
 ## Open Design Questions
 
 1. What auth mechanism does the selected Polaris deployment support for end-user principals?
@@ -626,6 +843,19 @@ Deliverables:
 13. What audit trail is required to correlate Keycloak user, notebook/API request, Trino/Spark execution, effective groups, project namespace ownership, and Polaris decision?
 14. What governance process should control direct per-user exceptions?
 15. What quotas, lifecycle rules, or cleanup policies should apply to project namespaces?
+
+## Token Lifecycle Immediate Execution Plan
+
+1. Build shared notebook token utility with expiry introspection and proactive
+   renewal threshold.
+2. Add Spark catalog token update function and one-time retry wrapper for
+   authorization failures attributable to token expiry.
+3. Wire utility into developer notebooks and example scripts first.
+4. Add observability fields: token issue time, expiry, renewal attempts,
+   renewal outcome, and Spark operation retry outcome.
+5. Define broker API contract and security model in parallel.
+6. Implement broker, then cut notebooks over from direct renewal to broker
+   issuance.
 
 ## Immediate Next Steps
 
