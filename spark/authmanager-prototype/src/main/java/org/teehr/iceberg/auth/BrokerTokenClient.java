@@ -28,6 +28,8 @@ final class BrokerTokenClient {
       String sessionId,
       String realm,
       String catalog,
+      String audience,
+      String subjectToken,
       long requestedTtlSeconds,
       Duration timeout)
       throws IOException, InterruptedException {
@@ -38,18 +40,27 @@ final class BrokerTokenClient {
     body.put("realm", realm);
     body.put("catalog", catalog);
     body.put("requested_ttl_seconds", requestedTtlSeconds);
-    body.put("audience", "polaris");
+    body.put("audience", audience);
 
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(brokerUrl))
             .header("Content-Type", "application/json")
+        .header("Authorization", "Bearer " + subjectToken)
             .timeout(timeout)
             .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(body)))
             .build();
 
     HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     if (response.statusCode() != 200) {
-      throw new IOException("Broker token request failed with status " + response.statusCode());
+      String bodySnippet = response.body() == null ? "" : response.body();
+      if (bodySnippet.length() > 500) {
+        bodySnippet = bodySnippet.substring(0, 500);
+      }
+      throw new IOException(
+          "Broker token request failed with status "
+              + response.statusCode()
+              + ": "
+              + bodySnippet);
     }
 
     JsonNode payload = MAPPER.readTree(response.body());

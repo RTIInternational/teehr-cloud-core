@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import org.apache.iceberg.rest.HTTPHeaders;
 import org.apache.iceberg.rest.HTTPRequest;
 import org.apache.iceberg.rest.auth.AuthSession;
@@ -18,6 +19,8 @@ final class BrokerBackedAuthSession implements AuthSession {
   private final String sessionId;
   private final String realm;
   private final String catalog;
+  private final String audience;
+  private final Supplier<String> subjectTokenSupplier;
   private final Duration timeout;
   private final long requestedTtlSeconds;
   private final long refreshSkewSeconds;
@@ -31,6 +34,8 @@ final class BrokerBackedAuthSession implements AuthSession {
       String sessionId,
       String realm,
       String catalog,
+      String audience,
+      Supplier<String> subjectTokenSupplier,
       Duration timeout,
       long requestedTtlSeconds,
       long refreshSkewSeconds) {
@@ -40,6 +45,8 @@ final class BrokerBackedAuthSession implements AuthSession {
     this.sessionId = sessionId;
     this.realm = realm;
     this.catalog = catalog;
+    this.audience = audience;
+    this.subjectTokenSupplier = subjectTokenSupplier;
     this.timeout = timeout;
     this.requestedTtlSeconds = requestedTtlSeconds;
     this.refreshSkewSeconds = refreshSkewSeconds;
@@ -69,6 +76,11 @@ final class BrokerBackedAuthSession implements AuthSession {
       }
 
       try {
+        String subjectToken = subjectTokenSupplier.get();
+        if (subjectToken == null || subjectToken.isBlank()) {
+          throw new IllegalStateException("Subject token supplier returned an empty token");
+        }
+
         BrokerToken refreshed =
             tokenClient.mintToken(
                 brokerUrl,
@@ -76,6 +88,8 @@ final class BrokerBackedAuthSession implements AuthSession {
                 sessionId,
                 realm,
                 catalog,
+                audience,
+                subjectToken,
                 requestedTtlSeconds,
                 timeout);
         cachedToken.set(refreshed);

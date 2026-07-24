@@ -25,7 +25,9 @@ Set the auth manager class as the Iceberg REST auth type:
 --conf spark.sql.catalog.iceberg.rest.auth.teehr.user-id=${POLARIS_USER_ID} \
 --conf spark.sql.catalog.iceberg.rest.auth.teehr.session-id=${JUPYTERHUB_SERVER_NAME} \
 --conf spark.sql.catalog.iceberg.rest.auth.teehr.realm=teehr \
---conf spark.sql.catalog.iceberg.rest.auth.teehr.catalog=iceberg
+--conf spark.sql.catalog.iceberg.rest.auth.teehr.catalog=iceberg \
+--conf spark.sql.catalog.iceberg.rest.auth.teehr.audience=account \
+--conf spark.sql.catalog.iceberg.rest.auth.teehr.subject-token-env=POLARIS_USER_TOKEN
 ```
 
 ## Prototype notes
@@ -33,3 +35,5 @@ Set the auth manager class as the Iceberg REST auth type:
 - Keep this classpath-local to development images until broker authn/authz is production-ready.
 - Do not log access tokens.
 - Use broker-issued token TTL of 5 to 15 minutes with proactive refresh.
+- The manager sends the subject access token to the broker in the Authorization header and requests an exchanged Polaris token.
+- Provide a subject token via `rest.auth.teehr.subject-token` (testing only) or `rest.auth.teehr.subject-token-env`.

@@ -3,6 +3,7 @@ package org.teehr.iceberg.auth;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.apache.iceberg.rest.RESTClient;
 import org.apache.iceberg.rest.auth.AuthManager;
 import org.apache.iceberg.rest.auth.AuthSession;
@@ -42,6 +43,9 @@ public class TeehrBrokerAuthManager implements AuthManager {
       String sessionId = required(properties, TeehrAuthProperties.SESSION_ID);
       String realm = required(properties, TeehrAuthProperties.REALM);
       String catalog = properties.getOrDefault(TeehrAuthProperties.CATALOG, "iceberg");
+        String audience =
+          properties.getOrDefault(TeehrAuthProperties.AUDIENCE, TeehrAuthProperties.DEFAULT_AUDIENCE);
+        Supplier<String> subjectTokenSupplier = subjectTokenSupplier(properties);
 
       int timeoutMs =
           PropertyUtil.propertyAsInt(
@@ -69,6 +73,8 @@ public class TeehrBrokerAuthManager implements AuthManager {
               sessionId,
               realm,
               catalog,
+              audience,
+              subjectTokenSupplier,
               Duration.ofMillis(timeoutMs),
               requestedTtlSeconds,
               refreshSkewSeconds);
@@ -97,5 +103,28 @@ public class TeehrBrokerAuthManager implements AuthManager {
       throw new IllegalArgumentException("Missing required property: " + key);
     }
     return value;
+  }
+
+  private static Supplier<String> subjectTokenSupplier(Map<String, String> properties) {
+    String explicitToken = properties.get(TeehrAuthProperties.SUBJECT_TOKEN);
+    if (explicitToken != null && !explicitToken.isBlank()) {
+      return () -> explicitToken;
+    }
+
+    String tokenEnv =
+        properties.getOrDefault(
+            TeehrAuthProperties.SUBJECT_TOKEN_ENV, TeehrAuthProperties.DEFAULT_SUBJECT_TOKEN_ENV);
+
+    return () -> {
+      String token = System.getenv(tokenEnv);
+      if (token == null || token.isBlank()) {
+        throw new IllegalStateException(
+            "Missing subject token: set "
+                + TeehrAuthProperties.SUBJECT_TOKEN
+                + " or export env var "
+                + tokenEnv);
+      }
+      return token;
+    };
   }
 }
