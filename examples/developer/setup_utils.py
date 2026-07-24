@@ -200,6 +200,7 @@ def create_minio_spark_session(
     polaris_token: Optional[str] = None,
     force_recreate_session: bool = False,
     update_configs: Optional[Dict[str, str]] = None,
+    use_authmanager: Optional[bool] = None,
 ):
     """Start a Spark session configured for the local Polaris REST catalog.
 
@@ -233,7 +234,35 @@ def create_minio_spark_session(
         "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
     }
 
-    if polaris_token:
+    resolved_use_authmanager = (
+        use_authmanager
+        if use_authmanager is not None
+        else _as_bool_str(os.getenv("POLARIS_USE_AUTHMANAGER", "false")) == "true"
+    )
+
+    if resolved_use_authmanager:
+        broker_url = os.getenv("POLARIS_BROKER_URL", "http://teehr-api:8000/auth/polaris-token")
+        authmanager_user_id = os.getenv("JUPYTERHUB_USER", "admin")
+        authmanager_session_id = (
+            os.getenv("JUPYTERHUB_SERVER_NAME", "").strip() or authmanager_user_id
+        )
+        broker_audience = os.getenv("POLARIS_BROKER_AUDIENCE", "account")
+
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.type"] = (
+            "org.teehr.iceberg.auth.TeehrBrokerAuthManager"
+        )
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.broker.url"] = broker_url
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.user-id"] = authmanager_user_id
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.session-id"] = (
+            authmanager_session_id
+        )
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.realm"] = polaris_realm
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.catalog"] = "iceberg"
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.audience"] = broker_audience
+        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.subject-token-env"] = (
+            "POLARIS_USER_TOKEN"
+        )
+    elif polaris_token:
         merged_configs["spark.sql.catalog.iceberg.rest.auth.type"] = "oauth2"
         merged_configs["spark.sql.catalog.iceberg.token"] = polaris_token
         merged_configs["spark.sql.catalog.iceberg.rest.auth.oauth2.token"] = polaris_token
@@ -300,7 +329,7 @@ def request_broker_polaris_token(
 ) -> Tuple[str, int, str]:
     endpoint = broker_url or os.getenv("POLARIS_BROKER_URL", "http://teehr-api:8000/auth/polaris-token")
     active_realm = realm or os.getenv("POLARIS_DEFAULT_REALM", "teehr")
-    active_audience = audience or os.getenv("POLARIS_BROKER_AUDIENCE", "polaris")
+    active_audience = audience or os.getenv("POLARIS_BROKER_AUDIENCE", "account")
 
     if not bearer_token:
         raise RuntimeError("bearer_token is required to request a broker token")
