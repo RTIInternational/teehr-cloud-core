@@ -2,6 +2,8 @@ kind: Build
 type: container
 name: teehr-spark-executor-image
 description: Build TEEHR Spark Executor Image
+dependencies:
+  - deploy.stage-authmanager-jar
 environments:
   - local
   - remote

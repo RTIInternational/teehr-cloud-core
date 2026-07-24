@@ -1,0 +1,14 @@
+kind: Deploy
+type: exec
+name: stage-authmanager-jar
+description: Build and stage AuthManager jar into Spark and Jupyter Docker contexts
+environments:
+  - local
+  - remote
+spec:
+  deployCommand:
+    - bash
+    - -c
+    - >-
+      cd "${project.root}" &&
+      bash ./scripts/stage_authmanager_jar.sh

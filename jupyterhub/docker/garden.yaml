@@ -2,6 +2,8 @@ kind: Build
 type: container
 name: teehr-jupyter-driver-image-edge
 description: Build TEEHR Jupyter Driver Image
+dependencies:
+  - deploy.stage-authmanager-jar
 spec:
   dockerfile: Dockerfile.jupyter-driver
   localId: jupyter-driver
@@ -16,6 +18,8 @@ kind: Build
 type: container
 name: teehr-jupyter-driver-image-stable
 description: Build TEEHR Jupyter Driver Image
+dependencies:
+  - deploy.stage-authmanager-jar
 spec:
   dockerfile: Dockerfile.jupyter-driver
   localId: jupyter-driver
@@ -31,6 +35,8 @@ kind: Build
 type: container
 name: teehr-jupyter-driver-image-previous
 description: Build TEEHR Jupyter Driver Image
+dependencies:
+  - deploy.stage-authmanager-jar
 spec:
   dockerfile: Dockerfile.jupyter-driver
   localId: jupyter-driver

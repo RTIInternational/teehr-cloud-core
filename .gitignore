@@ -12,3 +12,5 @@ __pycache__/
 .python-version
 *.egg-info
 project.garden.yml
+jupyterhub/docker/teehr-authmanager.jar
+spark/docker/teehr-authmanager.jar
