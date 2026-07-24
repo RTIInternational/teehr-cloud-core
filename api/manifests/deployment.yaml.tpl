@@ -76,6 +76,51 @@ spec:
             configMapKeyRef:
               name: teehr-api-config
               key: KEYCLOAK_ALLOWED_AUDIENCES
+        - name: BROKER_TOKEN_EXCHANGE_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_TOKEN_EXCHANGE_ENABLED
+        - name: BROKER_TOKEN_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_TOKEN_ENDPOINT
+        - name: BROKER_OAUTH_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_OAUTH_CLIENT_ID
+        - name: BROKER_OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-secrets
+              key: client-secret
+        - name: BROKER_TARGET_AUDIENCE
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_TARGET_AUDIENCE
+        - name: BROKER_DEFAULT_SCOPE
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_DEFAULT_SCOPE
+        - name: BROKER_MIN_TTL_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_MIN_TTL_SECONDS
+        - name: BROKER_MAX_TTL_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_MAX_TTL_SECONDS
+        - name: BROKER_REQUEST_TIMEOUT_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_REQUEST_TIMEOUT_SECONDS
         - name: API_KEYS_DB_HOST
           value: keycloak-pg
         - name: API_KEYS_DB_PORT

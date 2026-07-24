@@ -132,6 +132,13 @@ def custom_openapi():
             {"BearerAuth": []},
         ]
 
+    auth_polaris_token = openapi_schema.get("paths", {}).get("/auth/polaris-token", {}).get("post")
+    if auth_polaris_token:
+        auth_polaris_token["security"] = [
+            {"OAuth2Keycloak": ["openid", "profile", "email"]},
+            {"BearerAuth": []},
+        ]
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
@@ -195,7 +202,10 @@ async def auth_context_middleware(request: Request, call_next):
     )
 
     # Keep auth optional while attaching identity for routes that need it.
-    request.state.identity = await resolve_identity(request)
+    try:
+        request.state.identity = await resolve_identity(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     # Require authentication for all non-diagnostic API paths.
     if not exempt_paths and not request.state.identity.is_authenticated:

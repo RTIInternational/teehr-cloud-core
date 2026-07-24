@@ -128,6 +128,9 @@ data:
           "protocol": "openid-connect",
           "publicClient": false,
           "serviceAccountsEnabled": true,
+          "attributes": {
+            "standard.token.exchange.enabled": "true"
+          },
           "secret": "$(env:TEEHR_API_CLIENT_SECRET)"
         },
         {
@@ -165,6 +168,17 @@ data:
                 "userinfo.token.claim": "true",
                 "claim.name": "realm_access.roles",
                 "jsonType.label": "String"
+              }
+            },
+            {
+              "name": "audience-teehr-api",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": "teehr-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
               }
             }
           ],

@@ -22,6 +22,13 @@ This contract is intentionally narrow:
 - Authn: broker validates caller using cluster-local identity and request signature/session binding
 - Content-Type: `application/json`
 
+Current prototype implementation in this repo:
+
+- Method: `POST`
+- Path: `/auth/polaris-token`
+- Service: `teehr-api`
+- Caller auth: Keycloak bearer token validated by `teehr-api`
+
 ## Request Body
 
 ```json
@@ -32,7 +39,7 @@ This contract is intentionally narrow:
   "catalog": "iceberg",
   "groups": ["iceberg-user", "hydrology-team"],
   "requested_ttl_seconds": 600,
-  "audience": "polaris"
+  "audience": "account"
 }
 ```
 
@@ -120,3 +127,36 @@ The Spark-side AuthManager should:
 - user-delegated arbitrary scope requests
 - long-lived refresh token distribution to Spark
 - batch token mint APIs
+
+## Prototype Test (Current Repo)
+
+From a Jupyter single-user pod shell:
+
+```bash
+python - <<'PY'
+import json
+import os
+import requests
+
+token = os.environ["POLARIS_USER_TOKEN"]
+realm = os.getenv("POLARIS_DEFAULT_REALM", "teehr")
+user_id = os.getenv("JUPYTERHUB_USER", "admin")
+session_id = os.getenv("JUPYTERHUB_SERVER_NAME", user_id)
+
+resp = requests.post(
+  "http://teehr-api:8000/auth/polaris-token",
+  headers={"Authorization": f"Bearer {token}"},
+  json={
+    "user_id": user_id,
+    "session_id": session_id,
+    "realm": realm,
+    "catalog": "iceberg",
+    "requested_ttl_seconds": 600,
+    "audience": "account",
+  },
+  timeout=20,
+)
+print(resp.status_code)
+print(json.dumps(resp.json(), indent=2)[:1200])
+PY
+```
