@@ -119,10 +119,12 @@ async def get_primary_timeseries_items(
     configuration_name: list[str] | None = Query(
         None, description="Configuration name filter(s) - can be specified multiple times"
     ),
-    duration: str | None = Query(
+    timestep_duration: str | None = Query(
         None,
-        description="ISO 8601 duration for value_time step filtering (e.g. 'PT1H', 'PT15M'). "
-                    "Only returns rows where value_time aligns to the specified interval.",
+        description="ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M'). "
+                    "Returns rows where value_time is divisible by the duration. Mixed timesteps may be returned "
+                    "if multiple sources are present — e.g. 'PT15M' returns 00, 15, 30, 45 timestamps from any available data."
+                    "Year and month components (e.g. 'P1Y', 'P1M') are not supported and will return a 400 error.",
     ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
@@ -146,6 +148,7 @@ async def get_primary_timeseries_items(
         - datetime: ISO 8601 interval for value_time (e.g., 2020-01-01/2020-12-31)
         - variable_name: Variable name(s) (repeat query param for multiple)
         - configuration_name: Configuration name(s) (repeat query param for multiple)
+        - timestep duration: ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M').
         - limit and offset for pagination
 
         Multi-value example:
@@ -199,10 +202,10 @@ async def get_primary_timeseries_items(
             if configuration_condition:
                 where_conditions.append(configuration_condition)
 
-        # Filter by duration (value_time step alignment)
-        if duration:
+        # Filter value_time by timestep duration
+        if timestep_duration:
             try:
-                where_conditions.append(_build_duration_condition("value_time", duration))
+                where_conditions.append(_build_duration_condition("value_time", timestep_duration))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -383,10 +386,12 @@ async def get_secondary_timeseries_items(
     configuration_name: list[str] | None = Query(
         None, description="Configuration name filter(s) - can be specified multiple times"
     ),
-    duration: str | None = Query(
+    timestep_duration: str | None = Query(
         None,
-        description="ISO 8601 duration for value_time step filtering (e.g. 'PT1H', 'PT15M'). "
-                    "Only returns rows where value_time aligns to the specified interval.",
+        description="ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M'). "
+                    "Returns rows where value_time is divisible by the duration. Mixed timesteps may be returned "
+                    "if multiple sources are present — e.g. 'PT15M' returns 00, 15, 30, 45 timestamps from any available data."
+                    "Year and month components (e.g. 'P1Y', 'P1M') are not supported and will return a 400 error.",
     ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
@@ -411,6 +416,7 @@ async def get_secondary_timeseries_items(
     - reference_time: ISO 8601 interval for reference_time (e.g., 2025-11-01/..)
     - variable_name: Variable name(s) (repeat query param for multiple)
     - configuration_name: Configuration name(s) (repeat query param for multiple)
+    - timestep duration: ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M').
     - limit and offset for pagination
 
     Multi-value example:
@@ -504,10 +510,10 @@ async def get_secondary_timeseries_items(
             if configuration_condition:
                 where_conditions.append(configuration_condition)
 
-        # Filter by duration (value_time step alignment)
-        if duration:
+        # Filter value_time by timestep duration
+        if timestep_duration:
             try:
-                where_conditions.append(_build_duration_condition("st.value_time", duration))
+                where_conditions.append(_build_duration_condition("st.value_time", timestep_duration))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
 
