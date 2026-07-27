@@ -10,5 +10,4 @@ spec:
     - bash
     - -c
     - >-
-      cd "${project.root}" &&
-      bash ./scripts/stage_authmanager_jar.sh
+      bash ../../scripts/stage_authmanager_jar.sh
