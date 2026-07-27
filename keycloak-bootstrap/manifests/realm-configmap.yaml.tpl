@@ -9,7 +9,7 @@ data:
     {
       "realm": "teehr",
       "enabled": true,
-      "accessTokenLifespan": 1800,
+      "accessTokenLifespan": 300,
       "loginTheme": "teehr",
       "registrationAllowed": true,
       "loginWithEmailAllowed": true,
