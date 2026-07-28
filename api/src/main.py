@@ -74,6 +74,20 @@ def custom_openapi():
             }
         },
     }
+    security_schemes["OAuth2KeycloakPassword"] = {
+        "type": "oauth2",
+        "description": "Login with Keycloak username/password using the password grant",
+        "flows": {
+            "password": {
+                "tokenUrl": config.KEYCLOAK_TOKEN_URL,
+                "scopes": {
+                    "openid": "OpenID Connect scope",
+                    "profile": "User profile",
+                    "email": "User email",
+                },
+            }
+        },
+    }
     security_schemes["ApiKeyAuth"] = {
         "type": "apiKey",
         "in": "header",
@@ -98,6 +112,7 @@ def custom_openapi():
             operation.setdefault(
                 "security",
                 [
+                    {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
                     {"OAuth2Keycloak": ["openid", "profile", "email"]},
                     {"BearerAuth": []},
                     {"ApiKeyAuth": []},
@@ -108,6 +123,7 @@ def custom_openapi():
     auth_me = openapi_schema.get("paths", {}).get("/auth/me", {}).get("get")
     if auth_me:
         auth_me["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
             {"ApiKeyAuth": []},
@@ -116,6 +132,7 @@ def custom_openapi():
     auth_keys_get = openapi_schema.get("paths", {}).get("/auth/api-keys", {}).get("get")
     if auth_keys_get:
         auth_keys_get["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
@@ -123,6 +140,7 @@ def custom_openapi():
     auth_keys_post = openapi_schema.get("paths", {}).get("/auth/api-keys", {}).get("post")
     if auth_keys_post:
         auth_keys_post["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
@@ -130,6 +148,7 @@ def custom_openapi():
     auth_keys_delete = openapi_schema.get("paths", {}).get("/auth/api-keys/{key_id}", {}).get("delete")
     if auth_keys_delete:
         auth_keys_delete["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
@@ -137,6 +156,7 @@ def custom_openapi():
     auth_polaris_token = openapi_schema.get("paths", {}).get("/auth/polaris-token", {}).get("post")
     if auth_polaris_token:
         auth_polaris_token["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
