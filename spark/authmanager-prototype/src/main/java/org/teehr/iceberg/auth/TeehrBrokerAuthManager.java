@@ -1,6 +1,7 @@
 package org.teehr.iceberg.auth;
 
 import java.net.http.HttpClient;
+import java.net.http.HttpClient.Version;
 import java.time.Duration;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -43,9 +44,10 @@ public class TeehrBrokerAuthManager implements AuthManager {
       String sessionId = required(properties, TeehrAuthProperties.SESSION_ID);
       String realm = required(properties, TeehrAuthProperties.REALM);
       String catalog = properties.getOrDefault(TeehrAuthProperties.CATALOG, "iceberg");
-        String audience =
+      String audience =
           properties.getOrDefault(TeehrAuthProperties.AUDIENCE, TeehrAuthProperties.DEFAULT_AUDIENCE);
-        Supplier<String> subjectTokenSupplier = subjectTokenSupplier(properties);
+      Supplier<String> brokerSessionTokenSupplier = brokerSessionTokenSupplier(properties);
+      Supplier<String> subjectTokenSupplier = subjectTokenSupplier(properties);
 
       int timeoutMs =
           PropertyUtil.propertyAsInt(
@@ -63,7 +65,8 @@ public class TeehrBrokerAuthManager implements AuthManager {
               TeehrAuthProperties.REQUESTED_TTL_SECONDS,
               TeehrAuthProperties.DEFAULT_REQUESTED_TTL_SECONDS);
 
-      BrokerTokenClient tokenClient = new BrokerTokenClient(HttpClient.newHttpClient());
+      BrokerTokenClient tokenClient =
+          new BrokerTokenClient(HttpClient.newBuilder().version(Version.HTTP_1_1).build());
 
       catalogSession =
           new BrokerBackedAuthSession(
@@ -74,6 +77,7 @@ public class TeehrBrokerAuthManager implements AuthManager {
               realm,
               catalog,
               audience,
+              brokerSessionTokenSupplier,
               subjectTokenSupplier,
               Duration.ofMillis(timeoutMs),
               requestedTtlSeconds,
@@ -123,6 +127,26 @@ public class TeehrBrokerAuthManager implements AuthManager {
                 + TeehrAuthProperties.SUBJECT_TOKEN
                 + " or export env var "
                 + tokenEnv);
+      }
+      return token;
+    };
+  }
+
+  private static Supplier<String> brokerSessionTokenSupplier(Map<String, String> properties) {
+    String explicitToken = properties.get(TeehrAuthProperties.BROKER_SESSION_TOKEN);
+    if (explicitToken != null && !explicitToken.isBlank()) {
+      return () -> explicitToken;
+    }
+
+    String tokenEnv =
+        properties.getOrDefault(
+            TeehrAuthProperties.BROKER_SESSION_TOKEN_ENV,
+            TeehrAuthProperties.DEFAULT_BROKER_SESSION_TOKEN_ENV);
+
+    return () -> {
+      String token = System.getenv(tokenEnv);
+      if (token == null || token.isBlank()) {
+        return null;
       }
       return token;
     };

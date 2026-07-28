@@ -1,0 +1,5 @@
+/Users/mdenno/repos/teehr-cloud-core/spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/BrokerBackedAuthSession.java
+/Users/mdenno/repos/teehr-cloud-core/spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/BrokerToken.java
+/Users/mdenno/repos/teehr-cloud-core/spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/BrokerTokenClient.java
+/Users/mdenno/repos/teehr-cloud-core/spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/TeehrAuthProperties.java
+/Users/mdenno/repos/teehr-cloud-core/spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/TeehrBrokerAuthManager.java

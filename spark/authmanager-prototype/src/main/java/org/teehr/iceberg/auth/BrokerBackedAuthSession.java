@@ -20,6 +20,7 @@ final class BrokerBackedAuthSession implements AuthSession {
   private final String realm;
   private final String catalog;
   private final String audience;
+  private final Supplier<String> brokerSessionTokenSupplier;
   private final Supplier<String> subjectTokenSupplier;
   private final Duration timeout;
   private final long requestedTtlSeconds;
@@ -35,6 +36,7 @@ final class BrokerBackedAuthSession implements AuthSession {
       String realm,
       String catalog,
       String audience,
+      Supplier<String> brokerSessionTokenSupplier,
       Supplier<String> subjectTokenSupplier,
       Duration timeout,
       long requestedTtlSeconds,
@@ -46,6 +48,7 @@ final class BrokerBackedAuthSession implements AuthSession {
     this.realm = realm;
     this.catalog = catalog;
     this.audience = audience;
+    this.brokerSessionTokenSupplier = brokerSessionTokenSupplier;
     this.subjectTokenSupplier = subjectTokenSupplier;
     this.timeout = timeout;
     this.requestedTtlSeconds = requestedTtlSeconds;
@@ -76,8 +79,21 @@ final class BrokerBackedAuthSession implements AuthSession {
       }
 
       try {
-        String subjectToken = subjectTokenSupplier.get();
-        if (subjectToken == null || subjectToken.isBlank()) {
+        String brokerSessionToken =
+            brokerSessionTokenSupplier == null ? null : brokerSessionTokenSupplier.get();
+        String subjectToken = null;
+        if (subjectTokenSupplier != null) {
+          try {
+            subjectToken = subjectTokenSupplier.get();
+          } catch (Exception e) {
+            if (brokerSessionToken == null || brokerSessionToken.isBlank()) {
+              throw e;
+            }
+          }
+        }
+
+        if ((brokerSessionToken == null || brokerSessionToken.isBlank())
+            && (subjectToken == null || subjectToken.isBlank())) {
           throw new IllegalStateException("Subject token supplier returned an empty token");
         }
 
@@ -89,6 +105,7 @@ final class BrokerBackedAuthSession implements AuthSession {
                 realm,
                 catalog,
                 audience,
+                brokerSessionToken,
                 subjectToken,
                 requestedTtlSeconds,
                 timeout);

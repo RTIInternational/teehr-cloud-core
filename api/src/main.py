@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse
 
 from .api_key_store import ApiKeyStore
 from .auth import KeycloakJWTValidator, resolve_identity
+from .broker import set_delegated_session_store
 from .config import config
+from .delegated_session_store import DelegatedSessionStore
 from .models import HealthResponse
 from .rate_limit import InMemoryRateLimiter
 from .routes import router
@@ -139,6 +141,10 @@ def custom_openapi():
             {"BearerAuth": []},
         ]
 
+    auth_polaris_token_session = openapi_schema.get("paths", {}).get("/auth/polaris-token/session", {}).get("post")
+    if auth_polaris_token_session:
+        auth_polaris_token_session["security"] = []
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
@@ -152,10 +158,14 @@ async def startup_event():
     app.state.rate_limiter = InMemoryRateLimiter()
     app.state.api_key_store = ApiKeyStore(config.API_KEYS_DB_DSN)
     await app.state.api_key_store.startup()
+    app.state.delegated_session_store = DelegatedSessionStore(config.API_KEYS_DB_DSN)
+    await app.state.delegated_session_store.startup()
+    await set_delegated_session_store(app.state.delegated_session_store)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    await app.state.delegated_session_store.shutdown()
     await app.state.api_key_store.shutdown()
 
 # CORS middleware to allow frontend requests - MUST be first middleware
@@ -194,6 +204,9 @@ async def auth_context_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
+    if path == "/auth/polaris-token/session":
+        return await call_next(request)
+
     exempt_paths = (
         path == "/health"
         or path == "/openapi.json"

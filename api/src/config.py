@@ -88,6 +88,15 @@ class Config:
     BROKER_REQUEST_TIMEOUT_SECONDS = int(
         os.environ.get("BROKER_REQUEST_TIMEOUT_SECONDS", "10")
     )
+    BROKER_SUBJECT_CLIENT_ID = os.environ.get("BROKER_SUBJECT_CLIENT_ID", "jupyterhub")
+    BROKER_SUBJECT_CLIENT_SECRET = os.environ.get("BROKER_SUBJECT_CLIENT_SECRET", "")
+    BROKER_DELEGATED_SESSION_TTL_SECONDS = int(
+        os.environ.get("BROKER_DELEGATED_SESSION_TTL_SECONDS", "43200")
+    )
+    BROKER_SESSION_SIGNING_SECRET = os.environ.get(
+        "BROKER_SESSION_SIGNING_SECRET",
+        API_KEY_HASH_SALT,
+    )
 
     # Role-based record/page limits
     ROW_LIMIT_ANON = int(os.environ.get("ROW_LIMIT_ANON", "200"))

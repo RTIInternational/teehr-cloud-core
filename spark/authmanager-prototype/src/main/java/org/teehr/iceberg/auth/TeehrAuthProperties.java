@@ -7,6 +7,8 @@ final class TeehrAuthProperties {
   static final String PREFIX = "rest.auth.teehr.";
 
   static final String BROKER_URL = PREFIX + "broker.url";
+  static final String BROKER_SESSION_TOKEN = PREFIX + "broker-session-token";
+  static final String BROKER_SESSION_TOKEN_ENV = PREFIX + "broker-session-token-env";
   static final String USER_ID = PREFIX + "user-id";
   static final String SESSION_ID = PREFIX + "session-id";
   static final String REALM = PREFIX + "realm";
@@ -23,4 +25,5 @@ final class TeehrAuthProperties {
   static final long DEFAULT_REQUESTED_TTL_SECONDS = 600L;
   static final String DEFAULT_AUDIENCE = "account";
   static final String DEFAULT_SUBJECT_TOKEN_ENV = "POLARIS_USER_TOKEN";
+  static final String DEFAULT_BROKER_SESSION_TOKEN_ENV = "POLARIS_BROKER_SESSION_TOKEN";
 }

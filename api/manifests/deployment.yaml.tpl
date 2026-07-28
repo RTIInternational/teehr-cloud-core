@@ -121,6 +121,26 @@ spec:
             configMapKeyRef:
               name: teehr-api-config
               key: BROKER_REQUEST_TIMEOUT_SECONDS
+        - name: BROKER_SUBJECT_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_SUBJECT_CLIENT_ID
+        - name: BROKER_DELEGATED_SESSION_TTL_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_DELEGATED_SESSION_TTL_SECONDS
+        - name: BROKER_SUBJECT_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: jupyterhub
+              key: OAUTH_CLIENT_SECRET
+        - name: BROKER_SESSION_SIGNING_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-secrets
+              key: client-secret
         - name: API_KEYS_DB_HOST
           value: keycloak-pg
         - name: API_KEYS_DB_PORT
