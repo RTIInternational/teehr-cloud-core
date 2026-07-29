@@ -17,9 +17,6 @@ data:
     polaris.persistence.relational.jdbc.max-duration-in-ms=5000
 
     # Authentication Context Configuration
-    # This realm is configured to use an external identity provider (IDP) for authentication only.
-    #  It accepts tokens issued by Keycloak only.
-    # polaris.authentication.type=external
     # This realm is configured to use both the internal and external authentication.
     #  It accepts tokens issued by both Polaris and Keycloak.
     polaris.authentication.type=mixed
@@ -41,10 +38,28 @@ data:
     quarkus.oidc.connection-retry-count=5
     quarkus.oidc.token.audience=account
     quarkus.oidc.token.issuer=any
-    quarkus.oidc.roles.role-claim-path=realm_access/roles
+
+    # Access control: map Keycloak group membership (JWT 'groups' claim) directly to
+    # Polaris principal roles. This means no user sync is required for group-level
+    # access — adding a user to a Keycloak group immediately grants the corresponding
+    # Polaris permissions on their next token issuance.
+    #
+    # Two patterns are mapped:
+    #   /iceberg-catalog-admins → iceberg-catalog-admin (name mismatch between KC group and Polaris role)
+    #   /teehr-<role>           → teehr-<role>  (e.g. teehr-read-only, teehr-read-write)
+    #
+    # All other Keycloak groups (basic-user, jupyter-user, etc.) produce no match
+    # and are safely ignored by Polaris.
+    #
+    # Individual/table-level grants: use the polaris-sync-principals script to create
+    # a named principal for the user and assign specific catalog-role grants. These
+    # are additive on top of the JWT-based group grants above.
+    quarkus.oidc.roles.role-claim-path=groups
     polaris.oidc.principal-roles-mapper.type=default
-    polaris.oidc.principal-roles-mapper.mappings[0].regex=^(.*)$
-    polaris.oidc.principal-roles-mapper.mappings[0].replacement=PRINCIPAL_ROLE:$1
+    polaris.oidc.principal-roles-mapper.mappings[0].regex=^/?iceberg-catalog-admins$
+    polaris.oidc.principal-roles-mapper.mappings[0].replacement=PRINCIPAL_ROLE:iceberg-catalog-admin
+    polaris.oidc.principal-roles-mapper.mappings[1].regex=^/?teehr-(.+)$
+    polaris.oidc.principal-roles-mapper.mappings[1].replacement=PRINCIPAL_ROLE:teehr-$1
 
     # Storage Properties Integration
     polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3","GCS","AZURE","FILE"]

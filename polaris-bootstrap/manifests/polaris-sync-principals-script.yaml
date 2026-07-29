@@ -5,9 +5,20 @@ metadata:
 data:
   sync_principals.py: |
     """
-    Syncs all enabled Keycloak realm users into Polaris as principal entities
-    and grants matching Polaris principal roles for Keycloak realm roles with
-    the teehr-* prefix.
+    Syncs Keycloak users into Polaris as named principal entities and grants
+    principal role bindings for their teehr-* group memberships.
+
+    NOTE ON DESIGN: Basic group-level access (teehr-read-only, teehr-read-write,
+    iceberg-catalog-admin) is enforced via JWT group claim mapping configured in
+    polaris-config.yaml — no principal sync is required for that to work.
+
+    This script exists for use cases that require a named Polaris principal:
+      - Table-level grants (granting a specific user access to a specific table)
+      - Individual permission overrides beyond group-level defaults
+      - Audit trails tied to a specific Polaris principal entity
+
+    If you only need group-level permissions, this script is not required.
+    The principal role bindings it creates are ADDITIVE to the JWT-based grants.
 
     Required environment variables:
       POLARIS_MANAGEMENT_URL   e.g. http://polaris:8181
