@@ -7,7 +7,7 @@ metadata:
     component: backend
 data:
   # Remote/prod deployment — uses AWS S3 with IRSA or standard AWS_* env vars.
-  ICECHUNK_REPOS: "ua-swann-4km,nwm30-forcing-analysis-assim"
+  ICECHUNK_REPOS: "${var.icechunk.repos}"
   ICECHUNK_BUCKET: "${var.icechunk.bucket}"
   ICECHUNK_PREFIX: "${var.icechunk.prefix}"
   ICECHUNK_BRANCH: "main"
