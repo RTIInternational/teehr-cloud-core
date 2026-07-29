@@ -118,6 +118,8 @@ spec:
           volumeMounts:
             - name: keycloak-bootstrap-config
               mountPath: /config
+            - name: keycloak-local-users-config
+              mountPath: /config/users
       volumes:
         - name: keycloak-bootstrap-config
           configMap:
@@ -125,3 +127,9 @@ spec:
             items:
               - key: teehr-realm.json
                 path: teehr-realm.json
+        - name: keycloak-local-users-config
+          configMap:
+            name: keycloak-local-users-bootstrap
+            items:
+              - key: teehr-local-users.json
+                path: teehr-local-users.json

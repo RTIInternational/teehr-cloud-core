@@ -28,23 +28,26 @@ data:
           },
           "namespace_policies": [
             {
-              "namespace": "public",
+              "namespace": "teehr",
               "roles": [
                 {
-                  "principal_role": "iceberg-namespace-public-read",
-                  "catalog_role": "public_read_role",
+                  "principal_role": "teehr-read-only",
+                  "catalog_role": "teehr_read_only_role",
                   "grants": [
                     {
                       "type": "namespace",
                       "privileges": [
-                        "NAMESPACE_READ_PROPERTIES"
+                        "NAMESPACE_READ_PROPERTIES",
+                        "TABLE_LIST",
+                        "TABLE_READ_PROPERTIES",
+                        "TABLE_READ_DATA"
                       ]
                     }
                   ]
                 },
                 {
-                  "principal_role": "iceberg-namespace-public-write",
-                  "catalog_role": "public_write_role",
+                  "principal_role": "teehr-read-write",
+                  "catalog_role": "teehr_read_write_role",
                   "grants": [
                     {
                       "type": "namespace",
@@ -52,39 +55,12 @@ data:
                         "NAMESPACE_READ_PROPERTIES",
                         "NAMESPACE_WRITE_PROPERTIES",
                         "TABLE_CREATE",
-                        "TABLE_DROP"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "namespace": "restricted",
-              "roles": [
-                {
-                  "principal_role": "iceberg-namespace-restricted-read",
-                  "catalog_role": "restricted_read_role",
-                  "grants": [
-                    {
-                      "type": "namespace",
-                      "privileges": [
-                        "NAMESPACE_READ_PROPERTIES"
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "principal_role": "iceberg-namespace-restricted-write",
-                  "catalog_role": "restricted_write_role",
-                  "grants": [
-                    {
-                      "type": "namespace",
-                      "privileges": [
-                        "NAMESPACE_READ_PROPERTIES",
-                        "NAMESPACE_WRITE_PROPERTIES",
-                        "TABLE_CREATE",
-                        "TABLE_DROP"
+                        "TABLE_DROP",
+                        "TABLE_LIST",
+                        "TABLE_READ_PROPERTIES",
+                        "TABLE_WRITE_PROPERTIES",
+                        "TABLE_READ_DATA",
+                        "TABLE_WRITE_DATA"
                       ]
                     }
                   ]

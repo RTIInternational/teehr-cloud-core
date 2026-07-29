@@ -260,8 +260,24 @@ async def exchange_token_for_polaris_via_broker_session(
     if maybe_new_refresh_token:
         await store.update_refresh_token(delegated_session_id, maybe_new_refresh_token)
 
-    return await exchange_token_for_polaris(
-        subject_token=refreshed_subject_token,
-        audience=record["audience"],
-        requested_ttl_seconds=requested_ttl_seconds,
-    )
+    # Return the refreshed subject token directly — it preserves the user's
+    # group claims and is accepted by Polaris for per-user permission enforcement.
+    # Token exchange with a different audience would strip group claims and
+    # prevent Polaris from mapping the user to their correct principal roles.
+    trace_id = uuid.uuid4().hex
+    expires_at_epoch_seconds = int(time.time()) + clamp_requested_ttl(requested_ttl_seconds)
+    try:
+        token_claims = jwt.get_unverified_claims(refreshed_subject_token)
+        exp = int(token_claims.get("exp", 0))
+        if exp > 0:
+            expires_at_epoch_seconds = exp
+    except (JWTError, ValueError, TypeError):
+        pass
+
+    return {
+        "access_token": refreshed_subject_token,
+        "token_type": "Bearer",
+        "expires_in_seconds": max(expires_at_epoch_seconds - int(time.time()), 1),
+        "expires_at_epoch_seconds": expires_at_epoch_seconds,
+        "trace_id": trace_id,
+    }

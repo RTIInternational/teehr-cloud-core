@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AUTHMANAGER_DIR="$ROOT_DIR/spark/authmanager-prototype"
 SPARK_DOCKER_DIR="$ROOT_DIR/spark/docker"
-JUPYTER_DOCKER_DIR="$ROOT_DIR/jupyterhub/docker"
+JUPYTER_DOCKER_DIR="$ROOT_DIR/jupyterhub-docker"
 
 cd "$ROOT_DIR"
 

@@ -20,7 +20,8 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 | Group | Realm role(s) granted | Extra client roles |
 |---|---|---|
 | basic-user | basic-user | None |
-| iceberg-user | iceberg-user | None |
+| teehr-read-only | teehr-read-only | None |
+| teehr-read-write | teehr-read-write, teehr-read-only | None |
 | jupyter-user | jupyter-user | None |
 | jupyter-admin | jupyter-user | None |
 | key-management-admin | admin | None |
@@ -39,23 +40,24 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 | JupyterHub admin privileges | JupyterHub Authenticator admin_groups | Group: jupyter-admin | Users in jupyter-admin |
 | Keycloak admin console link in TEEHR admin page | TEEHR frontend admin visibility | Role: admin | Users with admin role (same as TEEHR admin UI) |
 | Keycloak admin console capabilities | Keycloak permissions | Role and client roles | Intended primary group appears to be webapi-admin due to realm-management client roles |
-| Iceberg or Trino end-user auth | Not fully wired in this repo | No clear active user-facing Keycloak gate | Undetermined from current implementation |
+| Iceberg or Trino end-user auth | Polaris principal roles via JWT realm roles | Realm roles: teehr-read-only, teehr-read-write, admin | Users default to teehr-read-only; teehr-read-write and admin add broader access |
 
 ## Important Notes
 
 1. key-management-admin and prefect-admin both grant the admin realm role, so both can administer API keys in the current API and frontend implementation.
 2. Prefect is intentionally stricter: it checks membership in the prefect-admin group directly, not just the admin role.
 3. JupyterHub authorization is also group-based, not based on the admin realm role.
-4. Iceberg REST auth rollout is deferred per plan and appears not fully enforced for end-user role mapping yet.
+4. Polaris access is now centered on a single `iceberg.teehr` namespace with default read-only access for all users.
 
 ## Local Test Users
 
-Local environments now seed two Keycloak users automatically via a local-only bootstrap job:
+Local environments now seed three Keycloak users automatically via a local-only bootstrap job:
 
 | User type | Default username | Default password | Group membership |
 |---|---|---|---|
-| Admin test user | admin | admin |basic-user, iceberg-user, jupyter-admin, key-management-admin, prefect-admin, webapi-admin |
-| Regular test user | user | user |basic-user, jupyter-user |
+| Admin test user | admin | admin |basic-user, teehr-read-only, teehr-read-write, jupyter-admin, key-management-admin, prefect-admin, webapi-admin |
+| PowerUser test user | poweruser | poweruser |basic-user, teehr-read-write, jupyter-user |
+| Regular test user | user | user |basic-user, teehr-read-only, jupyter-user |
 
 To add more personas as permissions evolve, update user entries and group assignments in `keycloak-bootstrap/manifests/local-users-configmap.yaml.tpl`.
 

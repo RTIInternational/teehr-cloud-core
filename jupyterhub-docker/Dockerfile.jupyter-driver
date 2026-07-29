@@ -6,6 +6,7 @@ ARG TEEHR_VERSION
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=${NB_PYTHON_PREFIX}/bin:$PATH
+ENV PYTHONPATH=/opt/teehr:${PYTHONPATH}
 
 # Use HTTPS apt mirrors so builds work when plain HTTP egress is blocked.
 RUN set -eux; \
@@ -77,6 +78,7 @@ RUN ARCH=$(uname -m) && \
 RUN mkdir -p /opt/teehr && chown -R ${NB_USER}:${NB_USER} /opt/teehr
 
 COPY executor-pod-template.yaml /opt/teehr/executor-pod-template.yaml
+COPY spark_session_utils.py /opt/teehr/spark_session_utils.py
 
 # Keep driver and executor classpaths aligned for the custom AuthManager.
 COPY teehr-authmanager.jar /opt/spark/jars/teehr-authmanager.jar

@@ -1,0 +1,141 @@
+kind: Build
+type: container
+name: test-scripts
+dependencies:
+  - build.teehr-jupyter-driver-image-edge
+environments:
+  - local
+spec:
+  dockerfile: Dockerfile
+  localId: test-scripts
+  buildArgs:
+    BASE_IMAGE: ${actions.build.teehr-jupyter-driver-image-edge.outputs.deploymentImageName}:${actions.build.teehr-jupyter-driver-image-edge.version}
+
+---
+kind: Test
+name: polaris-keycloak-users
+dependencies:
+  - deploy.keycloak-local-users-bootstrap
+  - build.test-scripts
+timeout: 180
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/keycloak_users_test.py
+
+---
+kind: Test
+name: polaris-oidc-token-validation
+dependencies:
+  - deploy.polaris-bootstrap
+  - build.test-scripts
+timeout: 180
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/polaris_oidc_test.py
+
+---
+kind: Test
+name: polaris-namespace-list
+dependencies:
+  - deploy.polaris-bootstrap
+  - build.test-scripts
+timeout: 180
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/polaris_namespace_test.py
+
+---
+kind: Test
+name: polaris-role-acl-validation
+dependencies:
+  - deploy.polaris-bootstrap
+  - build.test-scripts
+timeout: 180
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/polaris_roles_test.py
+
+---
+kind: Test
+name: polaris-auth-token
+dependencies:
+  - deploy.polaris-bootstrap
+  - deploy.keycloak-local-users-bootstrap
+  - build.test-scripts
+timeout: 240
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/polaris_auth_token_test.py
+
+---
+kind: Test
+name: polaris-permissions-config
+dependencies:
+  - deploy.polaris-bootstrap
+  - deploy.keycloak-local-users-bootstrap
+  - build.test-scripts
+timeout: 180
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/polaris_permissions_config_test.py
+
+---
+kind: Test
+name: spark-permission-enforcement
+dependencies:
+  - deploy.polaris-bootstrap
+  - deploy.keycloak-local-users-bootstrap
+  - build.test-scripts
+timeout: 300
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/spark_permission_test.py
+  memory:
+    min: 2048
+    max: 3072
+  cpu:
+    min: 1000
+    max: 2000
+
+---
+kind: Test
+name: spark-authmanager-enforcement
+dependencies:
+  - deploy.polaris-bootstrap
+  - deploy.keycloak-local-users-bootstrap
+  - deploy.teehr-api
+  - build.test-scripts
+timeout: 600
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/spark_authmanager_test.py
+  memory:
+    min: 2048
+    max: 3072
+  cpu:
+    min: 1000
+    max: 2000

@@ -34,12 +34,9 @@ data:
           { "name": "admin" },
           { "name": "basic-user" },
           { "name": "jupyter-user" },
-          { "name": "iceberg-user" },
+          { "name": "teehr-read-only" },
+          { "name": "teehr-read-write" },
           { "name": "iceberg-catalog-admin" },
-          { "name": "iceberg-namespace-public-read" },
-          { "name": "iceberg-namespace-public-write" },
-          { "name": "iceberg-namespace-restricted-read" },
-          { "name": "iceberg-namespace-restricted-write" }
         ]
       },
       "groups": [
@@ -56,8 +53,12 @@ data:
           "realmRoles": ["jupyter-user"]
         },
         {
-          "name": "iceberg-user",
-          "realmRoles": ["iceberg-user"]
+          "name": "teehr-read-only",
+          "realmRoles": ["teehr-read-only"]
+        },
+        {
+          "name": "teehr-read-write",
+          "realmRoles": ["teehr-read-write", "teehr-read-only"]
         },
         {
           "name": "key-management-admin",
@@ -81,28 +82,13 @@ data:
           }
         },
         {
-          "name": "iceberg-public-readers",
-          "realmRoles": ["iceberg-namespace-public-read"]
-        },
-        {
-          "name": "iceberg-public-writers",
-          "realmRoles": ["iceberg-namespace-public-write", "iceberg-namespace-public-read"]
-        },
-        {
-          "name": "iceberg-restricted-readers",
-          "realmRoles": ["iceberg-namespace-restricted-read"]
-        },
-        {
-          "name": "iceberg-restricted-writers",
-          "realmRoles": ["iceberg-namespace-restricted-write", "iceberg-namespace-restricted-read"]
-        },
-        {
           "name": "iceberg-catalog-admins",
           "realmRoles": ["iceberg-catalog-admin"]
         }
       ],
       "defaultGroups": [
-        "/basic-user"
+        "/basic-user",
+        "/teehr-read-only"
       ],
       "clients": [
         {
