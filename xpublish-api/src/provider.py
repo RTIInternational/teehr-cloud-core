@@ -91,6 +91,7 @@ class IcechunkDatasetProvider(Plugin):
     _repos: dict = PrivateAttr(default_factory=dict)
     _cache: dict = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     def __init__(
         self,
@@ -105,6 +106,7 @@ class IcechunkDatasetProvider(Plugin):
         self._repos = {}
         self._cache = {}
         self._lock = threading.Lock()
+        self._cache_lock = threading.Lock()
 
     def dataset_ids(self) -> list[str]:
         """Return all dataset IDs served by this provider (pyramid + raw_data pairs)."""
@@ -164,8 +166,11 @@ class IcechunkDatasetProvider(Plugin):
             return None
         entry = self._cache.get(dataset_id)
         if entry is None or not entry.is_fresh(self.cache_ttl_seconds):
-            logger.info("Loading dataset '%s' from icechunk (cache miss or TTL expired)", dataset_id)
-            self._cache[dataset_id] = self._load_datatree(dataset_id, cfg, zarr_group)
+            with self._cache_lock:
+                entry = self._cache.get(dataset_id)
+                if entry is None or not entry.is_fresh(self.cache_ttl_seconds):
+                    logger.info("Loading dataset '%s' from icechunk (cache miss or TTL expired)", dataset_id)
+                    self._cache[dataset_id] = self._load_datatree(dataset_id, cfg, zarr_group)
         return self._cache[dataset_id].datatree
 
     @hookimpl
