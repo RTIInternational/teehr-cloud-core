@@ -5,7 +5,7 @@ metadata:
   namespace: ${environment.namespace}
   ${if environment.name == "remote"}
   annotations:
-    eks.amazonaws.com/role-arn: ${var.irsa.icebergReadOnlyRoleArn}
+    eks.amazonaws.com/role-arn: ${var.irsa.sparkRoleArn}
   ${endif}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
