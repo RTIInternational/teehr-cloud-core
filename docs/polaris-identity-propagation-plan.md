@@ -1,6 +1,25 @@
 # TEEHR Hub Identity Propagation and Fine-Grained Data Authorization Plan
 
-Last updated: 2026-06-17
+Last updated: 2026-07-30
+
+> **Status: Flow A implemented and tested.** Flow B (Trino with user identity propagation) pending.
+>
+> **Implemented:**
+> - Apache Polaris 1.5.0 replaces `iceberg-rest` as the Iceberg catalog
+> - Keycloak OIDC → Polaris JWT group claim mapping (no per-user sync required for group-level access)
+> - JupyterHub users authenticated via Keycloak → user JWT → Polaris via AuthManager broker
+> - Per-user Polaris permission enforcement verified by integration tests (`garden test`)
+> - Three tiers: `teehr-read-only`, `teehr-read-write`, `iceberg-catalog-admin`
+> - Service accounts: `trino-polaris` (admin) and `prefect-polaris` (read-write) via Keycloak realm role → Polaris mapping
+>
+> **Pending:**
+> - Flow B: Trino user identity propagation (currently uses `trino-polaris` service account for all queries)
+> - Pattern C: S3 credential vending per user (currently shared MinIO/S3 credentials)
+> - Per-user table-level grants via optional principal sync
+>
+> See [`polaris-access-control.md`](./polaris-access-control.md) for the current design.
+
+---
 
 ## Goals
 

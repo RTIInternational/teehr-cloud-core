@@ -1,6 +1,11 @@
 # Plan: Replace iceberg-rest with Apache Polaris (Keycloak-integrated)
 
-## TL;DR
+> **Status: COMPLETED** — Last updated 2026-07-30.
+> `iceberg-rest` has been removed and Apache Polaris 1.5.0 is deployed and operational.
+> See [`polaris-access-control.md`](./polaris-access-control.md) for the implemented auth design.
+> This document is retained as a historical record of the migration plan and rationale.
+
+---
 
 Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integration via JWKS + a `PrincipalRoleMapper` that reads `realm_access.roles` from JWTs, mapping Keycloak roles directly to Polaris principal roles at runtime — no per-user Polaris registration needed. A data-driven bootstrap job creates the full namespace × privilege ACL structure from a ConfigMap. Polaris and Keycloak are the control plane; all other services are the data plane.
 

@@ -2,7 +2,7 @@
 
 This document summarizes how access is currently enforced across services in this repository.
 
-Last updated: 2026-05-15
+Last updated: 2026-07-30
 
 ## Identity Model
 
@@ -40,7 +40,10 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 | JupyterHub admin privileges | JupyterHub Authenticator admin_groups | Group: jupyter-admin | Users in jupyter-admin |
 | Keycloak admin console link in TEEHR admin page | TEEHR frontend admin visibility | Role: admin | Users with admin role (same as TEEHR admin UI) |
 | Keycloak admin console capabilities | Keycloak permissions | Role and client roles | Intended primary group appears to be webapi-admin due to realm-management client roles |
-| Iceberg or Trino end-user auth | Polaris principal roles via JWT realm roles | Realm roles: teehr-read-only, teehr-read-write, admin | Users default to teehr-read-only; teehr-read-write and admin add broader access |
+| Iceberg catalog (Polaris) — JupyterHub users | Polaris principal roles via JWT **groups** claim | Groups: teehr-read-only, teehr-read-write, iceberg-catalog-admins | JWT group → Polaris principal role mapping; no per-user sync needed |
+| Iceberg catalog (Polaris) — service accounts | Polaris principal roles via JWT **realm_access/roles** claim | Realm roles: iceberg-catalog-admin (trino-polaris), teehr-read-write (prefect-polaris) | Service account JWTs carry the realm role assigned to the Keycloak service account user |
+| Iceberg catalog (Polaris) — namespace privileges | Polaris catalog role grants on `teehr` namespace | Polaris principal roles | See `polaris-access-control.md` for the full privilege matrix |
+| Trino queries | Trino access-control rules.json | Catalog: iceberg read-only | All Trino queries restricted to read-only regardless of user identity |
 
 ## Important Notes
 

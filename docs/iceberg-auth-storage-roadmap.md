@@ -1,7 +1,15 @@
 # Iceberg Auth and Storage Permissions Roadmap
 
-Last updated: 2026-05-10
-Status: deferred for active implementation
+Last updated: 2026-07-30
+
+> **Status: Phase B fully implemented via Polaris.**
+> `iceberg-rest` has been replaced by Apache Polaris 1.5.0 with Keycloak OIDC integration.
+> Per-user catalog permissions are enforced at the Polaris level via JWT group claim mapping.
+> S3/MinIO storage still uses shared service credentials (per Pattern B below).
+> Pattern C (credential vending) deferred to a future phase.
+> See [`polaris-access-control.md`](./polaris-access-control.md) for the implemented access control design.
+
+---
 
 ## Why this document exists
 
