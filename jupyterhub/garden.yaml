@@ -176,11 +176,7 @@ spec:
         IN_CLUSTER: ${var.polaris.inCluster}
         POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
         POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
-        SPARK_POLARIS_CLIENT_SECRET:
-          valueFrom:
-            secretKeyRef:
-              name: spark-polaris-secrets
-              key: client-secret
+        POLARIS_USE_AUTHMANAGER: "true"
       extraFiles:
         jupyter_config:
           mountPath: /etc/jupyter/jupyter_notebook_config.py
@@ -383,11 +379,7 @@ spec:
         IN_CLUSTER: ${var.polaris.inCluster}
         POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
         POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
-        SPARK_POLARIS_CLIENT_SECRET:
-          valueFrom:
-            secretKeyRef:
-              name: spark-polaris-secrets
-              key: client-secret
+        POLARIS_USE_AUTHMANAGER: "true"
         TRINO_HOST: ${var.trino.host}
         TRINO_PORT: ${var.trino.port}
         TRINO_CATALOG: ${var.trino.catalog}

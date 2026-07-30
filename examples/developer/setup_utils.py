@@ -4,24 +4,6 @@ Canonical implementations now live in spark_session_utils to keep one shared
 utility surface for local and remote Polaris support.
 """
 
-import sys
-from pathlib import Path
-
-_CURRENT_DIR = Path(__file__).resolve().parent
-if str(_CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_CURRENT_DIR))
-
-from spark_session_utils import apply_polaris_token_to_spark
-from spark_session_utils import create_minio_spark_session
-from spark_session_utils import create_spark_session
-from spark_session_utils import ensure_broker_session_token
-from spark_session_utils import ensure_fresh_polaris_token_via_broker
-from spark_session_utils import ensure_fresh_polaris_user_token
-from spark_session_utils import mint_polaris_user_token
-from spark_session_utils import refresh_polaris_user_token
-from spark_session_utils import request_broker_polaris_token
-
-
 DEV_LOCATION_ID_LIST = [
     # CONUS
     "usgs-02424000",
@@ -48,18 +30,4 @@ DEV_LOCATION_ID_LIST = [
     "usgs-50011000",
     "usgs-50011085",
     "usgs-50011128"
-]
-
-
-__all__ = [
-    "DEV_LOCATION_ID_LIST",
-    "apply_polaris_token_to_spark",
-    "create_minio_spark_session",
-    "create_spark_session",
-    "ensure_broker_session_token",
-    "ensure_fresh_polaris_token_via_broker",
-    "ensure_fresh_polaris_user_token",
-    "mint_polaris_user_token",
-    "refresh_polaris_user_token",
-    "request_broker_polaris_token",
 ]

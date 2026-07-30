@@ -66,7 +66,10 @@ def create_spark_session(
     add_jars: List[str] = None,
     add_packages: List[str] = None,
     update_configs: Dict[str, str] = None,
-    debug_config: bool = False
+    debug_config: bool = False,
+    # Polaris authentication
+    polaris_token: Optional[str] = None,
+    use_authmanager: Optional[bool] = None,
 ) -> SparkSession:
     """Create and return a Spark session for evaluation.
 
@@ -156,7 +159,12 @@ def create_spark_session(
     """
     logger.info(f"🚀 Creating Spark session: {app_name}")
 
-    if force_recreate_session:
+    # AuthManager requires a fresh JVM per user session to avoid static state leakage
+    resolved_use_authmanager = (
+        use_authmanager if use_authmanager is not None
+        else _as_bool_str(os.getenv("POLARIS_USE_AUTHMANAGER", "false")) == "true"
+    )
+    if force_recreate_session or resolved_use_authmanager:
         existing_session = SparkSession.getActiveSession()
         if existing_session is not None:
             logger.info("♻️ Stopping the active Spark session before recreation")
@@ -229,10 +237,17 @@ def create_spark_session(
         remote_catalog_uri=remote_catalog_uri
     )
 
+    # Build Polaris auth configs and merge with caller-provided update_configs.
+    # Auth configs are the base; caller's configs take precedence.
+    polaris_auth_configs = _build_polaris_auth_configs(polaris_token, use_authmanager)
+    effective_configs: Dict[str, str] = {**polaris_auth_configs}
+    if update_configs:
+        effective_configs.update(update_configs)
+
     # Update configs and packages if provided
     _update_configs_and_packages(
         conf=conf,
-        update_configs=update_configs,
+        update_configs=effective_configs or None,
         add_jars=add_jars,
         add_packages=add_packages
     )
@@ -240,6 +255,10 @@ def create_spark_session(
     logger.info("⚙️ All settings applied. Creating Spark session...")
     spark = SparkSession.builder.appName(app_name).config(conf=conf).getOrCreate()
     sedona_spark = SedonaContext.create(spark)
+
+    # Apply runtime-settable configs to the live session (e.g., auth tokens)
+    if effective_configs:
+        _apply_runtime_spark_configs(sedona_spark, effective_configs)
 
     if debug_config:
         log_session_config(sedona_spark)
@@ -998,49 +1017,38 @@ def ensure_broker_session_token(
     return broker_session_token
 
 
-def create_minio_spark_session(
-    polaris_token: Optional[str] = None,
-    force_recreate_session: bool = False,
-    update_configs: Optional[Dict[str, str]] = None,
-    use_authmanager: Optional[bool] = None,
-):
-    """Start a Spark session configured for the local Polaris REST catalog.
+def _build_polaris_auth_configs(
+    polaris_token: Optional[str],
+    use_authmanager: Optional[bool],
+) -> Dict[str, str]:
+    """Build Spark configs for Polaris catalog authentication.
 
-    If ``polaris_token`` is provided, Spark uses user-token OAuth2 auth.
-    Otherwise it falls back to client-credential OAuth2 using env vars.
+    Handles three auth paths:
+    1. AuthManager (use_authmanager=True or POLARIS_USE_AUTHMANAGER=true env var)
+       Uses the teehr-api broker for token management — required for JupyterHub
+       where tokens must be refreshed transparently during long sessions.
+    2. Direct user token (polaris_token provided)
+       Passes the JWT directly to the Iceberg REST catalog.
+    3. Service account client credentials (POLARIS_CLIENT_ID + POLARIS_CLIENT_SECRET)
+       Used by Prefect batch jobs and other non-interactive service accounts.
+
+    Returns an empty dict if none of the above are configured.
     """
-    aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID", "minioadmin")
-    aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin123")
-
-    remote_catalog_uri = os.getenv("REMOTE_CATALOG_REST_URI", "http://polaris:8181/api/catalog")
-    remote_warehouse_dir = os.getenv("REMOTE_WAREHOUSE_S3_PATH", "s3://warehouse/")
     polaris_realm = os.getenv("POLARIS_DEFAULT_REALM", "teehr")
 
-    if remote_catalog_uri.rstrip("/").endswith("/api/catalog"):
-        # Polaris REST expects the catalog identifier here, not the backing S3 URI.
-        remote_warehouse_dir = polaris_realm
-
-    s3_endpoint = os.getenv("REMOTE_CATALOG_S3_ENDPOINT", "http://minio:9000")
-    s3_path_style = _as_bool_str(os.getenv("REMOTE_CATALOG_S3_PATH_STYLE_ACCESS", "true"))
-    s3_region = os.getenv("AWS_REGION", "us-east-2")
-
-    merged_configs: Dict[str, str] = {
-        "spark.sql.catalog.iceberg.warehouse": remote_warehouse_dir,
-        "spark.sql.catalog.iceberg.header.X-Polaris-Realm": polaris_realm,
-        "spark.sql.catalog.iceberg.rest.transport.header.X-Polaris-Realm": polaris_realm,
-        "spark.sql.catalog.iceberg.s3.endpoint": s3_endpoint,
-        "spark.sql.catalog.iceberg.s3.path-style-access": s3_path_style,
-        "spark.sql.catalog.iceberg.s3.region": s3_region,
-        "spark.hadoop.fs.s3a.endpoint": s3_endpoint,
-        "spark.hadoop.fs.s3a.path.style.access": s3_path_style,
-        "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
-    }
-
     resolved_use_authmanager = (
-        use_authmanager
-        if use_authmanager is not None
+        use_authmanager if use_authmanager is not None
         else _as_bool_str(os.getenv("POLARIS_USE_AUTHMANAGER", "false")) == "true"
     )
+
+    configs: Dict[str, str] = {}
+
+    if not resolved_use_authmanager and not polaris_token and not os.getenv("POLARIS_CLIENT_ID"):
+        return configs
+
+    # Realm headers are required for all Polaris auth paths
+    configs["spark.sql.catalog.iceberg.header.X-Polaris-Realm"] = polaris_realm
+    configs["spark.sql.catalog.iceberg.rest.transport.header.X-Polaris-Realm"] = polaris_realm
 
     if resolved_use_authmanager:
         broker_url = os.getenv("POLARIS_BROKER_URL", "http://teehr-api:8000/auth/polaris-token")
@@ -1065,7 +1073,7 @@ def create_minio_spark_session(
             current_token=current_user_token,
             username=os.getenv("POLARIS_USERNAME"),
             password=os.getenv("POLARIS_PASSWORD"),
-            client_id=os.getenv("POLARIS_CLIENT_ID", "spark-polaris"),
+            client_id=os.getenv("POLARIS_CLIENT_ID", "jupyterhub"),
             client_secret=os.getenv("POLARIS_CLIENT_SECRET"),
             refresh_token=refresh_token,
             allow_password_fallback=False,
@@ -1091,13 +1099,11 @@ def create_minio_spark_session(
             except requests.HTTPError as exc:
                 if not _is_http_error_with_status(exc, 401):
                     raise
-
-                # The bearer token may have been invalidated server-side; force refresh and retry once.
                 current_user_token, refresh_token, _ = ensure_fresh_polaris_user_token(
                     current_token=None,
                     username=os.getenv("POLARIS_USERNAME"),
                     password=os.getenv("POLARIS_PASSWORD"),
-                    client_id=os.getenv("POLARIS_CLIENT_ID", "spark-polaris"),
+                    client_id=os.getenv("POLARIS_CLIENT_ID", "jupyterhub"),
                     client_secret=os.getenv("POLARIS_CLIENT_SECRET"),
                     refresh_token=refresh_token,
                     allow_password_fallback=True,
@@ -1107,7 +1113,6 @@ def create_minio_spark_session(
                 os.environ["POLARIS_USER_TOKEN"] = current_user_token
                 if refresh_token:
                     os.environ["POLARIS_REFRESH_TOKEN"] = refresh_token
-
                 broker_session_token = ensure_broker_session_token(
                     user_id=authmanager_user_id,
                     session_id=authmanager_session_id,
@@ -1118,75 +1123,100 @@ def create_minio_spark_session(
                     audience=broker_audience,
                     broker_url=broker_url,
                 )
-
             os.environ["POLARIS_BROKER_SESSION_TOKEN"] = broker_session_token
 
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.type"] = (
+        configs["spark.sql.catalog.iceberg.rest.auth.type"] = (
             "org.teehr.iceberg.auth.TeehrBrokerAuthManager"
         )
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.broker.url"] = broker_session_url
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.user-id"] = authmanager_user_id
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.session-id"] = (
-            authmanager_session_id
-        )
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.realm"] = polaris_realm
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.catalog"] = "iceberg"
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.audience"] = broker_audience
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.teehr.broker-session-token-env"] = (
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.broker.url"] = broker_session_url
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.user-id"] = authmanager_user_id
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.session-id"] = authmanager_session_id
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.realm"] = polaris_realm
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.catalog"] = "iceberg"
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.audience"] = broker_audience
+        configs["spark.sql.catalog.iceberg.rest.auth.teehr.broker-session-token-env"] = (
             "POLARIS_BROKER_SESSION_TOKEN"
         )
-        merged_configs["spark.jars"] = authmanager_jar
+        configs["spark.jars"] = authmanager_jar
+
     elif polaris_token:
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.type"] = "oauth2"
-        merged_configs["spark.sql.catalog.iceberg.token"] = polaris_token
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.oauth2.token"] = polaris_token
+        configs["spark.sql.catalog.iceberg.rest.auth.type"] = "oauth2"
+        configs["spark.sql.catalog.iceberg.token"] = polaris_token
+        configs["spark.sql.catalog.iceberg.rest.auth.oauth2.token"] = polaris_token
+
     else:
+        # Service account / client credentials path.
+        # Set POLARIS_CLIENT_ID and POLARIS_CLIENT_SECRET for the service account
+        # (e.g. prefect-polaris for Prefect batch jobs).
         oauth_server_uri = os.getenv("POLARIS_OAUTH2_SERVER_URI")
-        spark_polaris_client_secret = os.getenv("SPARK_POLARIS_CLIENT_SECRET")
+        polaris_client_id = os.getenv("POLARIS_CLIENT_ID")
+        polaris_client_secret = os.getenv("POLARIS_CLIENT_SECRET")
 
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.type"] = "oauth2"
-        merged_configs["spark.sql.catalog.iceberg.scope"] = "openid"
-        merged_configs["spark.sql.catalog.iceberg.rest.auth.oauth2.scope"] = "openid"
+        configs["spark.sql.catalog.iceberg.rest.auth.type"] = "oauth2"
+        configs["spark.sql.catalog.iceberg.scope"] = "openid"
+        configs["spark.sql.catalog.iceberg.rest.auth.oauth2.scope"] = "openid"
         if oauth_server_uri:
-            merged_configs["spark.sql.catalog.iceberg.oauth2-server-uri"] = oauth_server_uri
-            merged_configs["spark.sql.catalog.iceberg.rest.auth.oauth2.server-uri"] = oauth_server_uri
-        if spark_polaris_client_secret:
-            merged_configs["spark.sql.catalog.iceberg.credential"] = (
-                f"spark-polaris:{spark_polaris_client_secret}"
-            )
-            merged_configs["spark.sql.catalog.iceberg.rest.auth.oauth2.credential"] = (
-                f"spark-polaris:{spark_polaris_client_secret}"
-            )
+            configs["spark.sql.catalog.iceberg.oauth2-server-uri"] = oauth_server_uri
+            configs["spark.sql.catalog.iceberg.rest.auth.oauth2.server-uri"] = oauth_server_uri
+        if polaris_client_id and polaris_client_secret:
+            credential = f"{polaris_client_id}:{polaris_client_secret}"
+            configs["spark.sql.catalog.iceberg.credential"] = credential
+            configs["spark.sql.catalog.iceberg.rest.auth.oauth2.credential"] = credential
 
-    if update_configs:
-        merged_configs.update(update_configs)
+    return configs
 
-    call_kwargs = {
-        "remote_catalog_uri": remote_catalog_uri,
-        "remote_warehouse_dir": remote_warehouse_dir,
-        "aws_access_key_id": aws_access_key_id,
-        "aws_secret_access_key": aws_secret_access_key,
-        "force_recreate_session": force_recreate_session or resolved_use_authmanager,
-        "update_configs": merged_configs,
+
+def create_minio_spark_session(
+    polaris_token: Optional[str] = None,
+    force_recreate_session: bool = False,
+    update_configs: Optional[Dict[str, str]] = None,
+    use_authmanager: Optional[bool] = None,
+) -> SparkSession:
+    """Start a Spark session with MinIO credentials for local KinD development.
+
+    Thin wrapper around create_spark_session() that injects MinIO-specific S3
+    configuration. All Polaris auth (AuthManager, direct token, client credentials)
+    is handled by create_spark_session() based on the parameters and environment.
+
+    For remote deployments using AWS S3, call create_spark_session() directly with
+    appropriate AWS credentials and catalog configuration.
+    """
+    s3_endpoint = os.getenv("REMOTE_CATALOG_S3_ENDPOINT", "http://minio:9000")
+    s3_path_style = _as_bool_str(os.getenv("REMOTE_CATALOG_S3_PATH_STYLE_ACCESS", "true"))
+    s3_region = os.getenv("AWS_REGION", "us-east-2")
+    polaris_realm = os.getenv("POLARIS_DEFAULT_REALM", "teehr")
+    remote_catalog_uri = os.getenv("REMOTE_CATALOG_REST_URI", "http://polaris:8181/api/catalog")
+
+    # Polaris REST expects the catalog name as warehouse identifier, not an S3 URI
+    remote_warehouse_dir = (
+        polaris_realm
+        if remote_catalog_uri.rstrip("/").endswith("/api/catalog")
+        else os.getenv("REMOTE_WAREHOUSE_S3_PATH", "s3://warehouse/")
+    )
+
+    minio_configs: Dict[str, str] = {
+        "spark.sql.catalog.iceberg.s3.endpoint": s3_endpoint,
+        "spark.sql.catalog.iceberg.s3.path-style-access": s3_path_style,
+        "spark.sql.catalog.iceberg.s3.region": s3_region,
+        "spark.hadoop.fs.s3a.endpoint": s3_endpoint,
+        "spark.hadoop.fs.s3a.path.style.access": s3_path_style,
+        "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
     }
-    if polaris_token:
-        # Preferred path for newer teehr versions that support direct token auth.
-        call_kwargs["oauth2_token"] = polaris_token
+    if update_configs:
+        minio_configs.update(update_configs)
 
-    while True:
-        try:
-            spark = create_spark_session(**call_kwargs)
-            _apply_runtime_spark_configs(spark, merged_configs)
-            return spark
-        except TypeError as exc:
-            msg = str(exc)
-            if "oauth2_token" in msg and "oauth2_token" in call_kwargs:
-                call_kwargs.pop("oauth2_token", None)
-                continue
-            if "force_recreate_session" in msg and "force_recreate_session" in call_kwargs:
-                call_kwargs.pop("force_recreate_session", None)
-                continue
-            raise
+    return create_spark_session(
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin123"),
+        remote_catalog_uri=remote_catalog_uri,
+        remote_warehouse_dir=remote_warehouse_dir,
+        polaris_token=polaris_token,
+        force_recreate_session=force_recreate_session,
+        update_configs=minio_configs,
+        use_authmanager=use_authmanager,
+    )
+
+
 
 
 def request_broker_polaris_token(

@@ -213,6 +213,36 @@ data:
           "publicClient": false,
           "serviceAccountsEnabled": true,
           "secret": "$(env:TRINO_POLARIS_CLIENT_SECRET)",
+          "serviceAccountRoles": {
+            "realmRoles": ["iceberg-catalog-admin"]
+          },
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "prefect-polaris",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "secret": "$(env:PREFECT_POLARIS_CLIENT_SECRET)",
+          "serviceAccountRoles": {
+            "realmRoles": ["teehr-read-write"]
+          },
           "protocolMappers": [
             {
               "name": "realm-roles",

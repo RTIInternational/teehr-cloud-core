@@ -48,6 +48,11 @@ spec:
                 secretKeyRef:
                   name: trino-polaris-secrets
                   key: client-secret
+            - name: PREFECT_POLARIS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: prefect-polaris-secrets
+                  key: client-secret
             - name: SPARK_POLARIS_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
