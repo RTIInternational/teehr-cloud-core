@@ -179,7 +179,7 @@ def main():
             # Step 2: Create Spark session with Polaris catalog
             print("  Creating Spark session with Polaris catalog...")
             try:
-                from spark_session_utils import create_minio_spark_session
+                from teehr.evaluation.spark_session_utils import create_minio_spark_session
                 spark = create_minio_spark_session(
                     polaris_token=token,
                 )

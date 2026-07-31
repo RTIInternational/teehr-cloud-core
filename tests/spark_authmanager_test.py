@@ -207,7 +207,7 @@ def main():
 
         print("  Creating Spark session via AuthManager...")
         try:
-            from spark_session_utils import create_minio_spark_session
+            from teehr.evaluation.spark_session_utils import create_minio_spark_session
             spark = create_minio_spark_session(
                 use_authmanager=True,
                 force_recreate_session=True,
