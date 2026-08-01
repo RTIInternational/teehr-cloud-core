@@ -1,5 +1,7 @@
 Context:
-- the `teehr` repo which is a python library that contains the scientific code for the teehr environment. This contains code to fetch, validate, store, and analyze hydrologic forecast and simulation data against observations.
-- the `teehr-cloud-core` repo contains the main shared teehr-cloud components such as authentication, jupyterhub, iceberg warehouse, web api, query engine, spark-executors, prefect server, etc.  teehr-cloud-core utilizes the teehr library.
-- the teehr-cloud-platform repo contains terraform IaC for creating an AWS environment that can host a teehr-cloud deployment.
-- the `teehr-hub` and `teehr-fved` repos have teehr-cloud-core as a submodule and are deployments of teehr and teehr-cloud-core.  They also contain deployment specific components such as frontend dashboards, deployment specific prefect workflows and warehouse setup and maintenance code, certificates, etc.
+- the `teehr` repo which is a python library that contains the scientific code for the teehr environment. This contains code to fetch, validate, store, and analyze hydrologic forecast and simulation data against observations. It works on the concept of an Evaluation which references either a local or remote warehouse and a relates spark session.
+- the `teehr-cloud-core` repo contains the main shared teehr-cloud components such as authentication, jupyterhub, Apache Iceberg warehouse, web api, Trino query engine, spark-executors, prefect server, etc.  teehr-cloud-core utilizes the teehr library.
+- the `teehr-cloud-platform` repo contains terraform IaC for creating an AWS environment that can host a teehr-cloud deployment.
+- the `teehr-hub` and `teehr-fved` repos have `teehr-cloud-core` as a submodule and are deployments of `teehr` and `teehr-cloud-core`.  They also contain deployment specific components such as frontend dashboards, deployment specific prefect workflows and warehouse setup and maintenance code, certificates, etc.
+
+Don't make any changes in the `teehr-cloud-core` submodules to `teehr-hub` and `teehr-fved`.  Only make changes in the `teehr-cloud-core` repo and then update the submodules in the deployments.
