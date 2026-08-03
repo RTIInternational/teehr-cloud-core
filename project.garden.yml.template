@@ -13,6 +13,9 @@ variables:
     ssl: "false"
   aws:
     region: us-east-2
+  remoteCluster:
+    contextArn: ""
+    ecrRegistry: ""
 
 environments:
   - name: local
@@ -20,7 +23,8 @@ environments:
     variables:
       hostname: teehr.local.app.garden
       certificateIssuerName: letsencrypt-prod
-      devTeehrVersion: 267f8a75034132aefe84749af10ab1562a6ac169
+      devTeehrVersion: f2736eedd525a14ccbf8ae2a02966bd15f7c3a5b
+      previousTeehrVersion: place-holder
       stableTeehrVersion: place-holder # Needed for sync to work for some reason.
       # iceberg:
       #   inCluster: "true"
@@ -42,7 +46,7 @@ environments:
         defaultRealm: teehr
         realmsCsv: teehr
         oauthServerUri: http://keycloak-service:8080/realms/teehr/protocol/openid-connect/token
-        oidcIssuerUri: https://auth.${var.hostname}/realms/teehr
+        oidcIssuerUri: http://keycloak-service:8080/realms/teehr
       trino:
         host: trino
         port: "8080"
