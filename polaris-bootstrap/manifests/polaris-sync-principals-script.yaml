@@ -8,17 +8,14 @@ data:
     Syncs Keycloak users into Polaris as named principal entities and grants
     principal role bindings for their teehr-* group memberships.
 
-    NOTE ON DESIGN: Basic group-level access (teehr-read-only, teehr-read-write,
-    iceberg-catalog-admin) is enforced via JWT group claim mapping configured in
-    polaris-config.yaml — no principal sync is required for that to work.
+    NOTE ON DESIGN: When a named Polaris principal exists for a user, Polaris uses
+    that principal's explicit role bindings rather than the JWT group claim mapper.
+    Therefore this script must sync ALL intended PrincipalRoles — teehr-*, and
+    iceberg-catalog-admin — not just teehr-* roles.
 
-    This script exists for use cases that require a named Polaris principal:
-      - Table-level grants (granting a specific user access to a specific table)
-      - Individual permission overrides beyond group-level defaults
-      - Audit trails tied to a specific Polaris principal entity
-
-    If you only need group-level permissions, this script is not required.
-    The principal role bindings it creates are ADDITIVE to the JWT-based grants.
+    This script is required for group-level access to work correctly once named
+    principals exist. It is also used for table-level grants and individual
+    permission overrides beyond group-level defaults.
 
     Required environment variables:
       POLARIS_MANAGEMENT_URL   e.g. http://polaris:8181
@@ -192,7 +189,7 @@ data:
             if user_id:
                 # Check realm roles
                 for role_name in get_keycloak_realm_roles(kc_token, user_id):
-                    if role_name.startswith("teehr-"):
+                    if role_name.startswith("teehr-") or role_name == "iceberg-catalog-admin":
                         ensure_principal_role_binding(polaris_token, name, role_name)
                         granted += 1
                 
@@ -200,6 +197,9 @@ data:
                 for group_name in get_keycloak_user_groups(kc_token, user_id):
                     if group_name.startswith("teehr-"):
                         ensure_principal_role_binding(polaris_token, name, group_name)
+                        granted += 1
+                    elif group_name == "iceberg-catalog-admins":
+                        ensure_principal_role_binding(polaris_token, name, "iceberg-catalog-admin")
                         granted += 1
             synced += 1
 

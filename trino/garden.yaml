@@ -23,13 +23,12 @@ spec:
     # worker:
     #   nodeSelector:
     #     teehr-hub/nodegroup-name: core-a
-    #         iceberg.rest-catalog.header.X-Polaris-Realm=${var.polaris.defaultRealm} # removed from below. Needed for multi-realm support?
     catalogs:
       iceberg: |-
         connector.name=iceberg
         iceberg.catalog.type=${var.polaris.catalogType}
         iceberg.rest-catalog.uri=${var.polaris.catalogUri}
-        iceberg.rest-catalog.warehouse=${var.polaris.catalogWarehouse}
+        iceberg.rest-catalog.warehouse=${var.polaris.defaultRealm}
         iceberg.rest-catalog.security=OAUTH2
         iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
         iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
@@ -118,7 +117,7 @@ spec:
         connector.name=iceberg
         iceberg.catalog.type=${var.polaris.catalogType}
         iceberg.rest-catalog.uri=${var.polaris.catalogUri}
-        iceberg.rest-catalog.warehouse=${var.polaris.catalogWarehouse}
+        iceberg.rest-catalog.warehouse=${var.polaris.defaultRealm}
         iceberg.rest-catalog.security=OAUTH2
         iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
         iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}

@@ -29,8 +29,9 @@ data:
     quarkus.oidc.tenant-enabled=true
     quarkus.oidc.application-type=service
     quarkus.oidc.client-id=jupyterhub
-    # Keycloak advertises external hostnames in discovery metadata; disable discovery
-    # so Polaris uses the configured auth-server-url and internal JWKS path directly.
+    # auth-server-url + relative jwks-path enables local JWT validation without discovery.
+    # Without auth-server-url, Quarkus falls back to userinfo introspection which fails for service accounts.
+    quarkus.oidc.auth-server-url=${var.polaris.oidcIssuerUri}
     quarkus.oidc.discovery-enabled=false
     quarkus.oidc.jwks-path=/protocol/openid-connect/certs
     quarkus.tls.trust-all=true
@@ -39,29 +40,22 @@ data:
     quarkus.oidc.token.audience=account
     quarkus.oidc.token.issuer=any
 
-    # Access control: map Keycloak group membership (JWT 'groups' claim) directly to
-    # Polaris principal roles. This means no user sync is required for group-level
-    # access — adding a user to a Keycloak group immediately grants the corresponding
-    # Polaris permissions on their next token issuance.
+    # Access control: map Keycloak realm roles to Polaris PrincipalRoles.
+    # Uses realm_access/roles (not groups) to cover both:
+    #   - human users: realm roles propagated from Keycloak group membership
+    #   - service accounts: realm roles assigned directly (trino-polaris, prefect-polaris)
     #
-    # Also reads realm_access/roles so Keycloak service accounts (trino-polaris,
-    # prefect-polaris) can be granted Polaris access via realm role assignment,
-    # without needing a separate Polaris principal entity.
+    # Patterns:
+    #   iceberg-catalog-admin → PRINCIPAL_ROLE:iceberg-catalog-admin
+    #   teehr-<role>          → PRINCIPAL_ROLE:teehr-<role>
     #
-    # Patterns mapped:
-    #   /iceberg-catalog-admins (group) → iceberg-catalog-admin
-    #   /teehr-<role>  (group)          → teehr-<role>  (e.g. teehr-read-only, teehr-read-write)
-    #   iceberg-catalog-admin (realm role for service accounts)
-    #   teehr-<role>   (realm role for service accounts)
-    #
-    # Individual/table-level grants: use the polaris-sync-principals script to create
-    # a named principal for the user and assign specific catalog-role grants. These
-    # are additive on top of the JWT-based group grants above.
-    quarkus.oidc.roles.role-claim-path=groups,realm_access/roles
+    # Individual/table-level grants: use the polaris-sync-principals script.
+    # Named principal role bindings from the sync take precedence over JWT mapping.
+    quarkus.oidc.roles.role-claim-path=realm_access/roles
     polaris.oidc.principal-roles-mapper.type=default
-    polaris.oidc.principal-roles-mapper.mappings[0].regex=^/?iceberg-catalog-admins?$
+    polaris.oidc.principal-roles-mapper.mappings[0].regex=^iceberg-catalog-admin$
     polaris.oidc.principal-roles-mapper.mappings[0].replacement=PRINCIPAL_ROLE:iceberg-catalog-admin
-    polaris.oidc.principal-roles-mapper.mappings[1].regex=^/?teehr-(.+)$
+    polaris.oidc.principal-roles-mapper.mappings[1].regex=^teehr-(.+)$
     polaris.oidc.principal-roles-mapper.mappings[1].replacement=PRINCIPAL_ROLE:teehr-$1
 
     # Storage Properties Integration
