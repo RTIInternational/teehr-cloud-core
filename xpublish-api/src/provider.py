@@ -150,8 +150,11 @@ class IcechunkDatasetProvider(Plugin):
             assign_leaf_xpublish_ids(dt)
         else:
             ds = xr.open_zarr(session.store, group="/raw_data", consolidated=False)
+            if "time" in ds.dims:
+                ds = ds.sortby("time")
             dt = xr.DataTree(dataset=ds)
             dt.attrs["_xpublish_id"] = dataset_id
+        dt._icechunk_session = session  # Anchors session to dt so it outlives the _CacheEntry on cache refresh
         return _CacheEntry(datatree=dt, session=session)
 
     def get_datatree_for_dataset(self, dataset_id: str) -> xr.DataTree | None:
@@ -184,4 +187,7 @@ class IcechunkDatasetProvider(Plugin):
             return None
         if not group:
             return dt
-        return dt[group] if group in dt.children else None
+        try:
+            return dt[group]
+        except KeyError:
+            return None

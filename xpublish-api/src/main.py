@@ -65,7 +65,7 @@ def parse_repo_configs() -> list[RepoConfig]:
     """
     repos_env = os.getenv("ICECHUNK_REPOS", "").strip()
     bucket = os.getenv("ICECHUNK_BUCKET", "").strip()
-    prefix = os.getenv("ICECHUNK_PREFIX", "").strip()
+    prefix = os.getenv("ICECHUNK_PREFIX", "").strip().rstrip("/")
     if not repos_env:
         raise RuntimeError("ICECHUNK_REPOS is required: comma-separated list of repo names")
     if not bucket:
@@ -247,7 +247,12 @@ def build_app() -> FastAPI:
 
         return await call_next(request)
 
-    allow_credentials = cors_origins != ["*"]
+    if "*" in cors_origins:
+        cors_origins = ["*"]
+        allow_credentials = False
+    else:
+        allow_credentials = True
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
