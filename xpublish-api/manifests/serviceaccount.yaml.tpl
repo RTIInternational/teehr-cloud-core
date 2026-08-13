@@ -5,5 +5,5 @@ metadata:
   namespace: ${environment.namespace}
   ${if environment.name == "remote"}
   annotations:
-    eks.amazonaws.com/role-arn: ${var.irsa.icebergReadOnlyRoleArn}
+    eks.amazonaws.com/role-arn: ${var.irsa.xpublishRoleArn}
   ${endif}

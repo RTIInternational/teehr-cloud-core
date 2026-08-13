@@ -14,7 +14,7 @@ data:
   ICECHUNK_STORAGE_MODE: "remote"
   # Not used in remote mode; kept so deployment.yaml.tpl key reference is valid.
   ICECHUNK_ENDPOINT_URL: ""
-  AWS_DEFAULT_REGION: "us-east-2"
+  AWS_DEFAULT_REGION: "${var.aws.region}"
   CORS_ORIGINS: "${var.allowedOrigins}"
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"
   # Internal cluster URL avoids routing JWKS fetches through the ingress
