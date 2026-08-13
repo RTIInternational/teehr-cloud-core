@@ -3,7 +3,7 @@ type: container
 name: xpublish-api
 
 spec:
-  dockerfile: Dockerfile
+  dockerfile: Dockerfile.xpublish
 
 environments:
   - local
