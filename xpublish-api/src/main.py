@@ -5,8 +5,6 @@ Serves raster tiles via TilesPlugin (reads from /pyramids group) and
 point queries via CfEdrPlugin (reads from /raw_data group).
 
 Environment variables:
-  ICECHUNK_REPOS         Comma-separated list of repo names.
-                         Example: "ua-swann-4km,nwm30-forcing-analysis-assim"
   ICECHUNK_BUCKET        S3 bucket that holds all icechunk repos.
                          Example: "warehouse" (local) or "ciroh-rti-public-data" (remote)
   ICECHUNK_PREFIX        Base prefix path; each repo lives at {prefix}/{name}.
@@ -36,6 +34,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import boto3
+from botocore.config import Config
 import numpy as np
 import xpublish
 from fastapi import FastAPI, HTTPException, Request
@@ -57,28 +57,38 @@ logging.basicConfig(
 )
 
 
-def parse_repo_configs() -> list[RepoConfig]:
-    """
-    Parse repo configs from ICECHUNK_REPOS (comma-separated names),
-    ICECHUNK_BUCKET (shared S3 bucket), and ICECHUNK_PREFIX (base prefix).
-    Each repo's full prefix is constructed as "{ICECHUNK_PREFIX}/{name}".
-    """
-    repos_env = os.getenv("ICECHUNK_REPOS", "").strip()
+def discover_available_repos() -> list[RepoConfig]:
+    """Discover repos by listing top-level prefixes under ICECHUNK_BUCKET/ICECHUNK_PREFIX."""
     bucket = os.getenv("ICECHUNK_BUCKET", "").strip()
     prefix = os.getenv("ICECHUNK_PREFIX", "").strip().rstrip("/")
-    if not repos_env:
-        raise RuntimeError("ICECHUNK_REPOS is required: comma-separated list of repo names")
     if not bucket:
         raise RuntimeError("ICECHUNK_BUCKET is required: S3 bucket name")
     if not prefix:
         raise RuntimeError("ICECHUNK_PREFIX is required: base prefix path for icechunk repos")
+
+    mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
+    if mode == "local":
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
+            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            config=Config(s3={"addressing_style": "path"}),
+        )
+    else:
+        s3 = boto3.client("s3")
+
+    paginator = s3.get_paginator("list_objects_v2")
     configs = []
-    for name in (n.strip() for n in repos_env.split(",")):
-        if not name:
-            continue
-        configs.append(RepoConfig(name=name, bucket=bucket, prefix=f"{prefix}/{name}"))
+    for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/", Delimiter="/"):
+        for cp in page.get("CommonPrefixes", []):
+            name = cp["Prefix"].removeprefix(f"{prefix}/").rstrip("/")
+            if name:
+                configs.append(RepoConfig(name=name, bucket=bucket, prefix=f"{prefix}/{name}"))
+
     if not configs:
-        raise RuntimeError("ICECHUNK_REPOS contained no valid entries")
+        raise RuntimeError(f"No icechunk repos found under s3://{bucket}/{prefix}/")
     return configs
 
 
@@ -126,7 +136,7 @@ def build_app() -> FastAPI:
     storage_mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
     cache_ttl = float(os.getenv("DATASET_CACHE_TTL", "60"))
 
-    repo_configs = parse_repo_configs()
+    repo_configs = discover_available_repos()
     storage_kwargs = build_storage_kwargs()
 
     logger.info(

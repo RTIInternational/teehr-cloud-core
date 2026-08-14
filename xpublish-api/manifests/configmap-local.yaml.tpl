@@ -8,7 +8,6 @@ metadata:
 data:
   # Local/kind deployment — uses minio as the S3-compatible store.
   # Bucket name matches the minio warehouse bucket used by the rest of the cluster.
-  ICECHUNK_REPOS: "${var.icechunk.repos}"
   ICECHUNK_BUCKET: "${var.icechunk.bucket}"
   ICECHUNK_PREFIX: "${var.icechunk.prefix}"
   ICECHUNK_BRANCH: "main"
