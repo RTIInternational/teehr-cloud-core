@@ -173,6 +173,7 @@ spec:
         REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.catalogWarehouse}
         REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
         REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
+        REMOTE_WAREHOUSE_IDENTIFIER: ${var.polaris.defaultRealm}
         IN_CLUSTER: ${var.polaris.inCluster}
         POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
         POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
@@ -376,6 +377,7 @@ spec:
         REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.defaultRealm}
         REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
         REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
+        REMOTE_WAREHOUSE_IDENTIFIER: ${var.polaris.defaultRealm}
         IN_CLUSTER: ${var.polaris.inCluster}
         POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
         POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
