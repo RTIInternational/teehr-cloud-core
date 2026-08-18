@@ -276,7 +276,7 @@ def build_app() -> FastAPI:
             For pmtiles: source_layer derived from filename (without .pmtiles)
           - For directories: [{ "id": "dir-name", "path": "bucket/prefix/dir-name/" }, ...]
         """
-        if not bucket or not prefix:
+        if not bucket or prefix is None:
             raise HTTPException(status_code=400, detail="bucket and prefix parameters are required")
 
         try:
