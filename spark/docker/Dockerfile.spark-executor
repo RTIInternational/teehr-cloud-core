@@ -72,8 +72,5 @@ RUN usermod -u 1000 spark && groupmod -g 1000 spark
 # Ensure work directory is owned by spark user
 RUN chown -R spark:spark /opt/spark/work-dir
 
-# Stage custom Iceberg AuthManager extension into Spark classpath.
-COPY teehr-authmanager.jar /opt/spark/jars/teehr-authmanager.jar
-
 # Switch back to spark user
 USER 1000

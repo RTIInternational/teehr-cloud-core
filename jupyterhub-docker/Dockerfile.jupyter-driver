@@ -78,9 +78,6 @@ RUN mkdir -p /opt/teehr && chown -R ${NB_USER}:${NB_USER} /opt/teehr
 
 COPY executor-pod-template.yaml /opt/teehr/executor-pod-template.yaml
 
-# Keep driver and executor classpaths aligned for the custom AuthManager.
-COPY teehr-authmanager.jar /opt/spark/jars/teehr-authmanager.jar
-
 # Configure IPython system-wide
 COPY ipython_kernel_config.py /etc/ipython/ipython_kernel_config.py
 # RUN fix-permissions /etc/ipython/
