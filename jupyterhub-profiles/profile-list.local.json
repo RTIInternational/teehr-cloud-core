@@ -22,6 +22,9 @@
       "kubespawner_override": {
         "node_selector": {
           "teehr-hub/nodegroup-name": "nb-r5-xlarge"
+        },
+        "environment": {
+          "TEEHR_PROJECT_ID": "TEEHR"
         }
       }
     },
