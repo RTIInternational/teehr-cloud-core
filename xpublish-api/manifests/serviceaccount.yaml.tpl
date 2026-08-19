@@ -1,12 +1,9 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: jupyter
+  name: xpublish-api
   namespace: ${environment.namespace}
   ${if environment.name == "remote"}
   annotations:
-    eks.amazonaws.com/role-arn: ${var.irsa.jupyterRoleArn}
+    eks.amazonaws.com/role-arn: ${var.irsa.xpublishRoleArn}
   ${endif}
-  labels:
-    app: jupyterhub
-    component: jupyter

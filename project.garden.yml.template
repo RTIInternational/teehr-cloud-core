@@ -53,6 +53,9 @@ environments:
         user: teehr
         catalog: iceberg
         schema: teehr
+      icechunk:
+        bucket: "warehouse"
+        prefix: "icechunk-ingests"
       allowedOrigins: "https://dashboards.${var.hostname},https://api.${var.hostname}"
 providers:
   # The name of the provider plugin to use.

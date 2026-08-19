@@ -152,4 +152,4 @@ spec:
       create: true
       name: trino
       annotations:
-        eks.amazonaws.com/role-arn: ${var.irsa.icebergReadWriteRoleArn}
+        eks.amazonaws.com/role-arn: ${var.irsa.trinoRoleArn}
