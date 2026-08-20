@@ -97,6 +97,10 @@ class Config:
         "BROKER_SESSION_SIGNING_SECRET",
         API_KEY_HASH_SALT,
     )
+    BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET = os.environ.get(
+        "BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET",
+        BROKER_SESSION_SIGNING_SECRET,
+    )
 
     # Role-based record/page limits
     ROW_LIMIT_ANON = int(os.environ.get("ROW_LIMIT_ANON", "200"))

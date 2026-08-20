@@ -1,12 +1,26 @@
+import base64
+import hashlib
 from datetime import UTC, datetime
 
 import asyncpg
+from cryptography.fernet import Fernet
 
 
 class DelegatedSessionStore:
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, refresh_token_encryption_secret: str):
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
+        key_material = hashlib.sha256(
+            refresh_token_encryption_secret.encode("utf-8")
+        ).digest()
+        fernet_key = base64.urlsafe_b64encode(key_material)
+        self._fernet = Fernet(fernet_key)
+
+    def _encrypt_refresh_token(self, refresh_token: str) -> str:
+        return self._fernet.encrypt(refresh_token.encode("utf-8")).decode("utf-8")
+
+    def _decrypt_refresh_token(self, stored_value: str) -> str:
+        return self._fernet.decrypt(stored_value.encode("utf-8")).decode("utf-8")
 
     async def startup(self):
         self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=1, max_size=5)
@@ -55,6 +69,7 @@ class DelegatedSessionStore:
             raise RuntimeError("Delegated session store is not initialized")
 
         expires_at = datetime.fromtimestamp(expires_at_epoch_seconds, tz=UTC)
+        encrypted_refresh_token = self._encrypt_refresh_token(refresh_token)
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
@@ -90,7 +105,7 @@ class DelegatedSessionStore:
                 realm,
                 catalog,
                 audience,
-                refresh_token,
+                encrypted_refresh_token,
                 expires_at,
             )
 
@@ -124,6 +139,8 @@ class DelegatedSessionStore:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
 
+        decrypted_refresh_token = self._decrypt_refresh_token(row["refresh_token"])
+
         return {
             "sid": row["sid"],
             "subject": row["subject"],
@@ -132,7 +149,7 @@ class DelegatedSessionStore:
             "realm": row["realm"],
             "catalog": row["catalog"],
             "audience": row["audience"],
-            "refresh_token": row["refresh_token"],
+            "refresh_token": decrypted_refresh_token,
             "expires_at": int(expires_at.timestamp()),
         }
 
@@ -140,6 +157,7 @@ class DelegatedSessionStore:
         if self._pool is None:
             raise RuntimeError("Delegated session store is not initialized")
 
+        encrypted_refresh_token = self._encrypt_refresh_token(refresh_token)
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
@@ -147,7 +165,7 @@ class DelegatedSessionStore:
                 SET refresh_token = $1, updated_at = NOW()
                 WHERE sid = $2
                 """,
-                refresh_token,
+                encrypted_refresh_token,
                 sid,
             )
 

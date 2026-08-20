@@ -141,6 +141,11 @@ spec:
             secretKeyRef:
               name: teehr-api-secrets
               key: client-secret
+        - name: BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-secrets
+              key: client-secret
         - name: API_KEYS_DB_HOST
           value: keycloak-pg
         - name: API_KEYS_DB_PORT
