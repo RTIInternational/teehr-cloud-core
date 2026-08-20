@@ -179,7 +179,7 @@ async def startup_event():
     app.state.api_key_store = ApiKeyStore(config.API_KEYS_DB_DSN)
     await app.state.api_key_store.startup()
     app.state.delegated_session_store = DelegatedSessionStore(
-        config.API_KEYS_DB_DSN,
+        config.DELEGATED_SESSIONS_DB_DSN,
         config.BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET,
     )
     await app.state.delegated_session_store.startup()

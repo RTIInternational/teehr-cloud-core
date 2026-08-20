@@ -60,6 +60,10 @@ class Config:
         "API_KEYS_DB_DSN",
         "postgresql://keycloak:keycloak123@keycloak-pg:5432/teehr_api",
     )
+    DELEGATED_SESSIONS_DB_DSN = os.environ.get(
+        "DELEGATED_SESSIONS_DB_DSN",
+        API_KEYS_DB_DSN,
+    )
     API_KEY_PREFIX = os.environ.get("API_KEY_PREFIX", "thk_")
     API_KEY_HASH_SALT = os.environ.get(
         "API_KEY_HASH_SALT",

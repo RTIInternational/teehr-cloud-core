@@ -167,6 +167,27 @@ spec:
               key: password
         - name: API_KEYS_DB_DSN
           value: "postgresql://$(API_KEYS_DB_USER):$(API_KEYS_DB_PASSWORD)@$(API_KEYS_DB_HOST):$(API_KEYS_DB_PORT)/$(API_KEYS_DB_NAME)"
+        - name: DELEGATED_SESSIONS_DB_HOST
+          value: keycloak-pg
+        - name: DELEGATED_SESSIONS_DB_PORT
+          value: "5432"
+        - name: DELEGATED_SESSIONS_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-db-secrets
+              key: database
+        - name: DELEGATED_SESSIONS_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-db-secrets
+              key: username
+        - name: DELEGATED_SESSIONS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-db-secrets
+              key: password
+        - name: DELEGATED_SESSIONS_DB_DSN
+          value: "postgresql://$(DELEGATED_SESSIONS_DB_USER):$(DELEGATED_SESSIONS_DB_PASSWORD)@$(DELEGATED_SESSIONS_DB_HOST):$(DELEGATED_SESSIONS_DB_PORT)/$(DELEGATED_SESSIONS_DB_NAME)"
         - name: ANON_RATE_LIMIT_RPM
           valueFrom:
             configMapKeyRef:
