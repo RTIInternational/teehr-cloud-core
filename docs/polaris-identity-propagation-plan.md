@@ -797,12 +797,11 @@ Preferred flow:
 - allows independent evolution of Keycloak refresh/exchange logic without pushing
    auth complexity into notebooks
 
-Concrete prototype artifacts now in this repo:
+Concrete broker/auth artifacts:
 
 - broker contract: `docs/polaris-broker-api-contract.md`
-- AuthManager scaffold root: `spark/authmanager-prototype/`
-- prototype manager class: `spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/TeehrBrokerAuthManager.java`
-- prototype session class: `spark/authmanager-prototype/src/main/java/org/teehr/iceberg/auth/BrokerBackedAuthSession.java`
+- published Spark AuthManager package: `org.rtiamanzi:teehr-iceberg-authmanager`
+- manager class in package: `org.teehr.iceberg.auth.TeehrBrokerAuthManager`
 
 Prototype property contract used by the manager:
 
@@ -815,7 +814,7 @@ Prototype property contract used by the manager:
 - `rest.auth.teehr.request-timeout-ms` (default `5000`)
 - `rest.auth.teehr.refresh-skew-seconds` (default `60`)
 
-### Prototype integration points
+### Integration points
 
 - package custom AuthManager in a jar available to Spark driver and executors
 - configure Spark Iceberg catalog to use custom auth manager type/class
@@ -823,7 +822,7 @@ Prototype property contract used by the manager:
 - keep current notebook refresh helper as fallback for direct REST/API calls, but
    do not treat it as the primary fix for Spark session longevity
 
-### Prototype success criteria
+### Success criteria
 
 1. Spark interactive session survives normal Keycloak access-token expiry without
     full Spark restart
@@ -831,17 +830,17 @@ Prototype property contract used by the manager:
 3. no long-lived refresh token is exposed in notebook code or Spark SQL properties
 4. audit logs can correlate notebook user, broker issuance, and Polaris access
 
-### Near-term recommendation while prototyping
+### Near-term recommendation
 
 - keep longer access-token TTL for user experience stability
 - keep notebook-side proactive refresh for direct API access
 - treat custom AuthManager plus broker as the real fix for Spark session continuity
 
-Execution checklist for this prototype:
+Execution checklist:
 
-1. build the prototype jar from `spark/authmanager-prototype/`
-2. place jar on Spark driver and executor classpaths
-3. configure `spark.sql.catalog.<catalog>.rest.auth.type` to the custom class name
+1. publish or select a release of `org.rtiamanzi:teehr-iceberg-authmanager`
+2. ensure Spark includes that coordinate in `spark.jars.packages`
+3. configure `spark.sql.catalog.<catalog>.rest.auth.type` to `org.teehr.iceberg.auth.TeehrBrokerAuthManager`
 4. provide the `rest.auth.teehr.*` properties via Spark config
 5. validate session behavior across at least one access-token expiration window
 
