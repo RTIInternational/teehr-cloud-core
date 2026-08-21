@@ -3,6 +3,10 @@ kind: ServiceAccount
 metadata:
   name: polaris
   namespace: ${environment.namespace}
+  ${if environment.name == "remote"}
+  annotations:
+    eks.amazonaws.com/role-arn: ${var.irsa.polarisRoleArn}
+  ${endif}
 ---
 apiVersion: apps/v1
 kind: Deployment

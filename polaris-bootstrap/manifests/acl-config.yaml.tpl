@@ -15,6 +15,7 @@ data:
           "path_style_access": "${var.polaris.catalogS3PathStyleAccess}",
           "s3_region": "${var.polaris.catalogS3Region}",
           "sts_unavailable": ${var.polaris.storageStsUnavailable},
+          "role_arn": "${var.polaris.catalogRoleArn}",
           "allowed_locations": [
             "${var.polaris.catalogWarehouse}"
           ],

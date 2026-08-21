@@ -392,6 +392,7 @@ spec:
         POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
         POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
         POLARIS_USE_AUTHMANAGER: "true"
+        POLARIS_USE_STS: "true"
         TRINO_HOST: ${var.trino.host}
         TRINO_PORT: ${var.trino.port}
         TRINO_CATALOG: ${var.trino.catalog}

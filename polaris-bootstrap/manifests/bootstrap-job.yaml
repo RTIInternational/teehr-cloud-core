@@ -243,6 +243,7 @@ spec:
                   path_style_access = realm_cfg.get("path_style_access")
                   s3_region = realm_cfg.get("s3_region")
                   sts_unavailable = realm_cfg.get("sts_unavailable")
+                  role_arn = realm_cfg.get("role_arn")
                   allowed_locations = realm_cfg.get("allowed_locations") or [warehouse]
 
                   print(f"[polaris-bootstrap] realm={realm} catalog={catalog_name}")
@@ -272,10 +273,17 @@ spec:
                       storage_config_info["region"] = s3_region
                       catalog_properties["s3.region"] = s3_region
                       catalog_properties["table-default.s3.region"] = s3_region
+                  sts_unavailable_bool = False
                   if sts_unavailable is not None:
-                      storage_config_info["stsUnavailable"] = parse_bool(sts_unavailable)
-                  catalog_properties["s3.remote-signing-enabled"] = "false"
-                  catalog_properties["table-default.s3.remote-signing-enabled"] = "false"
+                      sts_unavailable_bool = parse_bool(sts_unavailable)
+                      storage_config_info["stsUnavailable"] = sts_unavailable_bool
+                  if role_arn:
+                      storage_config_info["roleArn"] = role_arn
+                  # Remote signing (Polaris-vended, per-request S3 credentials) only
+                  # makes sense when Polaris can actually call STS to assume roleArn.
+                  remote_signing_enabled = str(not sts_unavailable_bool).lower()
+                  catalog_properties["s3.remote-signing-enabled"] = remote_signing_enabled
+                  catalog_properties["table-default.s3.remote-signing-enabled"] = remote_signing_enabled
 
                   ensure_catalog(
                       realm,

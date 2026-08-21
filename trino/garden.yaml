@@ -123,6 +123,10 @@ spec:
         iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
         iceberg.rest-catalog.oauth2.scope=openid
         # S3 Configuration
+        # Trino holds no AWS identity of its own for the warehouse bucket;
+        # it relies entirely on Polaris to vend scoped, short-lived S3
+        # credentials via the REST catalog protocol.
+        iceberg.rest-catalog.vended-credentials-enabled=true
         fs.native-s3.enabled=true
         s3.region=${var.aws.region}
     accessControl:
@@ -151,5 +155,3 @@ spec:
     serviceAccount:
       create: true
       name: trino
-      annotations:
-        eks.amazonaws.com/role-arn: ${var.irsa.trinoRoleArn}
