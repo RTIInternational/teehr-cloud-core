@@ -279,11 +279,6 @@ spec:
                       storage_config_info["stsUnavailable"] = sts_unavailable_bool
                   if role_arn:
                       storage_config_info["roleArn"] = role_arn
-                  # Remote signing (Polaris-vended, per-request S3 credentials) only
-                  # makes sense when Polaris can actually call STS to assume roleArn.
-                  remote_signing_enabled = str(not sts_unavailable_bool).lower()
-                  catalog_properties["s3.remote-signing-enabled"] = remote_signing_enabled
-                  catalog_properties["table-default.s3.remote-signing-enabled"] = remote_signing_enabled
 
                   ensure_catalog(
                       realm,
