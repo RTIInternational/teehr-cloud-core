@@ -163,6 +163,7 @@ spec:
     - /app/tests/spark_authmanager_executor_test.py
   env:
     TEEHR_SPARK_IMAGE: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
+  serviceAccountName: jupyter
   memory:
     min: 2048
     max: 3072
