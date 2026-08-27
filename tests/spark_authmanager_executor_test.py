@@ -23,6 +23,11 @@ from pyspark.sql import functions as F
 
 # Set up environment for Polaris/Spark before importing PySpark
 os.environ.setdefault("POLARIS_DEFAULT_REALM", "teehr")
+# create_spark_session() (unlike create_minio_spark_session(), which we
+# deliberately don't use here) defaults remote_warehouse_dir to "" rather
+# than the realm name when this isn't set, which Polaris's REST catalog
+# rejects with "Please specify a warehouse" on CREATE TABLE.
+os.environ.setdefault("REMOTE_WAREHOUSE_IDENTIFIER", "teehr")
 os.environ.setdefault("REMOTE_CATALOG_REST_URI", "http://polaris:8181/api/catalog")
 os.environ.setdefault("REMOTE_CATALOG_S3_ENDPOINT", "http://minio:9000")
 os.environ.setdefault("REMOTE_CATALOG_S3_PATH_STYLE_ACCESS", "true")

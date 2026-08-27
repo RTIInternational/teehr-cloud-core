@@ -155,18 +155,24 @@ dependencies:
   - build.test-scripts
   - build.teehr-spark-executor-image
 timeout: 600
-type: container
+type: kubernetes-pod
 spec:
-  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
-  command:
-    - python3
-    - /app/tests/spark_authmanager_executor_test.py
-  env:
-    TEEHR_SPARK_IMAGE: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
-  serviceAccountName: jupyter
-  memory:
-    min: 2048
-    max: 3072
-  cpu:
-    min: 1000
-    max: 2000
+  podSpec:
+    serviceAccountName: jupyter
+    restartPolicy: Never
+    containers:
+      - name: spark-authmanager-executor-test
+        image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+        command:
+          - python3
+          - /app/tests/spark_authmanager_executor_test.py
+        env:
+          - name: TEEHR_SPARK_IMAGE
+            value: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: "1"
+          limits:
+            memory: 3Gi
+            cpu: "2"
