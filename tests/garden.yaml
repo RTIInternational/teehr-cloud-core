@@ -153,6 +153,7 @@ dependencies:
   - deploy.keycloak-local-users-bootstrap
   - deploy.teehr-api
   - build.test-scripts
+  - build.teehr-spark-executor-image
 timeout: 600
 type: container
 spec:
@@ -160,6 +161,8 @@ spec:
   command:
     - python3
     - /app/tests/spark_authmanager_executor_test.py
+  env:
+    TEEHR_SPARK_IMAGE: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
   memory:
     min: 2048
     max: 3072
