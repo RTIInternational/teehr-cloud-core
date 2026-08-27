@@ -99,11 +99,11 @@ class Config:
     )
     BROKER_SESSION_SIGNING_SECRET = os.environ.get(
         "BROKER_SESSION_SIGNING_SECRET",
-        API_KEY_HASH_SALT,
+        "local-dev-change-me-session-signing",
     )
     BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET = os.environ.get(
         "BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET",
-        BROKER_SESSION_SIGNING_SECRET,
+        "local-dev-change-me-refresh-encryption",
     )
 
     # Role-based record/page limits

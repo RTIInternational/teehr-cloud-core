@@ -28,6 +28,14 @@ class InMemoryRateLimiter:
 
         minute_bucket = int(time.time() // 60)
         key = self._key(identity, route_key, minute_bucket)
+        self._enforce(key, limit, minute_bucket)
+
+    def check_by_key(self, key_prefix: str, limit: int):
+        minute_bucket = int(time.time() // 60)
+        key = f"{minute_bucket}:{key_prefix}"
+        self._enforce(key, limit, minute_bucket)
+
+    def _enforce(self, key: str, limit: int, minute_bucket: int):
         self._counts[key] += 1
 
         # Cheap periodic cleanup to avoid unbounded growth.

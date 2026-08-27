@@ -225,6 +225,9 @@ async def create_delegated_broker_session(
 async def exchange_token_for_polaris_via_broker_session(
     *,
     broker_session_token: str,
+    user_id: str,
+    session_id: str,
+    realm: str,
     requested_ttl_seconds: int | None,
 ) -> dict:
     if not broker_session_token:
@@ -252,6 +255,13 @@ async def exchange_token_for_polaris_via_broker_session(
     if int(record.get("expires_at", 0)) <= int(time.time()):
         await store.delete_session(delegated_session_id)
         raise HTTPException(status_code=401, detail="Delegated broker session expired")
+
+    if (
+        record.get("user_id") != user_id
+        or record.get("session_id") != session_id
+        or record.get("realm") != realm
+    ):
+        raise HTTPException(status_code=403, detail="Session identity mismatch")
 
     refreshed_subject_token, maybe_new_refresh_token = await _refresh_subject_access_token(
         record["refresh_token"]

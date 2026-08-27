@@ -228,6 +228,11 @@ async def auth_context_middleware(request: Request, call_next):
 
     path = request.url.path
     if path == "/auth/polaris-token/session":
+        client_host = request.client.host if request.client else "unknown"
+        app.state.rate_limiter.check_by_key(
+            f"polaris-token-session:{client_host}",
+            limit=config.AUTH_RATE_LIMIT_RPM,
+        )
         return await call_next(request)
 
     exempt_paths = (

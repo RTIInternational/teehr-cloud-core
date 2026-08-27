@@ -189,6 +189,9 @@ async def polaris_token_via_session(
     broker_session_token = request.headers.get("x-broker-session-token", "").strip()
     exchanged = await exchange_token_for_polaris_via_broker_session(
         broker_session_token=broker_session_token,
+        user_id=payload.user_id,
+        session_id=payload.session_id,
+        realm=payload.realm,
         requested_ttl_seconds=payload.requested_ttl_seconds,
     )
 
