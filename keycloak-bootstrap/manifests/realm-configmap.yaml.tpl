@@ -253,30 +253,6 @@ data:
               }
             }
           ]
-        },
-        {
-          "clientId": "spark-polaris",
-          "enabled": true,
-          "protocol": "openid-connect",
-          "publicClient": false,
-          "serviceAccountsEnabled": true,
-          "secret": "$(env:SPARK_POLARIS_CLIENT_SECRET)",
-          "protocolMappers": [
-            {
-              "name": "realm-roles",
-              "protocol": "openid-connect",
-              "protocolMapper": "oidc-usermodel-realm-role-mapper",
-              "consentRequired": false,
-              "config": {
-                "multivalued": "true",
-                "id.token.claim": "true",
-                "access.token.claim": "true",
-                "userinfo.token.claim": "true",
-                "claim.name": "realm_access.roles",
-                "jsonType.label": "String"
-              }
-            }
-          ]
         }
       ],
       "users": [

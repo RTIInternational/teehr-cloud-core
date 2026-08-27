@@ -37,9 +37,6 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
      data:
        client-secret: local-trino-polaris-client-secret          # plain secret — used by keycloak-bootstrap env var
        credential: "trino-polaris:local-trino-polaris-client-secret"  # full credential string — mounted as Trino credential file
-   spark-polaris-secrets:
-     data:
-       client-secret: local-spark-polaris-client-secret
    ```
    > **Note**: `trino-polaris-secrets` needs **two keys** because the Keycloak bootstrap job needs the plain secret value (`client-secret`) to set as the Keycloak client secret, while Trino's credential file mount needs the full `trino-polaris:<secret>` string (`credential`). Using the `credential` key for the Keycloak env var would inject the wrong value.
 
@@ -91,14 +88,12 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
      - `iceberg-restricted-writers` (realmRoles: `iceberg-namespace-restricted-write`, `iceberg-namespace-restricted-read`)
      - `iceberg-catalog-admins` (realmRoles: `iceberg-catalog-admin`)
    - Retain existing `iceberg-user` role and group during transition
-   - Add to `clients` array — **two** new confidential service account clients (not three — Polaris does not need its own Keycloak client; it validates tokens via JWKS only and does not perform token introspection or act as an OAuth2 client itself):
+   - Add to `clients` array — **one** new confidential service account client (Polaris does not need its own Keycloak client; it validates tokens via JWKS only and does not perform token introspection or act as an OAuth2 client itself):
      - `trino-polaris` client — `serviceAccountsEnabled: true`, `secret: $(env:TRINO_POLARIS_CLIENT_SECRET)`, add `realm_access` protocol mapper to include roles in access token
-     - `spark-polaris` client — `serviceAccountsEnabled: true`, `secret: $(env:SPARK_POLARIS_CLIENT_SECRET)`, same `realm_access` mapper
    - **Note on `realm_access.roles` claim**: Keycloak includes realm roles in access tokens by default, but verify against the running Keycloak version. If the Polaris `PrincipalRoleMapper` needs roles under a custom claim path, add an explicit `oidc-usermodel-realm-role-mapper` protocolMapper to the Polaris-facing clients.
 
-8. Update `keycloak-bootstrap/manifests/bootstrap-job.yaml` — add two new `env` entries matching the existing pattern:
+8. Update `keycloak-bootstrap/manifests/bootstrap-job.yaml` — add one new `env` entry matching the existing pattern:
    - `TRINO_POLARIS_CLIENT_SECRET` from `trino-polaris-secrets` key `client-secret`
-   - `SPARK_POLARIS_CLIENT_SECRET` from `spark-polaris-secrets` key `client-secret`
 
 ---
 
@@ -244,12 +239,11 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
     - Add an optional `oauth2_token: str = None` parameter to `create_spark_session()` — passed through to `_configure_iceberg_catalogs()`
     - In `_configure_iceberg_catalogs()`: add OAuth2 conf.set calls at the end of the existing function body:
       - If `oauth2_token` provided (JupyterHub user token pass-through): set `rest.auth.type=oauth2` + `rest.auth.oauth2.token=<token>`
-      - If absent (Prefect batch): set `rest.auth.type=oauth2`, `rest.auth.oauth2.server-uri` (from `POLARIS_OAUTH2_SERVER_URI` env), `rest.auth.oauth2.credential=spark-polaris:<secret>` (from `SPARK_POLARIS_CLIENT_SECRET` env), `rest.auth.oauth2.scope=openid`
-      - Both paths: set `rest.transport.header.X-Polaris-Realm=teehr`
+      - Set `rest.transport.header.X-Polaris-Realm=teehr`
     - The existing `update_configs: Dict[str, str]` parameter on `create_spark_session()` remains available as an override escape hatch — no structural change needed
     - **No changes** to `_create_spark_base_session`, `_set_spark_cluster_configuration`, `_set_aws_credentials_in_spark`, `_update_configs_and_packages`, `_set_catalog_metadata`, or any other existing functions
 
-14. Update `teehr/src/teehr/const.py` — add `POLARIS_OAUTH2_SERVER_URI` and `SPARK_POLARIS_CLIENT_SECRET` env var reads alongside existing constants.
+14. Update `teehr/src/teehr/const.py` — add `POLARIS_OAUTH2_SERVER_URI` env var read alongside existing constants.
 
 15. Update `prefect-workflows/manifests/prefect-deployer-job.yaml` — change `REMOTE_CATALOG_REST_URI` value from `${var.iceberg.catalogUri}` to `${var.polaris.catalogUri}`.
 
@@ -320,13 +314,13 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
 
 | File | Change |
 |---|---|
-| `secrets/secrets.local.yaml` | Add `polaris-db-secrets`, `polaris-secrets`, `trino-polaris-secrets`, `spark-polaris-secrets` |
-| `secrets/secrets.remote.yaml` | Same four secrets with production-grade values |
-| `keycloak-bootstrap/manifests/realm-configmap.yaml.tpl` | Add 5 realm roles, 5 groups, 2 confidential clients (`trino-polaris`, `spark-polaris`) |
-| `keycloak-bootstrap/manifests/bootstrap-job.yaml` | Add 2 new secret env vars (`TRINO_POLARIS_CLIENT_SECRET`, `SPARK_POLARIS_CLIENT_SECRET`) |
+| `secrets/secrets.local.yaml` | Add `polaris-db-secrets`, `polaris-secrets`, `trino-polaris-secrets` |
+| `secrets/secrets.remote.yaml` | Same three secrets with production-grade values |
+| `keycloak-bootstrap/manifests/realm-configmap.yaml.tpl` | Add 5 realm roles, 5 groups, 1 confidential client (`trino-polaris`) |
+| `keycloak-bootstrap/manifests/bootstrap-job.yaml` | Add 1 new secret env var (`TRINO_POLARIS_CLIENT_SECRET`) |
 | `trino/garden.yaml` | Both local + remote Deploy blocks: OAuth2 catalog auth + credential-file volume mount via Helm values |
 | `spark_session_utils.py` | Additive: dual-path OAuth2 + `X-Polaris-Realm` header; no existing signatures changed |
-| `teehr/src/teehr/const.py` | Add `POLARIS_OAUTH2_SERVER_URI`, `SPARK_POLARIS_CLIENT_SECRET` |
+| `teehr/src/teehr/const.py` | Add `POLARIS_OAUTH2_SERVER_URI` |
 | `prefect-workflows/manifests/prefect-deployer-job.yaml` | Update `REMOTE_CATALOG_REST_URI` to `${var.polaris.catalogUri}` |
 | `project.garden.yml` | Add `polaris` variable group + control/data plane comments |
 | `ingress/garden.yaml` | Add `polaris-ingress` Deploy entry |
@@ -340,7 +334,7 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
 3. Fetch `client_credentials` token for `trino-polaris` from Keycloak → `GET https://polaris.${var.hostname}/api/catalog/v1/config` with `X-Polaris-Realm: teehr` → expect 200; confirm `realm_access.roles` present in decoded token
 4. `trino --execute "SHOW SCHEMAS IN iceberg"` → teehr schema visible
 5. JupyterHub Spark with user token injected → user with no namespace role gets 403 from Polaris
-6. Prefect batch job → `spark-polaris` service client token accepted; `REMOTE_CATALOG_REST_URI` resolves to Polaris
+6. `REMOTE_CATALOG_REST_URI` resolves to Polaris
 7. **ACL matrix**:
    - `iceberg-namespace-public-read` member → read `public` ✓, write `public` ✗, read `restricted` ✗
    - `iceberg-namespace-public-write` member → read+write `public` ✓, `restricted` ✗
@@ -362,7 +356,6 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
 - Secrets via `secrets/secrets.local.yaml` + `secrets/secrets.remote.yaml` varfiles — consistent with existing `$forEach` pattern; no standalone K8s Secret manifests
 - Trino OAuth2 credential delivered via mounted credential-file (`iceberg.rest-catalog.oauth2.credential-file`) — avoids env var interpolation limitations in Trino catalog properties; stored as full `trino-polaris:<secret>` string, mounted via `subPath`, no init container
 - Trino: `client_credentials` — access control enforced at Trino layer; Polaris sees service identity
-- Spark in Prefect: `client_credentials` (`spark-polaris`) — headless batch, no user context
 - Spark in JupyterHub: user token pass-through — Polaris enforces per-user namespace/table ACLs
 - Polaris has **no IRSA annotation** — pure metadata service on the control plane
 - Control plane: Polaris + Keycloak (future: dedicated cluster); Data plane: all other services
@@ -392,4 +385,3 @@ Replace `tabulario/iceberg-rest` with `apache/polaris`. Tight Keycloak integrati
 
 4. **OPA for Trino access control (future)**: Trino uses a single `trino-polaris` service identity so Polaris cannot enforce per-user namespace/table ACLs for Trino queries. Open Policy Agent (OPA) — a lightweight Go service on the control plane — can fill this gap. Trino's native OPA system access control plugin receives full query context (user identity, Keycloak groups, target catalog/schema/table) and evaluates Rego policies that mirror the Keycloak role taxonomy. Policy changes hot-reload via ConfigMap without Trino restarts. Would require: new `opa/` Garden module + `access-control.name=opa` in Trino config + policy ConfigMap mirroring the Phase 3 role taxonomy.
 
-5. **Per-workflow Prefect clients (future)**: Replace single `spark-polaris` client with per-category Keycloak clients (`prefect-ingest`, `prefect-metrics`, etc.), each granted only the namespace roles it needs. Prefect deployment job templates inject credentials via workflow-specific K8s Secrets. `spark_session_utils.py` reads `SPARK_POLARIS_CLIENT_ID` from env rather than hardcoding. No changes needed to Polaris bootstrap or `acl-config.yaml`.
