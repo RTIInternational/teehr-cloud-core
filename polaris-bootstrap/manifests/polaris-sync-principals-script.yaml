@@ -6,7 +6,10 @@ data:
   sync_principals.py: |
     """
     Syncs Keycloak users into Polaris as named principal entities and grants
-    principal role bindings for their teehr-* group memberships.
+    principal role bindings matching their effective (composite) realm roles --
+    the same realm_access.roles claim Polaris's own JWT-based principal-roles-mapper
+    reads (polaris/manifests/polaris-config.yaml.tpl), so named-principal bindings
+    can't silently diverge from what group-based JWT mapping would have granted.
 
     NOTE ON DESIGN: When a named Polaris principal exists for a user, Polaris uses
     that principal's explicit role bindings rather than the JWT group claim mapper.
@@ -95,22 +98,6 @@ data:
         return [role.get("name") for role in resp.json() if role.get("name")]
 
 
-    def get_keycloak_user_groups(kc_token, user_id):
-        """Get user's groups, including group paths like /teehr-read-only"""
-        resp = requests.get(
-            f"{KC_URL}/admin/realms/{REALM}/users/{user_id}/groups",
-            headers={"Authorization": f"Bearer {kc_token}"},
-        )
-        resp.raise_for_status()
-        groups = []
-        for group in resp.json():
-            # Extract the group name from the path (e.g., "/teehr-read-only" -> "teehr-read-only")
-            path = group.get("path", "").strip("/")
-            if path:
-                groups.append(path)
-        return groups
-
-
     def ensure_principal(polaris_token, principal_name):
         resp = requests.post(
             f"{MGMT_URL}/api/management/v1/principals",
@@ -187,19 +174,16 @@ data:
         if name:
             ensure_principal(polaris_token, name)
             if user_id:
-                # Check realm roles
+                # Grant principal roles from the user's effective (composite) realm
+                # roles -- this is exactly what ends up in the JWT's realm_access.roles
+                # claim, i.e. the same input Polaris's own principal-roles-mapper regex
+                # (polaris/manifests/polaris-config.yaml.tpl) uses for JWT-based mapping.
+                # Matching that regex here (rather than deriving from Keycloak group
+                # names/paths separately) keeps named-principal bindings from silently
+                # diverging from what group-based JWT mapping would have granted.
                 for role_name in get_keycloak_realm_roles(kc_token, user_id):
                     if role_name.startswith("teehr-") or role_name == "iceberg-catalog-admin":
                         ensure_principal_role_binding(polaris_token, name, role_name)
-                        granted += 1
-                
-                # Check group memberships and map to principal roles
-                for group_name in get_keycloak_user_groups(kc_token, user_id):
-                    if group_name.startswith("teehr-"):
-                        ensure_principal_role_binding(polaris_token, name, group_name)
-                        granted += 1
-                    elif group_name == "iceberg-catalog-admins":
-                        ensure_principal_role_binding(polaris_token, name, "iceberg-catalog-admin")
                         granted += 1
             synced += 1
 

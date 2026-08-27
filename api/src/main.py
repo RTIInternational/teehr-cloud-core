@@ -161,6 +161,17 @@ def custom_openapi():
             {"BearerAuth": []},
         ]
 
+    # Same override as /auth/polaris-token: the route requires
+    # identity.auth_type == "jwt", so API-key auth is not accepted here
+    # either, even though the generic default above includes it.
+    auth_polaris_session = openapi_schema.get("paths", {}).get("/auth/polaris-session", {}).get("post")
+    if auth_polaris_session:
+        auth_polaris_session["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
+            {"OAuth2Keycloak": ["openid", "profile", "email"]},
+            {"BearerAuth": []},
+        ]
+
     auth_polaris_token_session = openapi_schema.get("paths", {}).get("/auth/polaris-token/session", {}).get("post")
     if auth_polaris_token_session:
         auth_polaris_token_session["security"] = []

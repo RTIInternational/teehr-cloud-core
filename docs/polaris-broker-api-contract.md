@@ -82,13 +82,22 @@ Current prototype implementation in this repo:
 
 Error payload shape:
 
+FastAPI wraps every `HTTPException(detail=...)` payload under a top-level
+`"detail"` key by default, and this API has no exception handler that
+unwraps it — so error responses are actually:
+
 ```json
 {
-  "error": "forbidden",
-  "message": "session is not authorized for requested user_id",
-  "trace_id": "f8af1e8b3d21469a9adf99c9185d2d10"
+  "detail": {
+    "error": "forbidden",
+    "message": "session is not authorized for requested user_id",
+    "trace_id": "f8af1e8b3d21469a9adf99c9185d2d10"
+  }
 }
 ```
+
+Callers must read `error`/`message`/`trace_id` from `response.json()["detail"]`,
+not from the top level of the response body.
 
 ## Security Requirements
 
