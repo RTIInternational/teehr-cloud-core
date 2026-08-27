@@ -53,6 +53,10 @@ if "TEST_USERNAME" not in os.environ:
 
 # Set up environment before importing PySpark
 os.environ.setdefault("POLARIS_DEFAULT_REALM", "teehr")
+# create_spark_session() defaults remote_warehouse_dir to "" (not the realm
+# name) when this isn't set, which Polaris's REST catalog rejects with
+# "Please specify a warehouse" on any catalog read/write.
+os.environ.setdefault("REMOTE_WAREHOUSE_IDENTIFIER", "teehr")
 os.environ.setdefault("REMOTE_CATALOG_REST_URI", "http://polaris:8181/api/catalog")
 os.environ.setdefault("REMOTE_WAREHOUSE_S3_PATH", "s3://warehouse/")
 os.environ.setdefault("REMOTE_CATALOG_S3_ENDPOINT", "http://minio:9000")
