@@ -139,3 +139,30 @@ spec:
   cpu:
     min: 1000
     max: 2000
+
+---
+kind: Test
+name: spark-authmanager-executor-enforcement
+description: >-
+  Cluster-mode AuthManager test -- confirms Spark executors (not just the
+  driver) get the Polaris auth env vars they need and can participate in a
+  real distributed Iceberg write/read, unlike spark-authmanager-enforcement
+  above which only exercises local (driver-only) mode.
+dependencies:
+  - deploy.polaris-bootstrap
+  - deploy.keycloak-local-users-bootstrap
+  - deploy.teehr-api
+  - build.test-scripts
+timeout: 600
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/spark_authmanager_executor_test.py
+  memory:
+    min: 2048
+    max: 3072
+  cpu:
+    min: 1000
+    max: 2000
