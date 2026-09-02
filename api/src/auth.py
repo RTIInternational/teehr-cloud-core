@@ -35,6 +35,8 @@ class AuthIdentity:
     auth_type: str
     roles: list[str] = field(default_factory=list)
     scopes: list[str] = field(default_factory=list)
+    preferred_username: str | None = None
+    groups: list[str] = field(default_factory=list)
 
     @property
     def is_authenticated(self) -> bool:
@@ -129,11 +131,17 @@ class KeycloakJWTValidator:
             if not subject:
                 raise HTTPException(status_code=401, detail="JWT missing subject")
 
+            groups = claims.get("groups", [])
+            if not isinstance(groups, list):
+                groups = []
+
             return AuthIdentity(
                 subject=subject,
                 auth_type="jwt",
                 roles=roles,
                 scopes=scopes,
+                preferred_username=claims.get("preferred_username"),
+                groups=[str(group) for group in groups],
             )
         except httpx.HTTPError as exc:
             logger.error("Keycloak connectivity error during token validation: %s", str(exc))
@@ -170,6 +178,16 @@ async def get_request_identity(request: Request) -> AuthIdentity:
     identity = await resolve_identity(request)
     request.state.identity = identity
     return identity
+
+
+def extract_bearer_token_from_request(request: Request) -> str:
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Bearer token required")
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Bearer token required")
+    return token
 
 
 async def get_authenticated_identity(

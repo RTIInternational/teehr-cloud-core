@@ -25,7 +25,9 @@ data:
           ],
           "groups": [
             "/basic-user",
-            "/iceberg-user",
+            "/teehr-read-only",
+            "/teehr-read-write",
+            "/iceberg-catalog-admins",
             "/jupyter-admin",
             "/key-management-admin",
             "/prefect-admin",
@@ -48,6 +50,27 @@ data:
           ],
           "groups": [
             "/basic-user",
+            "/teehr-read-only",
+            "/jupyter-user"
+          ]
+        },
+        {
+          "username": "poweruser",
+          "enabled": true,
+          "email": "poweruser@example.local",
+          "emailVerified": true,
+          "firstName": "Local",
+          "lastName": "PowerUser",
+          "credentials": [
+            {
+              "type": "password",
+              "value": "poweruser",
+              "temporary": false
+            }
+          ],
+          "groups": [
+            "/basic-user",
+            "/teehr-read-write",
             "/jupyter-user"
           ]
         }

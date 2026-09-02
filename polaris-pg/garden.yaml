@@ -1,8 +1,7 @@
 kind: Deploy
 type: kubernetes
-name: iceberg-database
-description: K8s Deploy Iceberg Catalog Database
-disabled: true
+name: polaris-database
+description: K8s Deploy Polaris Catalog Database
 dependencies:
   - deploy.secrets
 environments:
@@ -10,4 +9,4 @@ environments:
   - remote
 spec:
   manifestFiles:
-  - ./manifests/iceberg-pg.yaml
+  - ./manifests/polaris-pg.yaml

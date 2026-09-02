@@ -40,7 +40,7 @@ class Config:
     KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "teehr-api")
     KEYCLOAK_ALLOWED_AUDIENCES = os.environ.get(
         "KEYCLOAK_ALLOWED_AUDIENCES",
-        "teehr-api,teehr-frontend",
+        "teehr-api,teehr-frontend,jupyterhub",
     )
     KEYCLOAK_AUTH_URL = os.environ.get(
         "KEYCLOAK_AUTH_URL",
@@ -60,6 +60,10 @@ class Config:
         "API_KEYS_DB_DSN",
         "postgresql://keycloak:keycloak123@keycloak-pg:5432/teehr_api",
     )
+    DELEGATED_SESSIONS_DB_DSN = os.environ.get(
+        "DELEGATED_SESSIONS_DB_DSN",
+        API_KEYS_DB_DSN,
+    )
     API_KEY_PREFIX = os.environ.get("API_KEY_PREFIX", "thk_")
     API_KEY_HASH_SALT = os.environ.get(
         "API_KEY_HASH_SALT",
@@ -69,6 +73,38 @@ class Config:
     # Rate limit settings (requests per minute)
     ANON_RATE_LIMIT_RPM = int(os.environ.get("ANON_RATE_LIMIT_RPM", "20"))
     AUTH_RATE_LIMIT_RPM = int(os.environ.get("AUTH_RATE_LIMIT_RPM", "120"))
+
+    # Polaris token broker settings
+    BROKER_TOKEN_EXCHANGE_ENABLED = (
+        os.environ.get("BROKER_TOKEN_EXCHANGE_ENABLED", "true").strip().lower()
+        in {"1", "true", "t", "yes", "y", "on"}
+    )
+    BROKER_TOKEN_ENDPOINT = os.environ.get(
+        "BROKER_TOKEN_ENDPOINT",
+        KEYCLOAK_TOKEN_URL,
+    )
+    BROKER_OAUTH_CLIENT_ID = os.environ.get("BROKER_OAUTH_CLIENT_ID", "teehr-api")
+    BROKER_OAUTH_CLIENT_SECRET = os.environ.get("BROKER_OAUTH_CLIENT_SECRET", "")
+    BROKER_TARGET_AUDIENCE = os.environ.get("BROKER_TARGET_AUDIENCE", "account")
+    BROKER_DEFAULT_SCOPE = os.environ.get("BROKER_DEFAULT_SCOPE", "openid profile email")
+    BROKER_MIN_TTL_SECONDS = int(os.environ.get("BROKER_MIN_TTL_SECONDS", "120"))
+    BROKER_MAX_TTL_SECONDS = int(os.environ.get("BROKER_MAX_TTL_SECONDS", "900"))
+    BROKER_REQUEST_TIMEOUT_SECONDS = int(
+        os.environ.get("BROKER_REQUEST_TIMEOUT_SECONDS", "10")
+    )
+    BROKER_SUBJECT_CLIENT_ID = os.environ.get("BROKER_SUBJECT_CLIENT_ID", "jupyterhub")
+    BROKER_SUBJECT_CLIENT_SECRET = os.environ.get("BROKER_SUBJECT_CLIENT_SECRET", "")
+    BROKER_DELEGATED_SESSION_TTL_SECONDS = int(
+        os.environ.get("BROKER_DELEGATED_SESSION_TTL_SECONDS", "43200")
+    )
+    BROKER_SESSION_SIGNING_SECRET = os.environ.get(
+        "BROKER_SESSION_SIGNING_SECRET",
+        "local-dev-change-me-session-signing",
+    )
+    BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET = os.environ.get(
+        "BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET",
+        "local-dev-change-me-refresh-encryption",
+    )
 
     # Role-based record/page limits
     ROW_LIMIT_ANON = int(os.environ.get("ROW_LIMIT_ANON", "200"))

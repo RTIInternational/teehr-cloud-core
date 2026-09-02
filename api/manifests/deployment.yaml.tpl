@@ -76,6 +76,76 @@ spec:
             configMapKeyRef:
               name: teehr-api-config
               key: KEYCLOAK_ALLOWED_AUDIENCES
+        - name: BROKER_TOKEN_EXCHANGE_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_TOKEN_EXCHANGE_ENABLED
+        - name: BROKER_TOKEN_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_TOKEN_ENDPOINT
+        - name: BROKER_OAUTH_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_OAUTH_CLIENT_ID
+        - name: BROKER_OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-secrets
+              key: client-secret
+        - name: BROKER_TARGET_AUDIENCE
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_TARGET_AUDIENCE
+        - name: BROKER_DEFAULT_SCOPE
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_DEFAULT_SCOPE
+        - name: BROKER_MIN_TTL_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_MIN_TTL_SECONDS
+        - name: BROKER_MAX_TTL_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_MAX_TTL_SECONDS
+        - name: BROKER_REQUEST_TIMEOUT_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_REQUEST_TIMEOUT_SECONDS
+        - name: BROKER_SUBJECT_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_SUBJECT_CLIENT_ID
+        - name: BROKER_DELEGATED_SESSION_TTL_SECONDS
+          valueFrom:
+            configMapKeyRef:
+              name: teehr-api-config
+              key: BROKER_DELEGATED_SESSION_TTL_SECONDS
+        - name: BROKER_SUBJECT_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: jupyterhub
+              key: OAUTH_CLIENT_SECRET
+        - name: BROKER_SESSION_SIGNING_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: broker-secrets
+              key: session-signing-secret
+        - name: BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: broker-secrets
+              key: refresh-token-encryption-secret
         - name: API_KEYS_DB_HOST
           value: keycloak-pg
         - name: API_KEYS_DB_PORT
@@ -97,6 +167,27 @@ spec:
               key: password
         - name: API_KEYS_DB_DSN
           value: "postgresql://$(API_KEYS_DB_USER):$(API_KEYS_DB_PASSWORD)@$(API_KEYS_DB_HOST):$(API_KEYS_DB_PORT)/$(API_KEYS_DB_NAME)"
+        - name: DELEGATED_SESSIONS_DB_HOST
+          value: keycloak-pg
+        - name: DELEGATED_SESSIONS_DB_PORT
+          value: "5432"
+        - name: DELEGATED_SESSIONS_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-db-secrets
+              key: database
+        - name: DELEGATED_SESSIONS_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-db-secrets
+              key: username
+        - name: DELEGATED_SESSIONS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: teehr-api-db-secrets
+              key: password
+        - name: DELEGATED_SESSIONS_DB_DSN
+          value: "postgresql://$(DELEGATED_SESSIONS_DB_USER):$(DELEGATED_SESSIONS_DB_PASSWORD)@$(DELEGATED_SESSIONS_DB_HOST):$(DELEGATED_SESSIONS_DB_PORT)/$(DELEGATED_SESSIONS_DB_NAME)"
         - name: ANON_RATE_LIMIT_RPM
           valueFrom:
             configMapKeyRef:
