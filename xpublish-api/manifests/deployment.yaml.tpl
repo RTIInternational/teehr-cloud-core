@@ -25,11 +25,6 @@ spec:
         - containerPort: 8000
           name: http
         env:
-        - name: ICECHUNK_REPOS
-          valueFrom:
-            configMapKeyRef:
-              name: xpublish-api-config
-              key: ICECHUNK_REPOS
         - name: ICECHUNK_BUCKET
           valueFrom:
             configMapKeyRef:

@@ -5,8 +5,6 @@ Serves raster tiles via TilesPlugin (reads from /pyramids group) and
 point queries via CfEdrPlugin (reads from /raw_data group).
 
 Environment variables:
-  ICECHUNK_REPOS         Comma-separated list of repo names.
-                         Example: "ua-swann-4km,nwm30-forcing-analysis-assim"
   ICECHUNK_BUCKET        S3 bucket that holds all icechunk repos.
                          Example: "warehouse" (local) or "ciroh-rti-public-data" (remote)
   ICECHUNK_PREFIX        Base prefix path; each repo lives at {prefix}/{name}.
@@ -36,6 +34,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import boto3
+from botocore.config import Config
 import numpy as np
 import xpublish
 from fastapi import FastAPI, HTTPException, Request
@@ -57,28 +57,69 @@ logging.basicConfig(
 )
 
 
-def parse_repo_configs() -> list[RepoConfig]:
-    """
-    Parse repo configs from ICECHUNK_REPOS (comma-separated names),
-    ICECHUNK_BUCKET (shared S3 bucket), and ICECHUNK_PREFIX (base prefix).
-    Each repo's full prefix is constructed as "{ICECHUNK_PREFIX}/{name}".
-    """
-    repos_env = os.getenv("ICECHUNK_REPOS", "").strip()
+def build_s3_client():
+    mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
+    if mode == "local":
+        return boto3.client(
+            "s3",
+            endpoint_url=os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
+            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            config=Config(s3={"addressing_style": "path"}),
+        )
+    return boto3.client("s3")
+
+
+def normalize_storage_prefix(prefix: str) -> str:
+    return prefix.rstrip("/") + "/" if prefix else ""
+
+
+def list_storage_prefixes(s3, bucket: str, prefix: str) -> list[dict]:
+    paginator = s3.get_paginator("list_objects_v2")
+    results = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=normalize_storage_prefix(prefix), Delimiter="/"):
+        for cp in page.get("CommonPrefixes", []):
+            dir_path = cp["Prefix"]
+            dir_name = dir_path.rstrip("/").split("/")[-1]
+            if dir_name:
+                results.append({"id": dir_name, "path": dir_path})
+    return results
+
+
+def list_storage_files(s3, bucket: str, prefix: str, extension: str) -> list[dict]:
+    paginator = s3.get_paginator("list_objects_v2")
+    results = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=normalize_storage_prefix(prefix)):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(extension):
+                continue
+            filename = os.path.basename(key)
+            if extension == ".pmtiles":
+                source_layer = filename[: -len(extension)]
+                results.append({"id": source_layer, "path": key, "source_layer": source_layer})
+            else:
+                results.append({"id": filename, "path": key})
+    return results
+
+
+def discover_available_repos() -> list[RepoConfig]:
+    """Discover repos by listing top-level prefixes under ICECHUNK_BUCKET/ICECHUNK_PREFIX."""
     bucket = os.getenv("ICECHUNK_BUCKET", "").strip()
     prefix = os.getenv("ICECHUNK_PREFIX", "").strip().rstrip("/")
-    if not repos_env:
-        raise RuntimeError("ICECHUNK_REPOS is required: comma-separated list of repo names")
     if not bucket:
         raise RuntimeError("ICECHUNK_BUCKET is required: S3 bucket name")
     if not prefix:
         raise RuntimeError("ICECHUNK_PREFIX is required: base prefix path for icechunk repos")
-    configs = []
-    for name in (n.strip() for n in repos_env.split(",")):
-        if not name:
-            continue
-        configs.append(RepoConfig(name=name, bucket=bucket, prefix=f"{prefix}/{name}"))
+
+    configs = [
+        RepoConfig(name=item["id"], bucket=bucket, prefix=item["path"].rstrip("/"))
+        for item in list_storage_prefixes(build_s3_client(), bucket, prefix)
+    ]
+
     if not configs:
-        raise RuntimeError("ICECHUNK_REPOS contained no valid entries")
+        raise RuntimeError(f"No icechunk repos found under s3://{bucket}/{prefix}/")
     return configs
 
 
@@ -126,7 +167,7 @@ def build_app() -> FastAPI:
     storage_mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
     cache_ttl = float(os.getenv("DATASET_CACHE_TTL", "60"))
 
-    repo_configs = parse_repo_configs()
+    repo_configs = discover_available_repos()
     storage_kwargs = build_storage_kwargs()
 
     logger.info(
@@ -216,6 +257,49 @@ def build_app() -> FastAPI:
         logger.info("Variable attrs for dataset '%s': %s", dataset_id, list(result.keys()))
         return {"dataset_id": dataset_id, "variables": result}
 
+    @api_app.get("/storage/contents")
+    def list_storage_contents(bucket: str, prefix: str, extension: str = None):
+        """
+        List S3-compatible storage contents.
+
+        Lists files or directories from an S3 bucket at a given prefix.
+        Requires Keycloak JWT authentication (inherited from auth middleware).
+
+        Query parameters:
+          - bucket: S3 bucket name (required)
+          - prefix: Path/prefix within bucket (required)
+          - extension: File extension to filter by, e.g. '.pmtiles' (optional)
+            If omitted, lists subdirectories instead of files.
+
+        Returns:
+          - For files: [{ "id": "filename", "path": "bucket/prefix/filename.ext", "source_layer": "layer_name" }, ...]
+            For pmtiles: source_layer derived from filename (without .pmtiles)
+          - For directories: [{ "id": "dir-name", "path": "bucket/prefix/dir-name/" }, ...]
+        """
+        if not bucket or prefix is None:
+            raise HTTPException(status_code=400, detail="bucket and prefix parameters are required")
+
+        try:
+            s3 = build_s3_client()
+            results = (
+                list_storage_files(s3, bucket, prefix, extension)
+                if extension
+                else list_storage_prefixes(s3, bucket, prefix)
+            )
+
+            logger.info(
+                "Storage contents: bucket=%s, prefix=%s, extension=%s, found %d items",
+                bucket,
+                prefix,
+                extension or "none",
+                len(results),
+            )
+            return {"bucket": bucket, "prefix": prefix, "extension": extension, "items": results}
+
+        except Exception as e:
+            logger.error("Storage contents error: %s", str(e))
+            raise HTTPException(status_code=500, detail=f"Storage listing failed: {str(e)}")
+
     # --- api_app middleware (gzip only; CORS is on the outer app) ---
 
     api_app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -258,7 +342,7 @@ def build_app() -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     @app.get("/health")
