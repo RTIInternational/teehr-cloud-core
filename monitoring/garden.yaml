@@ -59,7 +59,11 @@ spec:
     # Prometheus configuration
     prometheus:
       prometheusSpec:
-        retention: 15d
+        # 7d keeps the head/TSDB small enough to replay within the 2Gi limit
+        # below. Raising this without also raising memory risks a WAL-replay
+        # OOM loop: Prometheus must finish replaying before it can enforce
+        # retention, so an oversized WAL becomes self-perpetuating.
+        retention: 7d
         storageSpec:
           volumeClaimTemplate:
             spec:
