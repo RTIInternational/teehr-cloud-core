@@ -72,7 +72,7 @@ RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then \
     export GDAL_CONFIG=/usr/bin/gdal-config; \
     fi && \
-    pip install "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}"
+    GIT_LFS_SKIP_SMUDGE=1 pip install --no-cache-dir "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}"
 
 RUN mkdir -p /opt/teehr && chown -R ${NB_USER}:${NB_USER} /opt/teehr
 

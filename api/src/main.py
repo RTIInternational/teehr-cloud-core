@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse
 
 from .api_key_store import ApiKeyStore
 from .auth import KeycloakJWTValidator, resolve_identity
+from .broker import set_delegated_session_store
 from .config import config
+from .delegated_session_store import DelegatedSessionStore
 from .models import HealthResponse
 from .rate_limit import InMemoryRateLimiter
 from .routes import router
@@ -72,6 +74,20 @@ def custom_openapi():
             }
         },
     }
+    security_schemes["OAuth2KeycloakPassword"] = {
+        "type": "oauth2",
+        "description": "Login with Keycloak username/password using the password grant",
+        "flows": {
+            "password": {
+                "tokenUrl": config.KEYCLOAK_TOKEN_URL,
+                "scopes": {
+                    "openid": "OpenID Connect scope",
+                    "profile": "User profile",
+                    "email": "User email",
+                },
+            }
+        },
+    }
     security_schemes["ApiKeyAuth"] = {
         "type": "apiKey",
         "in": "header",
@@ -96,6 +112,7 @@ def custom_openapi():
             operation.setdefault(
                 "security",
                 [
+                    {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
                     {"OAuth2Keycloak": ["openid", "profile", "email"]},
                     {"BearerAuth": []},
                     {"ApiKeyAuth": []},
@@ -106,6 +123,7 @@ def custom_openapi():
     auth_me = openapi_schema.get("paths", {}).get("/auth/me", {}).get("get")
     if auth_me:
         auth_me["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
             {"ApiKeyAuth": []},
@@ -114,6 +132,7 @@ def custom_openapi():
     auth_keys_get = openapi_schema.get("paths", {}).get("/auth/api-keys", {}).get("get")
     if auth_keys_get:
         auth_keys_get["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
@@ -121,6 +140,7 @@ def custom_openapi():
     auth_keys_post = openapi_schema.get("paths", {}).get("/auth/api-keys", {}).get("post")
     if auth_keys_post:
         auth_keys_post["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
@@ -128,9 +148,33 @@ def custom_openapi():
     auth_keys_delete = openapi_schema.get("paths", {}).get("/auth/api-keys/{key_id}", {}).get("delete")
     if auth_keys_delete:
         auth_keys_delete["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
             {"OAuth2Keycloak": ["openid", "profile", "email"]},
             {"BearerAuth": []},
         ]
+
+    auth_polaris_token = openapi_schema.get("paths", {}).get("/auth/polaris-token", {}).get("post")
+    if auth_polaris_token:
+        auth_polaris_token["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
+            {"OAuth2Keycloak": ["openid", "profile", "email"]},
+            {"BearerAuth": []},
+        ]
+
+    # Same override as /auth/polaris-token: the route requires
+    # identity.auth_type == "jwt", so API-key auth is not accepted here
+    # either, even though the generic default above includes it.
+    auth_polaris_session = openapi_schema.get("paths", {}).get("/auth/polaris-session", {}).get("post")
+    if auth_polaris_session:
+        auth_polaris_session["security"] = [
+            {"OAuth2KeycloakPassword": ["openid", "profile", "email"]},
+            {"OAuth2Keycloak": ["openid", "profile", "email"]},
+            {"BearerAuth": []},
+        ]
+
+    auth_polaris_token_session = openapi_schema.get("paths", {}).get("/auth/polaris-token/session", {}).get("post")
+    if auth_polaris_token_session:
+        auth_polaris_token_session["security"] = []
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema
@@ -145,10 +189,17 @@ async def startup_event():
     app.state.rate_limiter = InMemoryRateLimiter()
     app.state.api_key_store = ApiKeyStore(config.API_KEYS_DB_DSN)
     await app.state.api_key_store.startup()
+    app.state.delegated_session_store = DelegatedSessionStore(
+        config.DELEGATED_SESSIONS_DB_DSN,
+        config.BROKER_REFRESH_TOKEN_ENCRYPTION_SECRET,
+    )
+    await app.state.delegated_session_store.startup()
+    await set_delegated_session_store(app.state.delegated_session_store)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    await app.state.delegated_session_store.shutdown()
     await app.state.api_key_store.shutdown()
 
 # CORS middleware to allow frontend requests - MUST be first middleware
@@ -187,6 +238,14 @@ async def auth_context_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
+    if path == "/auth/polaris-token/session":
+        client_host = request.client.host if request.client else "unknown"
+        app.state.rate_limiter.check_by_key(
+            f"polaris-token-session:{client_host}",
+            limit=config.AUTH_RATE_LIMIT_RPM,
+        )
+        return await call_next(request)
+
     exempt_paths = (
         path == "/health"
         or path == "/openapi.json"
@@ -195,7 +254,10 @@ async def auth_context_middleware(request: Request, call_next):
     )
 
     # Keep auth optional while attaching identity for routes that need it.
-    request.state.identity = await resolve_identity(request)
+    try:
+        request.state.identity = await resolve_identity(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     # Require authentication for all non-diagnostic API paths.
     if not exempt_paths and not request.state.identity.is_authenticated:

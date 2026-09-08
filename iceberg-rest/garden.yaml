@@ -2,6 +2,7 @@ kind: Deploy
 type: kubernetes
 name: iceberg-rest-deploy
 description: K8s Deploy Iceberg REST
+disabled: true
 spec:
   manifestTemplates:
     - ./manifests/iceberg-rest.yaml.tpl
