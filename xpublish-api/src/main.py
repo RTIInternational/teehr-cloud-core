@@ -119,7 +119,8 @@ def discover_available_repos() -> list[RepoConfig]:
     ]
 
     if not configs:
-        raise RuntimeError(f"No icechunk repos found under s3://{bucket}/{prefix}/")
+        logger.warning(f"No icechunk repos found under s3://{bucket}/{prefix}/")
+        return []
     return configs
 
 
