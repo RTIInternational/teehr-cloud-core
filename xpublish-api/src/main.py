@@ -14,6 +14,9 @@ Environment variables:
   CORS_ORIGINS           Comma-separated list of allowed CORS origins
   DATASET_CACHE_TTL      Seconds to cache dataset metadata before re-opening from icechunk
                          (default: 60). Set to 0 to disable caching (re-open on every request).
+  REPO_DISCOVERY_TTL     Seconds before re-listing {prefix} for new/removed repos
+                         (default: DATASET_CACHE_TTL). Repos are discovered lazily on the
+                         first request, so the app starts even with none present.
 
   Local (ICECHUNK_STORAGE_MODE=local):
     ICECHUNK_ENDPOINT_URL   MinIO endpoint (default: http://minio:9000)
@@ -34,8 +37,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-import boto3
-from botocore.config import Config
 import numpy as np
 import xpublish
 from fastapi import FastAPI, HTTPException, Request
@@ -47,7 +48,14 @@ from xpublish_tiles import lib as xpublish_tiles_lib
 from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
-from .provider import IcechunkDatasetProvider, RepoConfig
+from .provider import IcechunkDatasetProvider
+from .storage import (
+    build_s3_client,
+    build_storage_kwargs,
+    list_storage_files,
+    list_storage_prefixes,
+    resolve_icechunk_location,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,99 +63,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-
-
-def build_s3_client():
-    mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
-    if mode == "local":
-        return boto3.client(
-            "s3",
-            endpoint_url=os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
-            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            config=Config(s3={"addressing_style": "path"}),
-        )
-    return boto3.client("s3")
-
-
-def normalize_storage_prefix(prefix: str) -> str:
-    return prefix.rstrip("/") + "/" if prefix else ""
-
-
-def list_storage_prefixes(s3, bucket: str, prefix: str) -> list[dict]:
-    paginator = s3.get_paginator("list_objects_v2")
-    results = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=normalize_storage_prefix(prefix), Delimiter="/"):
-        for cp in page.get("CommonPrefixes", []):
-            dir_path = cp["Prefix"]
-            dir_name = dir_path.rstrip("/").split("/")[-1]
-            if dir_name:
-                results.append({"id": dir_name, "path": dir_path})
-    return results
-
-
-def list_storage_files(s3, bucket: str, prefix: str, extension: str) -> list[dict]:
-    paginator = s3.get_paginator("list_objects_v2")
-    results = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=normalize_storage_prefix(prefix)):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            if not key.endswith(extension):
-                continue
-            filename = os.path.basename(key)
-            if extension == ".pmtiles":
-                source_layer = filename[: -len(extension)]
-                results.append({"id": source_layer, "path": key, "source_layer": source_layer})
-            else:
-                results.append({"id": filename, "path": key})
-    return results
-
-
-def discover_available_repos() -> list[RepoConfig]:
-    """Discover repos by listing top-level prefixes under ICECHUNK_BUCKET/ICECHUNK_PREFIX."""
-    bucket = os.getenv("ICECHUNK_BUCKET", "").strip()
-    prefix = os.getenv("ICECHUNK_PREFIX", "").strip().rstrip("/")
-    if not bucket:
-        raise RuntimeError("ICECHUNK_BUCKET is required: S3 bucket name")
-    if not prefix:
-        raise RuntimeError("ICECHUNK_PREFIX is required: base prefix path for icechunk repos")
-
-    configs = [
-        RepoConfig(name=item["id"], bucket=bucket, prefix=item["path"].rstrip("/"))
-        for item in list_storage_prefixes(build_s3_client(), bucket, prefix)
-    ]
-
-    if not configs:
-        logger.warning(f"No icechunk repos found under s3://{bucket}/{prefix}/")
-        return []
-    return configs
-
-
-def build_storage_kwargs() -> dict:
-    """
-    Return kwargs for ic.s3_storage() based on ICECHUNK_STORAGE_MODE.
-
-    - "local":  explicit endpoint + credentials via standard AWS_* env vars,
-                plus minio-specific flags (allow_http, force_path_style, endpoint_url).
-    - "remote": from_env=True — reads AWS_* env vars or uses IRSA on EKS.
-    """
-    mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
-    if mode == "local":
-        kwargs: dict = {
-            "region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-            "allow_http": True,
-            "endpoint_url": os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
-            "force_path_style": True,
-        }
-        access_key = os.getenv("AWS_ACCESS_KEY_ID")
-        secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        if access_key:
-            kwargs["access_key_id"] = access_key
-        if secret_key:
-            kwargs["secret_access_key"] = secret_key
-        return kwargs
-    return {"from_env": True}
 
 
 @asynccontextmanager
@@ -167,22 +82,28 @@ def build_app() -> FastAPI:
     cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
     storage_mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
     cache_ttl = float(os.getenv("DATASET_CACHE_TTL", "60"))
+    discovery_ttl = float(os.getenv("REPO_DISCOVERY_TTL", str(cache_ttl)))
 
-    repo_configs = discover_available_repos()
-    storage_kwargs = build_storage_kwargs()
+    # Only the configuration is resolved here — repos are discovered lazily by
+    # the provider, so the app starts before storage is reachable or populated.
+    bucket, prefix = resolve_icechunk_location()
 
     logger.info(
-        "Storage mode: %s | repos: %s | cache_ttl: %ss",
+        "Storage mode: %s | repos: s3://%s/%s/ | cache_ttl: %ss | discovery_ttl: %ss",
         storage_mode,
-        [(r.name, r.bucket, r.prefix) for r in repo_configs],
+        bucket,
+        prefix,
         cache_ttl,
+        discovery_ttl,
     )
 
     provider = IcechunkDatasetProvider(
-        repo_configs=repo_configs,
-        storage_kwargs=storage_kwargs,
+        bucket=bucket,
+        prefix=prefix,
+        storage_kwargs=build_storage_kwargs(),
         branch=branch,
         cache_ttl_seconds=cache_ttl,
+        discovery_ttl_seconds=discovery_ttl,
     )
 
     rest = xpublish.Rest(
@@ -200,8 +121,10 @@ def build_app() -> FastAPI:
 
     @api_app.get("/dataset-keys")
     def list_dataset_keys():
-        # Return only the tiles-capable dataset names (not the _raw_data variants).
-        return {"datasets": [cfg.name for cfg in repo_configs]}
+        # Only the tiles-capable dataset names (not the _raw_data variants).
+        # Read through the provider rather than a startup snapshot so repos
+        # created after the pod started show up on the next page load.
+        return {"datasets": provider.repo_names()}
 
     @api_app.get("/dataset-variables/{dataset_id}")
     def dataset_variables(dataset_id: str):
