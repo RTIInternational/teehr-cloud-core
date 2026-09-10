@@ -1,9 +1,18 @@
+import sys
+import types
 from datetime import datetime
 
 import pandas as pd
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from src import database
+
+# The test environment may not have geospatial dependencies installed.
+sys.modules.setdefault("geopandas", types.ModuleType("geopandas"))
+
+from src.routes import events
 
 
 class _FakeCursor:
@@ -92,3 +101,107 @@ def test_execute_query_params_passes_parameters(monkeypatch):
     ]
     assert fake_cursor.query == "SELECT a, b FROM table WHERE id = ?"
     assert fake_cursor.params == ["abc"]
+
+
+def _build_test_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(events.router)
+    return TestClient(app)
+
+
+def test_event_trace_initializations_midpoint_default(monkeypatch):
+    rows = [
+        {
+            "reference_time": datetime(2018, 7, 6, 0, 0, 0),
+            "event_start": datetime(2018, 7, 6, 0, 0, 0),
+            "event_end": datetime(2018, 7, 9, 0, 0, 0),
+        },
+        {
+            "reference_time": datetime(2018, 7, 7, 0, 0, 0),
+            "event_start": datetime(2018, 7, 6, 0, 0, 0),
+            "event_end": datetime(2018, 7, 9, 0, 0, 0),
+        },
+        {
+            "reference_time": datetime(2018, 7, 8, 0, 0, 0),
+            "event_start": datetime(2018, 7, 6, 0, 0, 0),
+            "event_end": datetime(2018, 7, 9, 0, 0, 0),
+        },
+    ]
+
+    captured = {}
+
+    def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
+        captured["query"] = query
+        captured["params"] = params
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
+
+    client = _build_test_client()
+    response = client.get(
+        "/collections/joined_timeseries/event_trace/initializations",
+        params={
+            "primary_location_id": "usgs-12345",
+            "configuration_name": "hefs_streamflow_forecast",
+            "variable_name": "streamflow_hourly_inst",
+            "threshold": "q_10th",
+            "event_id": "2018-07-06 00:00:00-2018-07-09 00:00:00",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["threshold"] == "10th"
+    assert payload["available_initialization_datetimes"] == [
+        "2018-07-06T00:00:00",
+        "2018-07-07T00:00:00",
+        "2018-07-08T00:00:00",
+    ]
+    # Midpoint is 2018-07-07 12:00:00, so 07 and 08 are tied; earlier wins.
+    assert payload["default_initialization_datetime"] == "2018-07-07T00:00:00"
+
+    assert "joined_timeseries" in captured["query"]
+    assert captured["params"] == [
+        "usgs-12345",
+        "hefs_streamflow_forecast",
+        "streamflow_hourly_inst",
+        "2018-07-06 00:00:00-2018-07-09 00:00:00",
+    ]
+
+
+def test_event_trace_initializations_not_found(monkeypatch):
+    def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
+        return pd.DataFrame(columns=["reference_time", "event_start", "event_end"])
+
+    monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
+
+    client = _build_test_client()
+    response = client.get(
+        "/collections/joined_timeseries/event_trace/initializations",
+        params={
+            "primary_location_id": "usgs-12345",
+            "configuration_name": "hefs_streamflow_forecast",
+            "variable_name": "streamflow_hourly_inst",
+            "threshold": "10th",
+            "event_id": "2018-07-06 00:00:00-2018-07-09 00:00:00",
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_event_trace_initializations_bad_threshold():
+    client = _build_test_client()
+    response = client.get(
+        "/collections/joined_timeseries/event_trace/initializations",
+        params={
+            "primary_location_id": "usgs-12345",
+            "configuration_name": "hefs_streamflow_forecast",
+            "variable_name": "streamflow_hourly_inst",
+            "threshold": "q_33rd",
+            "event_id": "2018-07-06 00:00:00-2018-07-09 00:00:00",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Unsupported threshold token" in response.json()["detail"]

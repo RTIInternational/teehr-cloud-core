@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from . import (
     auth,
     crosswalks,
+    events,
     locations,
     metrics,
     ogc_foundation,
@@ -25,6 +26,7 @@ router.include_router(locations.router, tags=["Locations"])
 router.include_router(crosswalks.router, tags=["Crosswalks"])
 router.include_router(reference_data.router, tags=["Reference Data"])
 router.include_router(timeseries.router, tags=["Timeseries"])
+router.include_router(events.router, tags=["Events"])
 router.include_router(metrics.router, tags=["Metrics"])
 router.include_router(queryables.router, tags=["Queryables"])
 

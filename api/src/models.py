@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 class MetricsTable(str, Enum):
     """Available metrics table names."""
+
     SIM_METRICS_BY_LOCATION = "sim_metrics_by_location"
     FCST_METRICS_BY_LOCATION = "fcst_metrics_by_location"
     FCST_METRICS_BY_LEAD_TIME_BINS = "fcst_metrics_by_lead_time_bins"
@@ -51,6 +52,7 @@ class MetricsTable(str, Enum):
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: str
     timestamp: datetime
     version: str
@@ -58,8 +60,10 @@ class HealthResponse(BaseModel):
 
 # OGC API Models
 
+
 class Link(BaseModel):
     """OGC API Link object."""
+
     href: str
     rel: str
     type: str | None = None
@@ -69,17 +73,20 @@ class Link(BaseModel):
 
 class ConformanceResponse(BaseModel):
     """OGC API Conformance declaration."""
+
     conformsTo: list[str]
 
 
 class Extent(BaseModel):
     """OGC API Extent object."""
+
     spatial: dict[str, Any] | None = None
     temporal: dict[str, Any] | None = None
 
 
 class Collection(BaseModel):
     """OGC API Collection metadata."""
+
     id: str
     title: str
     description: str
@@ -91,12 +98,28 @@ class Collection(BaseModel):
 
 class CollectionsResponse(BaseModel):
     """OGC API Collections list."""
+
     links: list[Link]
     collections: list[Collection]
 
 
 class LandingPage(BaseModel):
     """OGC API Landing page."""
+
     title: str
     description: str
     links: list[Link]
+
+
+class EventTraceInitializationsResponse(BaseModel):
+    """Initialization metadata for the FIRO event trace slider."""
+
+    primary_location_id: str
+    configuration_name: str
+    variable_name: str
+    threshold: str
+    event_id: str
+    event_start: datetime
+    event_end: datetime
+    available_initialization_datetimes: list[datetime]
+    default_initialization_datetime: datetime
