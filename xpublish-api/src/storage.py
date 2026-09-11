@@ -7,12 +7,21 @@ for the ``/storage/contents`` endpoint (pmtiles / directory listings).
 """
 
 import os
+from functools import lru_cache
 
 import boto3
 from botocore.config import Config
 
 
+@lru_cache(maxsize=1)
 def build_s3_client():
+    """
+    Return the shared S3 client.
+
+    Cached so callers reuse one connection pool instead of re-paying the
+    TCP/TLS handshake on every listing.  Clients are thread-safe, and IRSA
+    credentials still refresh behind a long-lived one.
+    """
     mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
     if mode == "local":
         return boto3.client(
