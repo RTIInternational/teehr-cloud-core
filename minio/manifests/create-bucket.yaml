@@ -14,7 +14,6 @@ spec:
           - |
             mc alias set minio $MINIO_SERVER $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
             mc mb --ignore-existing minio/warehouse
-            mc anonymous set download minio/warehouse
         env:
         - name: MINIO_SERVER
           value: http://minio:9000

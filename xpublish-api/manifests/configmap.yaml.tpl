@@ -9,6 +9,8 @@ data:
   ICECHUNK_BUCKET: "${var.icechunk.bucket}"
   ICECHUNK_PREFIX: "${var.icechunk.prefix}"
   ICECHUNK_BRANCH: "main"
+  PMTILES_BUCKET: "${var.pmtiles.bucket}"
+  PMTILES_PREFIX: "${var.pmtiles.prefix}"
   # Dynamically set based on environment name: "local" or "remote"
   ICECHUNK_STORAGE_MODE: "${environment.name}"
   # Local mode: explicit MinIO endpoint. Remote mode: empty (AWS SDK handles it).

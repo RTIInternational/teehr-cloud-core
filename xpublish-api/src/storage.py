@@ -2,8 +2,8 @@
 S3-compatible storage helpers shared by the app and the icechunk provider.
 
 These live outside ``main`` so that ``provider`` can list the icechunk prefix
-without importing the module that imports it.  ``main`` uses the same helpers
-for the ``/storage/contents`` endpoint (pmtiles / directory listings).
+without importing the module that imports it.  ``pmtiles`` uses the same
+helpers to list and read the vector-tile archives.
 """
 
 import os

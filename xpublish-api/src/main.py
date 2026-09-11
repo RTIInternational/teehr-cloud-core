@@ -11,6 +11,8 @@ Environment variables:
                          Example: "icechunk-ingests"
   ICECHUNK_BRANCH        Branch to open for all repos (default: main)
   ICECHUNK_STORAGE_MODE  "local" for minio/kind, "remote" for AWS S3 (default: remote)
+  PMTILES_BUCKET         S3 bucket holding the .pmtiles vector-tile archives.
+  PMTILES_PREFIX         Prefix within that bucket. Example: "vector-tiles"
   CORS_ORIGINS           Comma-separated list of allowed CORS origins
   DATASET_CACHE_TTL      Seconds to cache dataset metadata before re-opening from icechunk
                          (default: 60). Set to 0 to disable caching (re-open on every request).
@@ -48,14 +50,9 @@ from xpublish_tiles import lib as xpublish_tiles_lib
 from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
+from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
 from .provider import IcechunkDatasetProvider
-from .storage import (
-    build_s3_client,
-    build_storage_kwargs,
-    list_storage_files,
-    list_storage_prefixes,
-    resolve_icechunk_location,
-)
+from .storage import build_storage_kwargs, resolve_icechunk_location
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +84,15 @@ def build_app() -> FastAPI:
     # Only the configuration is resolved here — repos are discovered lazily by
     # the provider, so the app starts before storage is reachable or populated.
     bucket, prefix = resolve_icechunk_location()
+    pmtiles_bucket, pmtiles_prefix = resolve_pmtiles_location()
 
     logger.info(
-        "Storage mode: %s | repos: s3://%s/%s/ | cache_ttl: %ss | discovery_ttl: %ss",
+        "Storage mode: %s | repos: s3://%s/%s/ | tiles: s3://%s/%s/ | cache_ttl: %ss | discovery_ttl: %ss",
         storage_mode,
         bucket,
         prefix,
+        pmtiles_bucket,
+        pmtiles_prefix,
         cache_ttl,
         discovery_ttl,
     )
@@ -181,48 +181,22 @@ def build_app() -> FastAPI:
         logger.info("Variable attrs for dataset '%s': %s", dataset_id, list(result.keys()))
         return {"dataset_id": dataset_id, "variables": result}
 
-    @api_app.get("/storage/contents")
-    def list_storage_contents(bucket: str, prefix: str, extension: str = None):
+    @api_app.get("/vector-tiles")
+    def list_vector_tiles():
         """
-        List S3-compatible storage contents.
+        List the .pmtiles archives available under the configured prefix.
 
-        Lists files or directories from an S3 bucket at a given prefix.
-        Requires Keycloak JWT authentication (inherited from auth middleware).
-
-        Query parameters:
-          - bucket: S3 bucket name (required)
-          - prefix: Path/prefix within bucket (required)
-          - extension: File extension to filter by, e.g. '.pmtiles' (optional)
-            If omitted, lists subdirectories instead of files.
-
-        Returns:
-          - For files: [{ "id": "filename", "path": "bucket/prefix/filename.ext", "source_layer": "layer_name" }, ...]
-            For pmtiles: source_layer derived from filename (without .pmtiles)
-          - For directories: [{ "id": "dir-name", "path": "bucket/prefix/dir-name/" }, ...]
+        Returns ``{"items": [{"id": "usgs-basins", "source_layer": "usgs-basins"}]}``.
+        Fetch an archive's bytes from ``/vector-tiles/{id}.pmtiles``.
         """
-        if not bucket or prefix is None:
-            raise HTTPException(status_code=400, detail="bucket and prefix parameters are required")
-
         try:
-            s3 = build_s3_client()
-            results = (
-                list_storage_files(s3, bucket, prefix, extension)
-                if extension
-                else list_storage_prefixes(s3, bucket, prefix)
-            )
+            items = list_pmtiles_layers()
+        except Exception as exc:
+            logger.error("Vector tile listing failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Vector tile listing failed") from exc
 
-            logger.info(
-                "Storage contents: bucket=%s, prefix=%s, extension=%s, found %d items",
-                bucket,
-                prefix,
-                extension or "none",
-                len(results),
-            )
-            return {"bucket": bucket, "prefix": prefix, "extension": extension, "items": results}
-
-        except Exception as e:
-            logger.error("Storage contents error: %s", str(e))
-            raise HTTPException(status_code=500, detail=f"Storage listing failed: {str(e)}")
+        logger.info("Vector tile layers: %s", [item["id"] for item in items])
+        return {"items": items}
 
     # --- api_app middleware (gzip only; CORS is on the outer app) ---
 
@@ -232,6 +206,15 @@ def build_app() -> FastAPI:
 
     app = FastAPI(title="TEEHR xpublish API", lifespan=app_lifespan)
     app.mount("/api", api_app)
+
+    # Deliberately on the outer app rather than under /api: GZipMiddleware is
+    # mounted on api_app and does not special-case 206 responses, so it would
+    # compress a partial body while Content-Range still described the
+    # uncompressed byte range.  Auth and CORS both live out here, so the route
+    # keeps the Keycloak gate either way.
+    @app.get("/vector-tiles/{layer}.pmtiles")
+    def get_vector_tile_archive(layer: str, request: Request):
+        return read_pmtiles_range(layer, request.headers.get("range"))
 
     # Auth middleware is registered first so it ends up innermost.
     # CORSMiddleware is added second so it ends up outermost — this ensures
@@ -266,7 +249,11 @@ def build_app() -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "Range"],
+        # pmtiles reads these off the response to walk the archive; without
+        # them exposed the range requests succeed but the browser hides the
+        # headers from JS and the archive fails to parse.
+        expose_headers=["Content-Range", "Content-Length", "ETag", "Accept-Ranges"],
     )
 
     @app.get("/health")
