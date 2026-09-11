@@ -119,7 +119,10 @@ class EventTraceInitializationsResponse(BaseModel):
     variable_name: str
     threshold: str
     event_id: str
+    lead_time_hours: int
     event_start: datetime
     event_end: datetime
+    expanded_event_start: datetime
+    expanded_event_end: datetime
     available_initialization_datetimes: list[datetime]
     default_initialization_datetime: datetime

@@ -21,11 +21,16 @@ logger = logging.getLogger("teehr-api.routes.events")
 
 
 def _select_default_initialization(
-    reference_times: list[datetime], event_start: datetime, event_end: datetime
+    reference_times: list[datetime], event_start: datetime
 ) -> datetime:
-    """Select nearest initialization to event midpoint; tie-break to earlier."""
-    midpoint = event_start + ((event_end - event_start) / 2)
-    return min(reference_times, key=lambda ts: (abs(ts - midpoint), ts))
+    """Select latest initialization at or before event start.
+
+    Falls back to the earliest available initialization when no prior forecast exists.
+    """
+    prior_or_equal = [ts for ts in reference_times if ts <= event_start]
+    if prior_or_equal:
+        return prior_or_equal[-1]
+    return reference_times[0]
 
 
 @router.get(
@@ -38,6 +43,7 @@ async def get_event_trace_initializations(
     variable_name: str = Query(...),
     threshold: str = Query(...),
     event_id: str = Query(...),
+    lead_time_hours: int = Query(..., ge=1, le=168),
 ):
     """Return event window and available initialization datetimes for slider setup."""
     try:
@@ -51,10 +57,6 @@ async def get_event_trace_initializations(
         event_flag_column = f"event_{canonical_threshold}"
         event_id_column = f"event_{canonical_threshold}_id"
 
-        # Limit event lookup by parsed event_id bounds to reduce unnecessary scans.
-        lower_bound = event_start_hint.strftime("%Y-%m-%d %H:%M:%S")
-        upper_bound = event_end_hint.strftime("%Y-%m-%d %H:%M:%S")
-
         query = f"""
             SELECT
                 reference_time,
@@ -66,8 +68,6 @@ async def get_event_trace_initializations(
               AND variable_name = ?
               AND {event_flag_column} = true
               AND {event_id_column} = ?
-              AND value_time >= TIMESTAMP '{lower_bound}'
-              AND value_time <= TIMESTAMP '{upper_bound}'
             GROUP BY reference_time
             ORDER BY reference_time
         """
@@ -97,23 +97,25 @@ async def get_event_trace_initializations(
         event_start = df["event_start"].min().to_pydatetime()
         event_end = df["event_end"].max().to_pydatetime()
 
+        expanded_event_start = event_start - timedelta(hours=lead_time_hours)
+        expanded_event_end = event_end + timedelta(hours=24)
+
         reference_times = sorted(
-            {ts.to_pydatetime() for ts in df["reference_time"] if pd.notna(ts)}
+            {
+                ts.to_pydatetime()
+                for ts in df["reference_time"]
+                if pd.notna(ts)
+                and expanded_event_start <= ts.to_pydatetime() <= expanded_event_end
+            }
         )
         if not reference_times:
             raise HTTPException(
                 status_code=404,
-                detail="No initialization datetimes found for this event.",
+                detail="No initialization datetimes found in expanded event window.",
             )
 
-        # Guard against degenerate windows and preserve deterministic midpoint logic.
-        if event_end < event_start:
-            event_end = event_start
-        if event_end == event_start:
-            event_end = event_end + timedelta(seconds=0)
-
         default_initialization = _select_default_initialization(
-            reference_times, event_start, event_end
+            reference_times, event_start
         )
 
         return EventTraceInitializationsResponse(
@@ -122,8 +124,11 @@ async def get_event_trace_initializations(
             variable_name=safe_variable,
             threshold=canonical_threshold,
             event_id=event_id,
+            lead_time_hours=lead_time_hours,
             event_start=event_start,
             event_end=event_end,
+            expanded_event_start=expanded_event_start,
+            expanded_event_end=expanded_event_end,
             available_initialization_datetimes=reference_times,
             default_initialization_datetime=default_initialization,
         )
