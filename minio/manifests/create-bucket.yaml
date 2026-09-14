@@ -8,7 +8,9 @@ spec:
     spec:
       containers:
       - name: mc
-        image: minio/mc:latest
+        # See minio.yaml.tpl: Docker Hub dropped the MinIO images, quay.io
+        # still serves the final community releases.
+        image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
         command: ["/bin/sh", "-c"]
         args:
           - |
