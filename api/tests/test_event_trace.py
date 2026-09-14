@@ -460,6 +460,7 @@ def test_event_trace_data_basic(monkeypatch):
     assert post_init[2]["value_time"] == "2018-07-08T00:00:00"
     assert post_init[2]["value"] == 300.0
     assert payload["forecast_members"] == []
+    assert payload["forecast_percentiles"] == {"p10": [], "p50": [], "p90": []}
 
 
 def test_event_trace_data_init_point_on_boundary(monkeypatch):
@@ -512,6 +513,7 @@ def test_event_trace_data_init_point_on_boundary(monkeypatch):
     assert pre_init[-1]["value_time"] == "2018-07-06T00:00:00"
     assert post_init[0]["value_time"] == "2018-07-06T00:00:00"
     assert payload["forecast_members"] == []
+    assert payload["forecast_percentiles"] == {"p10": [], "p50": [], "p90": []}
 
 
 def test_event_trace_data_invalid_initialization_time(monkeypatch):
@@ -637,3 +639,20 @@ def test_event_trace_data_includes_forecast_member_traces(monkeypatch):
     assert payload["forecast_members"][0]["values"][0]["value"] == 140.0
     assert payload["forecast_members"][1]["member"] == "2"
     assert payload["forecast_members"][1]["values"][0]["value"] == 160.0
+    assert (
+        payload["forecast_percentiles"]["p10"][0]["value_time"] == "2018-07-06T00:00:00"
+    )
+    assert (
+        payload["forecast_percentiles"]["p50"][0]["value_time"] == "2018-07-06T00:00:00"
+    )
+    assert (
+        payload["forecast_percentiles"]["p90"][0]["value_time"] == "2018-07-06T00:00:00"
+    )
+    assert payload["forecast_percentiles"]["p10"][0]["value"] == pytest.approx(142.0)
+    assert payload["forecast_percentiles"]["p50"][0]["value"] == pytest.approx(150.0)
+    assert payload["forecast_percentiles"]["p90"][0]["value"] == pytest.approx(158.0)
+    assert (
+        payload["forecast_percentiles"]["p10"][1]["value_time"] == "2018-07-06T01:00:00"
+    )
+    assert payload["forecast_percentiles"]["p50"][1]["value"] == pytest.approx(141.0)
+    assert payload["forecast_percentiles"]["p90"][1]["value"] == pytest.approx(141.0)

@@ -18,6 +18,7 @@ from ..models import (
     EnsembleMemberTrace,
     EventTraceDataResponse,
     EventTraceInitializationsResponse,
+    ForecastPercentileTraces,
     ObservedTraces,
     TracePoint,
 )
@@ -304,6 +305,47 @@ async def get_event_trace_data(
                     )
                 )
 
+        percentile_traces = ForecastPercentileTraces(p10=[], p50=[], p90=[])
+        if not forecast_df.empty:
+            quantiles_df = (
+                forecast_df.groupby("value_time")["value"]
+                .quantile([0.1, 0.5, 0.9])
+                .unstack(level=1)
+                .reset_index()
+                .sort_values("value_time")
+            )
+
+            p10_traces = [
+                TracePoint(
+                    value_time=row["value_time"].to_pydatetime(),
+                    value=float(row[0.1]),
+                )
+                for _, row in quantiles_df.iterrows()
+                if pd.notna(row[0.1])
+            ]
+            p50_traces = [
+                TracePoint(
+                    value_time=row["value_time"].to_pydatetime(),
+                    value=float(row[0.5]),
+                )
+                for _, row in quantiles_df.iterrows()
+                if pd.notna(row[0.5])
+            ]
+            p90_traces = [
+                TracePoint(
+                    value_time=row["value_time"].to_pydatetime(),
+                    value=float(row[0.9]),
+                )
+                for _, row in quantiles_df.iterrows()
+                if pd.notna(row[0.9])
+            ]
+
+            percentile_traces = ForecastPercentileTraces(
+                p10=p10_traces,
+                p50=p50_traces,
+                p90=p90_traces,
+            )
+
         return EventTraceDataResponse(
             primary_location_id=safe_location,
             configuration_name=safe_configuration,
@@ -317,6 +359,7 @@ async def get_event_trace_data(
                 post_initialization=post_traces,
             ),
             forecast_members=forecast_members,
+            forecast_percentiles=percentile_traces,
         )
 
     except HTTPException:

@@ -149,6 +149,14 @@ class EnsembleMemberTrace(BaseModel):
     values: list[TracePoint]
 
 
+class ForecastPercentileTraces(BaseModel):
+    """Percentile traces derived from ensemble forecasts."""
+
+    p10: list[TracePoint]
+    p50: list[TracePoint]
+    p90: list[TracePoint]
+
+
 class EventTraceDataResponse(BaseModel):
     """Observed trace data for an event initialization."""
 
@@ -161,3 +169,4 @@ class EventTraceDataResponse(BaseModel):
     window_end: datetime
     observed: ObservedTraces
     forecast_members: list[EnsembleMemberTrace]
+    forecast_percentiles: ForecastPercentileTraces
