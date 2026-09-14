@@ -142,6 +142,13 @@ class ObservedTraces(BaseModel):
     post_initialization: list[TracePoint]
 
 
+class EnsembleMemberTrace(BaseModel):
+    """Forecast trace for one ensemble member."""
+
+    member: str
+    values: list[TracePoint]
+
+
 class EventTraceDataResponse(BaseModel):
     """Observed trace data for an event initialization."""
 
@@ -153,3 +160,4 @@ class EventTraceDataResponse(BaseModel):
     window_start: datetime
     window_end: datetime
     observed: ObservedTraces
+    forecast_members: list[EnsembleMemberTrace]

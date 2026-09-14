@@ -395,7 +395,7 @@ def test_event_trace_initializations_invalid_lead_time():
 
 def test_event_trace_data_basic(monkeypatch):
     """Test basic trace data retrieval with pre and post-initialization splits."""
-    rows = [
+    observed_rows = [
         {
             "value_time": datetime(2018, 7, 5, 0, 0, 0),
             "value": 100.0,
@@ -419,7 +419,9 @@ def test_event_trace_data_basic(monkeypatch):
     ]
 
     def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
-        return pd.DataFrame(rows)
+        if "secondary_value AS value" in query:
+            return pd.DataFrame(columns=["member", "value_time", "value"])
+        return pd.DataFrame(observed_rows)
 
     monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
 
@@ -457,11 +459,12 @@ def test_event_trace_data_basic(monkeypatch):
     assert post_init[0]["value"] == 200.0
     assert post_init[2]["value_time"] == "2018-07-08T00:00:00"
     assert post_init[2]["value"] == 300.0
+    assert payload["forecast_members"] == []
 
 
 def test_event_trace_data_init_point_on_boundary(monkeypatch):
     """Test that initialization point on value_time boundary is included in both traces."""
-    rows = [
+    observed_rows = [
         {
             "value_time": datetime(2018, 7, 5, 0, 0, 0),
             "value": 100.0,
@@ -477,7 +480,9 @@ def test_event_trace_data_init_point_on_boundary(monkeypatch):
     ]
 
     def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
-        return pd.DataFrame(rows)
+        if "secondary_value AS value" in query:
+            return pd.DataFrame(columns=["member", "value_time", "value"])
+        return pd.DataFrame(observed_rows)
 
     monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
 
@@ -506,11 +511,12 @@ def test_event_trace_data_init_point_on_boundary(monkeypatch):
     assert len(post_init) == 2  # 07-06 and 07-07
     assert pre_init[-1]["value_time"] == "2018-07-06T00:00:00"
     assert post_init[0]["value_time"] == "2018-07-06T00:00:00"
+    assert payload["forecast_members"] == []
 
 
 def test_event_trace_data_invalid_initialization_time(monkeypatch):
     """Test that initialization time outside window is rejected."""
-    rows = [
+    observed_rows = [
         {
             "value_time": datetime(2018, 7, 5, 0, 0, 0),
             "value": 100.0,
@@ -518,7 +524,9 @@ def test_event_trace_data_invalid_initialization_time(monkeypatch):
     ]
 
     def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
-        return pd.DataFrame(rows)
+        if "secondary_value AS value" in query:
+            return pd.DataFrame(columns=["member", "value_time", "value"])
+        return pd.DataFrame(observed_rows)
 
     monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
 
@@ -544,6 +552,8 @@ def test_event_trace_data_no_data_found(monkeypatch):
     """Test that missing data returns 404."""
 
     def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
+        if "secondary_value AS value" in query:
+            return pd.DataFrame(columns=["member", "value_time", "value"])
         return pd.DataFrame(columns=["value_time", "value"])
 
     monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
@@ -564,3 +574,66 @@ def test_event_trace_data_no_data_found(monkeypatch):
 
     assert response.status_code == 404
     assert "No observed data found" in response.json()["detail"]
+
+
+def test_event_trace_data_includes_forecast_member_traces(monkeypatch):
+    observed_rows = [
+        {
+            "value_time": datetime(2018, 7, 5, 0, 0, 0),
+            "value": 100.0,
+        },
+        {
+            "value_time": datetime(2018, 7, 6, 0, 0, 0),
+            "value": 150.0,
+        },
+    ]
+    forecast_rows = [
+        {
+            "member": "1",
+            "value_time": datetime(2018, 7, 6, 0, 0, 0),
+            "value": 140.0,
+        },
+        {
+            "member": "1",
+            "value_time": datetime(2018, 7, 6, 1, 0, 0),
+            "value": 141.0,
+        },
+        {
+            "member": "2",
+            "value_time": datetime(2018, 7, 6, 0, 0, 0),
+            "value": 160.0,
+        },
+    ]
+
+    def fake_execute_query_params(query, params=None, max_rows=None, retry_count=0):
+        if "secondary_value AS value" in query:
+            return pd.DataFrame(forecast_rows)
+        return pd.DataFrame(observed_rows)
+
+    monkeypatch.setattr(events, "execute_query_params", fake_execute_query_params)
+
+    client = _build_test_client()
+    response = client.get(
+        "/collections/joined_timeseries/event_trace/data",
+        params={
+            "primary_location_id": "usgs-12345",
+            "configuration_name": "hefs_streamflow_forecast",
+            "variable_name": "streamflow_hourly_inst",
+            "threshold": "10th",
+            "window_start": "2018-07-05T00:00:00",
+            "window_end": "2018-07-06T01:00:00",
+            "initialization_time": "2018-07-06T00:00:00",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["forecast_members"]) == 2
+    assert payload["forecast_members"][0]["member"] == "1"
+    assert (
+        payload["forecast_members"][0]["values"][0]["value_time"]
+        == "2018-07-06T00:00:00"
+    )
+    assert payload["forecast_members"][0]["values"][0]["value"] == 140.0
+    assert payload["forecast_members"][1]["member"] == "2"
+    assert payload["forecast_members"][1]["values"][0]["value"] == 160.0

@@ -15,6 +15,7 @@ from ..database import (
     validate_event_id,
 )
 from ..models import (
+    EnsembleMemberTrace,
     EventTraceDataResponse,
     EventTraceInitializationsResponse,
     ObservedTraces,
@@ -168,7 +169,7 @@ async def get_event_trace_data(
     window_end: str = Query(...),  # ISO 8601 datetime
     initialization_time: str = Query(...),  # ISO 8601 datetime
 ):
-    """Return observed trace data split pre/post initialization."""
+    """Return observed and ensemble forecast traces for an initialization."""
     try:
         safe_location = sanitize_string(primary_location_id)
         safe_configuration = sanitize_string(configuration_name)
@@ -184,8 +185,8 @@ async def get_event_trace_data(
                 "initialization_time must be within [window_start, window_end]"
             )
 
-        # Query hourly-averaged observed data within the extended window
-        query = f"""
+        # Query hourly-averaged observed data within the extended window.
+        observed_query = f"""
             SELECT
                 date_trunc('hour', value_time) as value_time,
                 avg(primary_value) as value
@@ -200,8 +201,8 @@ async def get_event_trace_data(
             LIMIT 2001
         """
 
-        df = execute_query_params(
-            query,
+        observed_df = execute_query_params(
+            observed_query,
             params=[
                 safe_location,
                 safe_configuration,
@@ -211,33 +212,68 @@ async def get_event_trace_data(
             ],
         )
 
-        if df.empty:
+        if observed_df.empty:
             raise HTTPException(
                 status_code=404,
                 detail="No observed data found in the specified time window.",
             )
 
-        df["value_time"] = pd.to_datetime(df["value_time"])
-        df = df.dropna(subset=["value"])
+        observed_df["value_time"] = pd.to_datetime(observed_df["value_time"])
+        observed_df = observed_df.dropna(subset=["value"])
 
-        if df.empty:
+        if observed_df.empty:
             raise HTTPException(
                 status_code=404,
                 detail="No observed data with valid values found in the specified time window.",
             )
 
+        # Query ensemble forecasts whose run begins at initialization_time.
+        forecast_query = f"""
+            SELECT
+                member,
+                value_time,
+                secondary_value AS value
+            FROM {trino_catalog}.{trino_schema}.joined_timeseries
+            WHERE primary_location_id = ?
+                AND configuration_name = ?
+                AND variable_name = ?
+                AND reference_time = from_iso8601_timestamp(?)
+                AND value_time >= from_iso8601_timestamp(?)
+                AND value_time <= from_iso8601_timestamp(?)
+                AND member IS NOT NULL
+                AND secondary_value IS NOT NULL
+            ORDER BY member, value_time
+            LIMIT 20001
+        """
+
+        forecast_df = execute_query_params(
+            forecast_query,
+            params=[
+                safe_location,
+                safe_configuration,
+                safe_variable,
+                init_time_dt.isoformat(),
+                window_start_dt.isoformat(),
+                window_end_dt.isoformat(),
+            ],
+        )
+
+        if not forecast_df.empty:
+            forecast_df["value_time"] = pd.to_datetime(forecast_df["value_time"])
+            forecast_df = forecast_df.dropna(subset=["member", "value"])
+
         # Check if result exceeds maximum allowed points
         max_points = 2000
-        if len(df) > max_points:
+        if len(observed_df) > max_points:
             raise HTTPException(
                 status_code=400,
-                detail=f"Query returned {len(df)} data points, which exceeds the maximum limit of {max_points}. "
+                detail=f"Query returned {len(observed_df)} data points, which exceeds the maximum limit of {max_points}. "
                 f"Please narrow your time window or select a different time period.",
             )
 
         # Split into pre and post initialization
-        pre_init_df = df[df["value_time"] <= init_time_dt]
-        post_init_df = df[df["value_time"] >= init_time_dt]
+        pre_init_df = observed_df[observed_df["value_time"] <= init_time_dt]
+        post_init_df = observed_df[observed_df["value_time"] >= init_time_dt]
 
         pre_traces = [
             TracePoint(
@@ -252,6 +288,22 @@ async def get_event_trace_data(
             for _, row in post_init_df.iterrows()
         ]
 
+        forecast_members: list[EnsembleMemberTrace] = []
+        if not forecast_df.empty:
+            for member, member_df in forecast_df.groupby("member", sort=True):
+                forecast_members.append(
+                    EnsembleMemberTrace(
+                        member=str(member),
+                        values=[
+                            TracePoint(
+                                value_time=row["value_time"].to_pydatetime(),
+                                value=float(row["value"]),
+                            )
+                            for _, row in member_df.iterrows()
+                        ],
+                    )
+                )
+
         return EventTraceDataResponse(
             primary_location_id=safe_location,
             configuration_name=safe_configuration,
@@ -264,6 +316,7 @@ async def get_event_trace_data(
                 pre_initialization=pre_traces,
                 post_initialization=post_traces,
             ),
+            forecast_members=forecast_members,
         )
 
     except HTTPException:
