@@ -96,7 +96,7 @@ Coverage:
 | Anonymous read direct from MinIO | fails |
 | Traversal in `{layer}` | 400 or 404, never a read |
 
-Two traps to avoid, both inherited from the existing suite:
+Three traps to avoid, the first two inherited from the existing suite:
 
 - **Use `client_id: teehr-frontend`**, not `jupyterhub`. xpublish-api runs with
   `KEYCLOAK_ALLOWED_AUDIENCES=teehr-api,teehr-frontend`, so a jupyterhub-client
@@ -106,6 +106,11 @@ Two traps to avoid, both inherited from the existing suite:
   exception as "correctly denied", which in a security test means a connection
   error or a typo passes. Pair every deny assertion with a positive assertion in
   the same run so a dead service can't look like a working control.
+- **The malformed-token row depends on a middleware fix.** `resolve_identity`
+  raises rather than returning an unauthenticated identity, and `auth_middleware`
+  did not catch it — that case returned 500, and escaped `CORSMiddleware` as an
+  opaque CORS error. Fixed by mirroring `api/src/main.py`'s `try/except`. If the
+  401 assertion sees a 500, check that fix is present before suspecting the test.
 
 ### Phase 1 — icechunk authorization
 

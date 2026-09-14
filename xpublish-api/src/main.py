@@ -229,7 +229,14 @@ def build_app() -> FastAPI:
         if path == "/health":
             return await call_next(request)
 
-        request.state.identity = await resolve_identity(request)
+        # resolve_identity raises on bad tokens and JWKS failures. An exception
+        # escaping this middleware bypasses CORSMiddleware, so the browser sees
+        # an opaque CORS error instead of the 401 or 503.
+        try:
+            request.state.identity = await resolve_identity(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
         if not request.state.identity.is_authenticated:
             return JSONResponse(
                 status_code=401,
