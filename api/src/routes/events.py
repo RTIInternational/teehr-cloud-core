@@ -14,7 +14,12 @@ from ..database import (
     trino_schema,
     validate_event_id,
 )
-from ..models import EventTraceInitializationsResponse
+from ..models import (
+    EventTraceDataResponse,
+    EventTraceInitializationsResponse,
+    ObservedTraces,
+    TracePoint,
+)
 
 router = APIRouter()
 logger = logging.getLogger("teehr-api.routes.events")
@@ -142,4 +147,132 @@ async def get_event_trace_initializations(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch event trace initialization metadata: {str(e)}",
+        ) from e
+
+
+def _parse_iso_datetime(dt_str: str) -> datetime:
+    """Parse ISO 8601 datetime string to datetime object."""
+    return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+
+
+@router.get(
+    "/collections/joined_timeseries/event_trace/data",
+    response_model=EventTraceDataResponse,
+)
+async def get_event_trace_data(
+    primary_location_id: str = Query(...),
+    configuration_name: str = Query(...),
+    variable_name: str = Query(...),
+    threshold: str = Query(...),
+    window_start: str = Query(...),  # ISO 8601 datetime
+    window_end: str = Query(...),  # ISO 8601 datetime
+    initialization_time: str = Query(...),  # ISO 8601 datetime
+):
+    """Return observed trace data split pre/post initialization."""
+    try:
+        safe_location = sanitize_string(primary_location_id)
+        safe_configuration = sanitize_string(configuration_name)
+        safe_variable = sanitize_string(variable_name)
+        canonical_threshold = normalize_threshold_token(threshold)
+
+        window_start_dt = _parse_iso_datetime(window_start)
+        window_end_dt = _parse_iso_datetime(window_end)
+        init_time_dt = _parse_iso_datetime(initialization_time)
+
+        if init_time_dt < window_start_dt or init_time_dt > window_end_dt:
+            raise ValueError(
+                "initialization_time must be within [window_start, window_end]"
+            )
+
+        # Query hourly-averaged observed data within the extended window
+        query = f"""
+            SELECT
+                date_trunc('hour', value_time) as value_time,
+                avg(primary_value) as value
+            FROM {trino_catalog}.{trino_schema}.joined_timeseries
+            WHERE primary_location_id = ?
+                AND configuration_name = ?
+                AND variable_name = ?
+                AND value_time >= from_iso8601_timestamp(?)
+                AND value_time <= from_iso8601_timestamp(?)
+            GROUP BY date_trunc('hour', value_time)
+            ORDER BY value_time
+            LIMIT 2001
+        """
+
+        df = execute_query_params(
+            query,
+            params=[
+                safe_location,
+                safe_configuration,
+                safe_variable,
+                window_start_dt.isoformat(),
+                window_end_dt.isoformat(),
+            ],
+        )
+
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail="No observed data found in the specified time window.",
+            )
+
+        df["value_time"] = pd.to_datetime(df["value_time"])
+        df = df.dropna(subset=["value"])
+
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail="No observed data with valid values found in the specified time window.",
+            )
+
+        # Check if result exceeds maximum allowed points
+        max_points = 2000
+        if len(df) > max_points:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query returned {len(df)} data points, which exceeds the maximum limit of {max_points}. "
+                f"Please narrow your time window or select a different time period.",
+            )
+
+        # Split into pre and post initialization
+        pre_init_df = df[df["value_time"] <= init_time_dt]
+        post_init_df = df[df["value_time"] >= init_time_dt]
+
+        pre_traces = [
+            TracePoint(
+                value_time=row["value_time"].to_pydatetime(), value=float(row["value"])
+            )
+            for _, row in pre_init_df.iterrows()
+        ]
+        post_traces = [
+            TracePoint(
+                value_time=row["value_time"].to_pydatetime(), value=float(row["value"])
+            )
+            for _, row in post_init_df.iterrows()
+        ]
+
+        return EventTraceDataResponse(
+            primary_location_id=safe_location,
+            configuration_name=safe_configuration,
+            variable_name=safe_variable,
+            threshold=canonical_threshold,
+            initialization_datetime=init_time_dt,
+            window_start=window_start_dt,
+            window_end=window_end_dt,
+            observed=ObservedTraces(  # type: ignore
+                pre_initialization=pre_traces,
+                post_initialization=post_traces,
+            ),
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to get event trace data")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch event trace data: {str(e)}",
         ) from e

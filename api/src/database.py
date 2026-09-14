@@ -177,7 +177,11 @@ def execute_query_params(
     max_rows: int | None = None,
     retry_count: int = 0,
 ) -> pd.DataFrame:
-    """Execute a parameterized query and return results as a pandas DataFrame."""
+    """Execute a parameterized query and return results as a pandas DataFrame.
+
+    Note: Trino's DBAPI doesn't support ? placeholders in cursor.execute(),
+    so we substitute parameters directly into the query string.
+    """
     logger.debug(
         f"Executing parameterized query (attempt {retry_count + 1}/{MAX_RETRIES + 1}): {query}"  # noqa: E501
     )
@@ -188,18 +192,45 @@ def execute_query_params(
 
     parameters = list(params) if params is not None else []
 
+    # Substitute parameters into query string
+    working_query = query
+    for param in parameters:
+        # Find the first ? placeholder and replace it
+        placeholder_index = working_query.find("?")
+        if placeholder_index == -1:
+            break
+
+        # Format the parameter value appropriately
+        if isinstance(param, str):
+            # Escape single quotes in strings
+            escaped_param = param.replace("'", "''")
+            formatted_param = f"'{escaped_param}'"
+        elif isinstance(param, (int, float)):
+            formatted_param = str(param)
+        elif isinstance(param, datetime):
+            formatted_param = f"'{param.isoformat()}'"
+        elif param is None:
+            formatted_param = "NULL"
+        else:
+            # For other types, convert to string and escape quotes
+            param_str = str(param)
+            escaped_param = param_str.replace("'", "''")
+            formatted_param = f"'{escaped_param}'"
+
+        # Replace the first ? with the formatted parameter
+        working_query = (
+            working_query[:placeholder_index]
+            + formatted_param
+            + working_query[placeholder_index + 1 :]
+        )
+
+    logger.debug(f"Substituted query: {working_query}")
+
     try:
         with get_trino_connection() as conn:
             query_start = time.time()
-            cursor = conn.cursor()
-            cursor.execute(query, parameters)
-            rows = cursor.fetchall()
-            columns = (
-                [col[0] for col in cursor.description] if cursor.description else []
-            )
+            df = pd.read_sql(working_query, conn)
             query_time = time.time() - query_start
-
-            df = pd.DataFrame(rows, columns=columns)
 
             logger.debug(
                 f"Parameterized query completed in {query_time:.3f} seconds, "

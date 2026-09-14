@@ -126,3 +126,30 @@ class EventTraceInitializationsResponse(BaseModel):
     expanded_event_end: datetime
     available_initialization_datetimes: list[datetime]
     default_initialization_datetime: datetime
+
+
+class TracePoint(BaseModel):
+    """Single value in a trace (observed or forecast)."""
+
+    value_time: datetime
+    value: float
+
+
+class ObservedTraces(BaseModel):
+    """Pre and post-initialization observed data."""
+
+    pre_initialization: list[TracePoint]
+    post_initialization: list[TracePoint]
+
+
+class EventTraceDataResponse(BaseModel):
+    """Observed trace data for an event initialization."""
+
+    primary_location_id: str
+    configuration_name: str
+    variable_name: str
+    threshold: str
+    initialization_datetime: datetime
+    window_start: datetime
+    window_end: datetime
+    observed: ObservedTraces
