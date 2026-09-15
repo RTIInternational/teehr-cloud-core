@@ -33,7 +33,10 @@ spec:
       #   teehr-hub/nodegroup-name: core-a
       containers:
         - name: minio
-          image: minio/minio:latest
+          # Stopgap: minio/minio was removed from Docker Hub. quay.io still
+          # mirrors the final community releases; pinned because the tag is
+          # frozen and nothing new will be published.
+          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
           args:
             - server
             - /data

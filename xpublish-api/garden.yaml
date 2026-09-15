@@ -27,7 +27,7 @@ spec:
 
   manifestTemplates:
     - manifests/serviceaccount.yaml.tpl
-    - manifests/configmap-${environment.name}.yaml.tpl
+    - manifests/configmap.yaml.tpl
     - manifests/deployment.yaml.tpl
 
   defaultTarget:

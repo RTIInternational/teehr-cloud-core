@@ -25,11 +25,6 @@ spec:
         - containerPort: 8000
           name: http
         env:
-        - name: ICECHUNK_REPOS
-          valueFrom:
-            configMapKeyRef:
-              name: xpublish-api-config
-              key: ICECHUNK_REPOS
         - name: ICECHUNK_BUCKET
           valueFrom:
             configMapKeyRef:
@@ -45,6 +40,16 @@ spec:
             configMapKeyRef:
               name: xpublish-api-config
               key: ICECHUNK_BRANCH
+        - name: PMTILES_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: PMTILES_BUCKET
+        - name: PMTILES_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: PMTILES_PREFIX
         - name: ICECHUNK_STORAGE_MODE
           valueFrom:
             configMapKeyRef:

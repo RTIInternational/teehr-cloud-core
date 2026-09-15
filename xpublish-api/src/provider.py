@@ -1,14 +1,17 @@
 """
 Xpublish data provider plugin for icechunk repos.
 
-Each configured repo is exposed as two dataset IDs:
+Each discovered repo is exposed as two dataset IDs:
   - ``<name>``           -> /pyramids group (DataTree for TilesPlugin)
   - ``<name>_raw_data``  -> /raw_data group (Dataset for CfEdrPlugin)
 
-Datasets are loaded lazily on the first request and cached for
-``cache_ttl_seconds``.  After the TTL expires the next request re-opens a
-fresh icechunk readonly session so that new data written by Prefect ingest
-workflows becomes visible without restarting the pod.
+Nothing touches S3 at import time.  Repos are discovered by listing the
+top-level prefixes under ``bucket/prefix`` on the first request and re-listed
+whenever ``discovery_ttl_seconds`` has elapsed, so a repo created by a Prefect
+ingest workflow after the pod started is picked up without a redeploy or
+restart.  Datasets themselves are loaded lazily and cached for
+``cache_ttl_seconds``; after that TTL the next request re-opens a fresh
+icechunk readonly session so newly written snapshots become visible.
 """
 
 import logging
@@ -22,6 +25,8 @@ import xarray as xr
 from pydantic import PrivateAttr
 from xpublish import Plugin, hookimpl
 from xpublish_tiles.multiscale import assign_leaf_xpublish_ids
+
+from .storage import build_s3_client, list_storage_prefixes
 
 logger = logging.getLogger(__name__)
 
@@ -76,48 +81,153 @@ class IcechunkDatasetProvider(Plugin):
     """Xpublish data provider plugin for icechunk repos.
 
     Implements ``get_datasets`` and ``get_datatree`` hookimpls so that
-    xpublish resolves dataset IDs dynamically on each request.  Repository
-    objects are cached for the lifetime of the plugin; DataTree/Dataset
-    objects are cached for ``cache_ttl_seconds`` and refreshed automatically
-    so new icechunk snapshots become visible without a pod restart.
+    xpublish resolves dataset IDs dynamically on each request.  Repos are
+    discovered from ``bucket/prefix`` and re-listed on the
+    ``discovery_ttl_seconds`` interval; repository objects are then cached for
+    the lifetime of the plugin, and DataTree/Dataset objects for
+    ``cache_ttl_seconds``.  Both layers refresh on their own so that new repos
+    and new snapshots appear without a pod restart.
     """
 
     name: str = "icechunk-dataset-provider"
     branch: str = "main"
     cache_ttl_seconds: float = 60.0
+    discovery_ttl_seconds: float = 60.0
 
-    _repo_configs: list = PrivateAttr()
+    _bucket: str = PrivateAttr()
+    _prefix: str = PrivateAttr()
     _storage_kwargs: dict = PrivateAttr()
+    _repo_configs: list = PrivateAttr(default_factory=list)
+    _discovered_at: float | None = PrivateAttr(default=None)
     _repos: dict = PrivateAttr(default_factory=dict)
     _cache: dict = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    _discovery_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     def __init__(
         self,
-        repo_configs: list[RepoConfig],
+        bucket: str,
+        prefix: str,
         storage_kwargs: dict,
         branch: str = "main",
         cache_ttl_seconds: float = 60.0,
+        discovery_ttl_seconds: float = 60.0,
     ):
-        super().__init__(branch=branch, cache_ttl_seconds=cache_ttl_seconds)
-        self._repo_configs = repo_configs
+        super().__init__(
+            branch=branch,
+            cache_ttl_seconds=cache_ttl_seconds,
+            discovery_ttl_seconds=discovery_ttl_seconds,
+        )
+        self._bucket = bucket
+        self._prefix = prefix
         self._storage_kwargs = storage_kwargs
+        self._repo_configs = []
+        self._discovered_at = None
         self._repos = {}
         self._cache = {}
         self._lock = threading.Lock()
         self._cache_lock = threading.Lock()
+        self._discovery_lock = threading.Lock()
+
+    # --- Repo discovery ---
+
+    def _discover_repo_configs(self) -> list[RepoConfig]:
+        """List the top-level prefixes under ``bucket/prefix``; one repo each."""
+        return [
+            RepoConfig(name=item["id"], bucket=self._bucket, prefix=item["path"].rstrip("/"))
+            for item in list_storage_prefixes(build_s3_client(), self._bucket, self._prefix)
+        ]
+
+    def _evict(self, names: set[str]) -> None:
+        """Drop cached repos and datasets for repos that are no longer present.
+
+        The two locks are taken one after another rather than nested: the read
+        path holds ``_cache_lock`` while acquiring ``_lock`` (via
+        ``_open_repo``), so nesting them the other way round here could
+        deadlock.
+        """
+        with self._lock:
+            for name in names:
+                self._repos.pop(name, None)
+        with self._cache_lock:
+            for name in names:
+                self._cache.pop(name, None)
+                self._cache.pop(f"{name}_raw_data", None)
+
+    def _repo_configs_fresh(self) -> bool:
+        if self._discovered_at is None:
+            return False
+        return (time.monotonic() - self._discovered_at) < self.discovery_ttl_seconds
+
+    def _refresh_repo_configs(self) -> list[RepoConfig]:
+        """Return the current repo configs, re-listing S3 if the TTL expired.
+
+        A listing failure keeps the previously discovered configs so that one
+        transient S3 error does not de-register every working dataset.  The
+        timestamp is stamped either way, so a hard outage is retried once per
+        TTL instead of on every request.
+        """
+        if self._repo_configs_fresh():
+            return self._repo_configs
+
+        with self._discovery_lock:
+            # Double-checked locking: another thread may have refreshed while
+            # this one waited on the lock.
+            if self._repo_configs_fresh():
+                return self._repo_configs
+            try:
+                configs = self._discover_repo_configs()
+            except Exception:
+                logger.exception(
+                    "Icechunk repo discovery failed for s3://%s/%s/ — keeping %d previously "
+                    "discovered repo(s); retrying in %ss",
+                    self._bucket,
+                    self._prefix,
+                    len(self._repo_configs),
+                    self.discovery_ttl_seconds,
+                )
+                self._discovered_at = time.monotonic()
+                return self._repo_configs
+
+            first_discovery = self._discovered_at is None
+            self._discovered_at = time.monotonic()
+            previous = {cfg.name for cfg in self._repo_configs}
+            current = {cfg.name for cfg in configs}
+            self._repo_configs = configs
+
+            # Only on a transition — otherwise an empty deployment would warn
+            # once per TTL for as long as it runs.
+            if not configs and (first_discovery or previous):
+                logger.warning(
+                    "No icechunk repos found under s3://%s/%s/ — no datasets registered",
+                    self._bucket,
+                    self._prefix,
+                )
+            added = current - previous
+            if added:
+                logger.info("Discovered icechunk repo(s): %s", sorted(added))
+            removed = previous - current
+            if removed:
+                logger.info("Icechunk repo(s) no longer present, evicting: %s", sorted(removed))
+                self._evict(removed)
+
+        return self._repo_configs
+
+    def repo_names(self) -> list[str]:
+        """Return the tiles-capable dataset names (no ``_raw_data`` variants)."""
+        return [cfg.name for cfg in self._refresh_repo_configs()]
 
     def dataset_ids(self) -> list[str]:
         """Return all dataset IDs served by this provider (pyramid + raw_data pairs)."""
         ids = []
-        for cfg in self._repo_configs:
+        for cfg in self._refresh_repo_configs():
             ids.append(cfg.name)
             ids.append(f"{cfg.name}_raw_data")
         return ids
 
     def _cfg_for_dataset_id(self, dataset_id: str) -> tuple[RepoConfig | None, str]:
-        for cfg in self._repo_configs:
+        for cfg in self._refresh_repo_configs():
             if dataset_id == cfg.name:
                 return cfg, "/pyramids"
             if dataset_id == f"{cfg.name}_raw_data":

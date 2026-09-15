@@ -5,17 +5,20 @@ Serves raster tiles via TilesPlugin (reads from /pyramids group) and
 point queries via CfEdrPlugin (reads from /raw_data group).
 
 Environment variables:
-  ICECHUNK_REPOS         Comma-separated list of repo names.
-                         Example: "ua-swann-4km,nwm30-forcing-analysis-assim"
   ICECHUNK_BUCKET        S3 bucket that holds all icechunk repos.
                          Example: "warehouse" (local) or "ciroh-rti-public-data" (remote)
   ICECHUNK_PREFIX        Base prefix path; each repo lives at {prefix}/{name}.
                          Example: "icechunk-ingests"
   ICECHUNK_BRANCH        Branch to open for all repos (default: main)
   ICECHUNK_STORAGE_MODE  "local" for minio/kind, "remote" for AWS S3 (default: remote)
+  PMTILES_BUCKET         S3 bucket holding the .pmtiles vector-tile archives.
+  PMTILES_PREFIX         Prefix within that bucket. Example: "vector-tiles"
   CORS_ORIGINS           Comma-separated list of allowed CORS origins
   DATASET_CACHE_TTL      Seconds to cache dataset metadata before re-opening from icechunk
                          (default: 60). Set to 0 to disable caching (re-open on every request).
+  REPO_DISCOVERY_TTL     Seconds before re-listing {prefix} for new/removed repos
+                         (default: DATASET_CACHE_TTL). Repos are discovered lazily on the
+                         first request, so the app starts even with none present.
 
   Local (ICECHUNK_STORAGE_MODE=local):
     ICECHUNK_ENDPOINT_URL   MinIO endpoint (default: http://minio:9000)
@@ -47,7 +50,9 @@ from xpublish_tiles import lib as xpublish_tiles_lib
 from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
-from .provider import IcechunkDatasetProvider, RepoConfig
+from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
+from .provider import IcechunkDatasetProvider
+from .storage import build_storage_kwargs, resolve_icechunk_location
 
 logger = logging.getLogger(__name__)
 
@@ -55,57 +60,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-
-
-def parse_repo_configs() -> list[RepoConfig]:
-    """
-    Parse repo configs from ICECHUNK_REPOS (comma-separated names),
-    ICECHUNK_BUCKET (shared S3 bucket), and ICECHUNK_PREFIX (base prefix).
-    Each repo's full prefix is constructed as "{ICECHUNK_PREFIX}/{name}".
-    """
-    repos_env = os.getenv("ICECHUNK_REPOS", "").strip()
-    bucket = os.getenv("ICECHUNK_BUCKET", "").strip()
-    prefix = os.getenv("ICECHUNK_PREFIX", "").strip().rstrip("/")
-    if not repos_env:
-        raise RuntimeError("ICECHUNK_REPOS is required: comma-separated list of repo names")
-    if not bucket:
-        raise RuntimeError("ICECHUNK_BUCKET is required: S3 bucket name")
-    if not prefix:
-        raise RuntimeError("ICECHUNK_PREFIX is required: base prefix path for icechunk repos")
-    configs = []
-    for name in (n.strip() for n in repos_env.split(",")):
-        if not name:
-            continue
-        configs.append(RepoConfig(name=name, bucket=bucket, prefix=f"{prefix}/{name}"))
-    if not configs:
-        raise RuntimeError("ICECHUNK_REPOS contained no valid entries")
-    return configs
-
-
-def build_storage_kwargs() -> dict:
-    """
-    Return kwargs for ic.s3_storage() based on ICECHUNK_STORAGE_MODE.
-
-    - "local":  explicit endpoint + credentials via standard AWS_* env vars,
-                plus minio-specific flags (allow_http, force_path_style, endpoint_url).
-    - "remote": from_env=True — reads AWS_* env vars or uses IRSA on EKS.
-    """
-    mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
-    if mode == "local":
-        kwargs: dict = {
-            "region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-            "allow_http": True,
-            "endpoint_url": os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
-            "force_path_style": True,
-        }
-        access_key = os.getenv("AWS_ACCESS_KEY_ID")
-        secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        if access_key:
-            kwargs["access_key_id"] = access_key
-        if secret_key:
-            kwargs["secret_access_key"] = secret_key
-        return kwargs
-    return {"from_env": True}
 
 
 @asynccontextmanager
@@ -125,22 +79,31 @@ def build_app() -> FastAPI:
     cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
     storage_mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
     cache_ttl = float(os.getenv("DATASET_CACHE_TTL", "60"))
+    discovery_ttl = float(os.getenv("REPO_DISCOVERY_TTL", str(cache_ttl)))
 
-    repo_configs = parse_repo_configs()
-    storage_kwargs = build_storage_kwargs()
+    # Only the configuration is resolved here — repos are discovered lazily by
+    # the provider, so the app starts before storage is reachable or populated.
+    bucket, prefix = resolve_icechunk_location()
+    pmtiles_bucket, pmtiles_prefix = resolve_pmtiles_location()
 
     logger.info(
-        "Storage mode: %s | repos: %s | cache_ttl: %ss",
+        "Storage mode: %s | repos: s3://%s/%s/ | tiles: s3://%s/%s/ | cache_ttl: %ss | discovery_ttl: %ss",
         storage_mode,
-        [(r.name, r.bucket, r.prefix) for r in repo_configs],
+        bucket,
+        prefix,
+        pmtiles_bucket,
+        pmtiles_prefix,
         cache_ttl,
+        discovery_ttl,
     )
 
     provider = IcechunkDatasetProvider(
-        repo_configs=repo_configs,
-        storage_kwargs=storage_kwargs,
+        bucket=bucket,
+        prefix=prefix,
+        storage_kwargs=build_storage_kwargs(),
         branch=branch,
         cache_ttl_seconds=cache_ttl,
+        discovery_ttl_seconds=discovery_ttl,
     )
 
     rest = xpublish.Rest(
@@ -158,8 +121,10 @@ def build_app() -> FastAPI:
 
     @api_app.get("/dataset-keys")
     def list_dataset_keys():
-        # Return only the tiles-capable dataset names (not the _raw_data variants).
-        return {"datasets": [cfg.name for cfg in repo_configs]}
+        # Only the tiles-capable dataset names (not the _raw_data variants).
+        # Read through the provider rather than a startup snapshot so repos
+        # created after the pod started show up on the next page load.
+        return {"datasets": provider.repo_names()}
 
     @api_app.get("/dataset-variables/{dataset_id}")
     def dataset_variables(dataset_id: str):
@@ -216,6 +181,23 @@ def build_app() -> FastAPI:
         logger.info("Variable attrs for dataset '%s': %s", dataset_id, list(result.keys()))
         return {"dataset_id": dataset_id, "variables": result}
 
+    @api_app.get("/vector-tiles")
+    def list_vector_tiles():
+        """
+        List the .pmtiles archives available under the configured prefix.
+
+        Returns ``{"items": [{"id": "usgs-basins", "source_layer": "usgs-basins"}]}``.
+        Fetch an archive's bytes from ``/api/vector-tiles/{id}.pmtiles``.
+        """
+        try:
+            items = list_pmtiles_layers()
+        except Exception as exc:
+            logger.error("Vector tile listing failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Vector tile listing failed") from exc
+
+        logger.info("Vector tile layers: %s", [item["id"] for item in items])
+        return {"items": items}
+
     # --- api_app middleware (gzip only; CORS is on the outer app) ---
 
     api_app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -223,6 +205,17 @@ def build_app() -> FastAPI:
     # --- Outer app ---
 
     app = FastAPI(title="TEEHR xpublish API", lifespan=app_lifespan)
+
+    # On the outer app, not api_app: GZipMiddleware would compress this 206
+    # body while Content-Range still described the uncompressed bytes.  Auth
+    # and CORS live out here too, so the Keycloak gate still applies.
+    #
+    # Must stay ABOVE the mount below: Mount matches on prefix alone, so a
+    # mount registered first swallows this path and answers 404.
+    @app.get("/api/vector-tiles/{layer}.pmtiles")
+    def get_vector_tile_archive(layer: str, request: Request):
+        return read_pmtiles_range(layer, request.headers.get("range"))
+
     app.mount("/api", api_app)
 
     # Auth middleware is registered first so it ends up innermost.
@@ -238,7 +231,14 @@ def build_app() -> FastAPI:
         if path == "/health":
             return await call_next(request)
 
-        request.state.identity = await resolve_identity(request)
+        # resolve_identity raises on bad tokens and JWKS failures. An exception
+        # escaping this middleware bypasses CORSMiddleware, so the browser sees
+        # an opaque CORS error instead of the 401 or 503.
+        try:
+            request.state.identity = await resolve_identity(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
         if not request.state.identity.is_authenticated:
             return JSONResponse(
                 status_code=401,
@@ -258,7 +258,11 @@ def build_app() -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type", "Range"],
+        # pmtiles reads these off the response to walk the archive; without
+        # them exposed the range requests succeed but the browser hides the
+        # headers from JS and the archive fails to parse.
+        expose_headers=["Content-Range", "Content-Length", "ETag", "Accept-Ranges"],
     )
 
     @app.get("/health")
