@@ -53,7 +53,7 @@ def list_pmtiles_layers() -> list[dict]:
     """Return the available layers as ``{id, source_layer}`` pairs.
 
     The S3 key is deliberately omitted: callers address a layer by name
-    through ``/vector-tiles/{layer}.pmtiles``, so exposing bucket paths to the
+    through ``/api/vector-tiles/{layer}.pmtiles``, so exposing bucket paths to the
     browser would serve no purpose.
     """
     bucket, prefix = resolve_pmtiles_location()

@@ -7,7 +7,7 @@ Last updated: 2026-09-11
 > *authenticated*; this one makes them *authorized*.
 >
 > **Already delivered** (branch `57-add-polygon-layers-to-snow-dashboard`):
-> - `GET /vector-tiles/{layer}.pmtiles` serves archives from S3 with range
+> - `GET /api/vector-tiles/{layer}.pmtiles` serves archives from S3 with range
 >   passthrough, behind the existing Keycloak gate
 > - `GET /api/vector-tiles` lists available layers; the old general-purpose
 >   `/api/storage/contents` S3 lister is gone
@@ -125,7 +125,7 @@ Three traps to avoid, the first two inherited from the existing suite:
 
 ### Phase 2 — pmtiles authorization
 
-1. Apply the same rules map to `{layer}` in `/vector-tiles/{layer}.pmtiles`.
+1. Apply the same rules map to `{layer}` in `/api/vector-tiles/{layer}.pmtiles`.
 2. Filter `/api/vector-tiles` to permitted layers.
 
 The route and its range handling already exist; this is only the decision.

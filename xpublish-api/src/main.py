@@ -187,7 +187,7 @@ def build_app() -> FastAPI:
         List the .pmtiles archives available under the configured prefix.
 
         Returns ``{"items": [{"id": "usgs-basins", "source_layer": "usgs-basins"}]}``.
-        Fetch an archive's bytes from ``/vector-tiles/{id}.pmtiles``.
+        Fetch an archive's bytes from ``/api/vector-tiles/{id}.pmtiles``.
         """
         try:
             items = list_pmtiles_layers()
@@ -205,16 +205,18 @@ def build_app() -> FastAPI:
     # --- Outer app ---
 
     app = FastAPI(title="TEEHR xpublish API", lifespan=app_lifespan)
-    app.mount("/api", api_app)
 
-    # Deliberately on the outer app rather than under /api: GZipMiddleware is
-    # mounted on api_app and does not special-case 206 responses, so it would
-    # compress a partial body while Content-Range still described the
-    # uncompressed byte range.  Auth and CORS both live out here, so the route
-    # keeps the Keycloak gate either way.
-    @app.get("/vector-tiles/{layer}.pmtiles")
+    # On the outer app, not api_app: GZipMiddleware would compress this 206
+    # body while Content-Range still described the uncompressed bytes.  Auth
+    # and CORS live out here too, so the Keycloak gate still applies.
+    #
+    # Must stay ABOVE the mount below: Mount matches on prefix alone, so a
+    # mount registered first swallows this path and answers 404.
+    @app.get("/api/vector-tiles/{layer}.pmtiles")
     def get_vector_tile_archive(layer: str, request: Request):
         return read_pmtiles_range(layer, request.headers.get("range"))
+
+    app.mount("/api", api_app)
 
     # Auth middleware is registered first so it ends up innermost.
     # CORSMiddleware is added second so it ends up outermost — this ensures
