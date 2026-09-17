@@ -110,14 +110,12 @@ async def get_collection_items(
     location_id: str | None = Query(
         None, alias="location_id", description="Filter by location ID"
     ),
-    f: str | None = Query(
+    configuration_name: str | None = Query(
+        None, description="Filter by configuration name"
+    ),
+    variable_name: str | None = Query(
         None,
-        description=(
-            "Output format. 'geojson' returns an OGC GeoJSON FeatureCollection; "
-            "'json' returns an OGC-style paging envelope "
-            "({items, numberReturned, links}). Defaults to 'geojson' for "
-            "collections with geometry and 'json' for those without."
-        ),
+        description="Filter by variable name"
     ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
@@ -126,6 +124,15 @@ async def get_collection_items(
         None,
         ge=0,
         description="Starting index for pagination"
+    ),
+    f: str | None = Query(
+        None,
+        description=(
+            "Output format. 'geojson' returns an OGC GeoJSON FeatureCollection; "
+            "'json' returns an OGC-style paging envelope "
+            "({items, numberReturned, links}). Defaults to 'geojson' for "
+            "collections with geometry and 'json' for those without."
+        ),
     ),
 ):
     """Get items from any collection (OGC API Features endpoint).
