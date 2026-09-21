@@ -4,6 +4,12 @@ metadata:
   name: spark
   namespace: ${environment.namespace}
 ---
+# Least-privilege RBAC for Spark-on-Kubernetes in client mode. The driver
+# (the Jupyter notebook pod or a Prefect job pod) creates and manages executor
+# pods, the driver headless service, and the executor SPARK_CONF configmap,
+# all within its own namespace. That is the complete set of permissions Spark
+# needs; there is deliberately no ClusterRole and no access to secrets. See
+# https://spark.apache.org/docs/latest/running-on-kubernetes.html#rbac
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -11,16 +17,13 @@ metadata:
   namespace: ${environment.namespace}
 rules:
 - apiGroups: [""]
-  resources: ["pods", "services", "configmaps", "persistentvolumeclaims", "secrets"]
+  resources: ["pods", "services", "configmaps"]
   verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
-- apiGroups: ["batch", "extensions"]
-  resources: ["jobs"]
-  verbs: ["create", "get", "list", "delete"]
-- apiGroups: ["apps"]
-  resources: ["deployments", "replicasets"]
-  verbs: ["create", "get", "list", "watch", "delete"]
-- apiGroups: ["extensions", "networking.k8s.io"]
-  resources: ["ingresses"]
+# persistentvolumeclaims is retained only for Spark dynamic-PVC executor
+# storage. If no flow uses spark.kubernetes.executor.volumes...OnDemand PVCs,
+# this line can be removed as well.
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
   verbs: ["create", "get", "list", "watch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -31,34 +34,6 @@ metadata:
 roleRef:
   kind: Role
   name: spark-role
-  apiGroup: rbac.authorization.k8s.io
-subjects:
-- kind: ServiceAccount
-  name: spark
-  namespace: ${environment.namespace}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: spark-cluster-role
-rules:
-- apiGroups: [""]
-  resources: ["pods", "services", "configmaps", "secrets"]
-  verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
-- apiGroups: [""]
-  resources: ["nodes"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["storage.k8s.io"]
-  resources: ["storageclasses"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: spark-cluster-role-binding
-roleRef:
-  kind: ClusterRole
-  name: spark-cluster-role
   apiGroup: rbac.authorization.k8s.io
 subjects:
 - kind: ServiceAccount
