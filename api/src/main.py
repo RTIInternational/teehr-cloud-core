@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
@@ -230,6 +231,17 @@ app.add_middleware(
     allow_headers=["*"],
     max_age=600,
 )
+
+# Envoy compresses responses, but only for the content types in its default
+# allowlist -- which covers application/json and not application/geo+json. The
+# GeoJSON collection endpoints therefore went out uncompressed: one nwmd
+# metrics request measured 12,373,743 bytes on the wire with no
+# content-encoding, against x-process-time of 2.09s, so transfer dominated the
+# response. That payload gzips ~6.9x for about 0.12s of CPU.
+#
+# Added after CORS so it sits outside it: the response passes through CORS
+# first and is compressed on the way out, leaving the CORS headers intact.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.middleware("http")
