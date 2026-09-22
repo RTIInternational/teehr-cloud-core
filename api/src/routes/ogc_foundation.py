@@ -307,6 +307,54 @@ async def get_collections():
             crs=[CRS84],
         ),
         Collection(
+            id="configurations_by_location",
+            title="Configurations by Location",
+            description="Configurations, variables and units available at each primary location, with timeseries time ranges and ensemble member counts",
+            links=[
+                Link(
+                    href="/collections/configurations_by_location",
+                    rel="self",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configurations_by_location/items",
+                    rel="items",
+                    type="application/geo+json",
+                ),
+                Link(
+                    href="/collections/configurations_by_location/queryables",
+                    rel=REL_QUERYABLES,
+                    type="application/schema+json",
+                ),
+            ],
+            extent=Extent(spatial=spatial_extent) if spatial_extent else None,
+            itemType="feature",
+            crs=[CRS84],
+        ),
+        Collection(
+            id="configurations_summary",
+            title="Configurations Summary",
+            description="Per-configuration summary of available timeseries: variables, units, time ranges and location counts",
+            links=[
+                Link(
+                    href="/collections/configurations_summary",
+                    rel="self",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configurations_summary/items",
+                    rel="items",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configurations_summary/queryables",
+                    rel=REL_QUERYABLES,
+                    type="application/schema+json",
+                ),
+            ],
+            itemType="record",
+        ),
+        Collection(
             id="configurations",
             title="Configurations",
             description="Data source configurations (e.g., nwm30_retrospective, usgs_observations)",
@@ -410,6 +458,11 @@ async def get_collections():
                     href="/collections/locations_with_attributes/items",
                     rel="items",
                     type="application/json",
+                ),
+                Link(
+                    href="/collections/locations_with_attributes/queryables",
+                    rel=REL_QUERYABLES,
+                    type="application/schema+json",
                 ),
             ],
             itemType="record",
