@@ -341,12 +341,12 @@ def create_ogc_records_response(
                 }
             )
 
-    return {
+    response = {
         "items": items,
         "timeStamp": datetime.now(UTC).isoformat(),
         "numberReturned": number_returned,
-        "numberMatched": (
-            number_matched if number_matched is not None else number_returned
-        ),
         "links": links,
     }
+    if number_matched is not None:
+        response["numberMatched"] = number_matched
+    return response
