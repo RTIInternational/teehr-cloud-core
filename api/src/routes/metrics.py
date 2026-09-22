@@ -180,8 +180,7 @@ async def get_collection_items(
                 # Restricts results to gage locations. Basin-level rows use a
                 # 'usgsbasin-' prefix and carry polygon rather than point
                 # geometry, which no current client can render -- and which
-                # would be far too large to ship as GeoJSON anyway. Remove this
-                # once polygon layers are served as vector tiles; until then it
+                # would be far too large to ship as GeoJSON anyway. It
                 # keeps unrenderable geometry off the wire.
                 where_conditions.append(f"{ID_COLUMN} LIKE 'usgs-%'")
 
