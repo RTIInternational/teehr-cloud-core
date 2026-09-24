@@ -6,7 +6,7 @@ Extends standard JSON Schema with x-teehr-role to indicate group_by vs metric
 fields.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..database import (
@@ -16,9 +16,35 @@ from ..database import (
     trino_catalog,
     trino_schema,
 )
+from .filtering import build_equality_filter_conditions, verify_filtered_columns
 from .utils import prepare_for_serialization
 
 router = APIRouter()
+
+
+def _build_collection_schema(collection_id: str) -> dict:
+    """Return the declared queryables schema for a collection."""
+    if collection_id in COLLECTION_CONFIGS:
+        config = COLLECTION_CONFIGS[collection_id]
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": f"/collections/{collection_id}/queryables",
+            "type": "object",
+            "title": collection_id,
+            "description": config["description"],
+            "properties": config["static_properties"],
+        }
+
+    sanitized = sanitize_string(collection_id)
+    return get_metrics_table_queryables(sanitized)
+
+def _validate_queryable_property(schema: dict, property_name: str):
+    """Ensure the requested property exists in the collection schema."""
+    if property_name not in schema["properties"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported property: {property_name}",
+        )
 
 # Known collections and their configurations
 COLLECTION_CONFIGS = {
@@ -402,29 +428,16 @@ async def get_collection_queryables(collection_id: str):
     TEEHR-aware clients can use x-teehr-group-by and x-teehr-metrics for
     specialized handling.
     """
-    # Check if it's a known static collection
-    if collection_id in COLLECTION_CONFIGS:
-        config = COLLECTION_CONFIGS[collection_id]
-        schema = {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": f"/collections/{collection_id}/queryables",
-            "type": "object",
-            "title": collection_id,
-            "description": config["description"],
-            "properties": config["static_properties"],
-        }
-        return JSONResponse(
-            content=schema, media_type="application/schema+json"
-        )
-
-    # Assume it's a metrics table - try to load from Iceberg properties
-    sanitized = sanitize_string(collection_id)
-    schema = get_metrics_table_queryables(sanitized)
+    schema = _build_collection_schema(collection_id)
 
     return JSONResponse(content=schema, media_type="application/schema+json")
 
 @router.get("/collections/{collection_id}/queryables/{property_name}/values")
-async def get_queryable_values(collection_id: str, property_name: str):
+async def get_queryable_values(
+    collection_id: str,
+    property_name: str,
+    request: Request,
+):
     """
     Get distinct values for a queryable property (TEEHR extension).
 
@@ -433,6 +446,9 @@ async def get_queryable_values(collection_id: str, property_name: str):
     filter dropdowns in UI applications.
 
     Returns a JSON array of distinct values.
+
+    Additional query parameters are interpreted as equality filters, using the
+    same schema-driven approach as the collection items endpoint.
     """
     # Validate and sanitize inputs
     sanitized_collection = sanitize_string(collection_id)
@@ -442,10 +458,22 @@ async def get_queryable_values(collection_id: str, property_name: str):
         raise HTTPException(status_code=400, detail="Invalid collection or property name")
 
     try:
+        schema = _build_collection_schema(collection_id)
+        _validate_queryable_property(schema, property_name)
+
+        filters = dict(request.query_params.items())
+        verify_filtered_columns(
+            schema,
+            list(filters.keys()),
+            default_to_properties=True,
+        )
+        where_clause = " AND ".join(build_equality_filter_conditions(filters))
+
         # Query distinct values
         query = f"""
             SELECT DISTINCT {sanitized_property}
             FROM {trino_catalog}.{trino_schema}.{sanitized_collection}
+            {f'WHERE {where_clause}' if where_clause else ''}
             ORDER BY {sanitized_property}
         """
         raw_df = execute_query(query)
@@ -456,6 +484,9 @@ async def get_queryable_values(collection_id: str, property_name: str):
             content=values,
             media_type="application/json"
         )
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         raise HTTPException(
