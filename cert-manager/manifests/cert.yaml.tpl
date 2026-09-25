@@ -14,19 +14,6 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: ${var.hostname}-minio-cert
-spec:
-  commonName: minio.${var.hostname}
-  dnsNames:
-  - minio.${var.hostname}
-  issuerRef:
-    name: ${var.certificateIssuerName}
-    kind: ClusterIssuer
-  secretName: minio.${var.hostname}-tls
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
   name: ${var.hostname}-api-cert
 spec:
   commonName: api.${var.hostname}
