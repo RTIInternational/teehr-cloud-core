@@ -74,9 +74,10 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
+          # CPU p95 0.01 cores, memory peak 0.06Gi over 47h (2026-09).
           resources:
             requests:
-              cpu: 100m
+              cpu: 50m
               memory: 256Mi
             limits:
               cpu: 500m

@@ -99,10 +99,12 @@ spec:
               name: minio-secrets
               key: secretkey
         ${endif}
+        # Sized from 47h of production metrics (2026-09): CPU p95 ~0 cores,
+        # memory peak 0.22Gi. Limits left generous for gridded-data bursts.
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "250m"
+            memory: "512Mi"
+            cpu: "50m"
           limits:
             memory: "4Gi"
             cpu: "2000m"

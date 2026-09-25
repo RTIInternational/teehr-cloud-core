@@ -160,13 +160,19 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
+          # The previous 1Gi limit was below the observed 1.36Gi peak and
+          # OOMKilled this pod twice in 47h (2026-09). Polaris vends catalog
+          # credentials for every Spark session, so a restart here breaks
+          # in-flight jobs; memory is raised to cover peak with headroom.
+          # CPU p95 is 0.05 cores but the request is held at 200m to keep a
+          # floor under the token path.
           resources:
             requests:
               cpu: 200m
-              memory: 512Mi
+              memory: "${environment.name == 'local' ? '768Mi' : '1536Mi'}"
             limits:
               cpu: 1000m
-              memory: 1Gi
+              memory: 2Gi
           volumeMounts:
             - name: polaris-config
               mountPath: /deployments/config/application.properties

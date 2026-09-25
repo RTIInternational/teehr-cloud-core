@@ -241,10 +241,14 @@ spec:
           timeoutSeconds: 3
           successThreshold: 1
           failureThreshold: 3
+        # Sized from 47h of production metrics (2026-09): CPU p95 0.02 cores,
+        # memory peak 1.06Gi. The request is deliberately well above p95 so the
+        # user-facing API keeps a guaranteed floor under node contention; the
+        # limit is left generous so it can still burst on a traffic spike.
         resources:
           requests:
-            cpu: 1
-            memory: "${environment.name == 'local' ? '1Gi' : '4Gi'}"
+            cpu: 200m
+            memory: "${environment.name == 'local' ? '512Mi' : '1536Mi'}"
           limits:
             cpu: 2
             memory: 8Gi
