@@ -29,10 +29,13 @@ spec:
   bootstrapAdmin:
     user:
       secret: keycloak-admin-secrets
+  # CPU p95 0.01 cores over 47h (2026-09); request held at 200m to keep a
+  # floor under the auth path. Memory peak was 1.17Gi, just over the previous
+  # 1Gi request, so the request is raised to cover it.
   resources:
     requests:
-      cpu: 250m
-      memory: "${environment.name == 'local' ? '512Mi' : '1Gi'}"
+      cpu: 200m
+      memory: "${environment.name == 'local' ? '512Mi' : '1536Mi'}"
     limits:
       cpu: "1"
       memory: 2Gi

@@ -25,10 +25,14 @@ spec:
     server:
       uiConfig:
         prefectUiApiUrl: https://prefect.${var.hostname}/api
+      # Deliberately NOT reduced. Unlike the rest of the core services this
+      # one actually uses what it asks for: CPU p95 0.96 against a 1-core
+      # request over 47h (2026-09), i.e. saturated. Memory peak 1.96Gi was
+      # also right at its 2Gi request, so that is nudged up.
       resources:
         requests:
           cpu: "1"
-          memory: "${environment.name == 'local' ? '1Gi' : '2Gi'}"
+          memory: "${environment.name == 'local' ? '1Gi' : '2560Mi'}"
         limits:
           cpu: "2"
           memory: 4Gi

@@ -88,26 +88,48 @@ spec:
 
   values:
     server:
-      workers: "${environment.name == 'local' ? 1 : 2}"
+      # Dropped from 2 workers to 1. Over 47h (2026-09) the two workers
+      # together drew a CPU p95 of 0.04 cores, with a single 1.04-core spike;
+      # the coordinator sat at a p50 of 0.010 cores. One worker covers this
+      # comfortably and the chart can be scaled back up if query load grows.
+      workers: 1
 
+    # NOTE ON HEAP vs CONTAINER LIMIT
+    # The chart defaults to jvm.maxHeapSize 8G, and these pods previously ran
+    # with a container memory limit of exactly 8Gi. A JVM needs its heap PLUS
+    # metaspace, thread stacks, direct buffers and a 512M reserved code cache,
+    # so at full heap the container would have been OOMKilled before the JVM
+    # hit its own ceiling. It only survived because real usage (~4.5Gi) never
+    # approached the heap max. Heap is now set explicitly and each limit
+    # leaves ~1.5-2Gi above it for non-heap overhead.
     coordinator:
       # nodeSelector:
       #   teehr-hub/nodegroup-name: core-a
+      # node-scheduler.include-coordinator is false, so the coordinator only
+      # plans queries and never executes them: observed peak 1.20Gi.
+      jvm:
+        maxHeapSize: "2G"
       resources:
         requests:
-          cpu: 1
-          memory: "${environment.name == 'local' ? '1Gi' : '4Gi'}"
+          cpu: 200m
+          memory: "${environment.name == 'local' ? '1Gi' : '3Gi'}"
         limits:
           cpu: 2
-          memory: 8Gi
+          memory: 4Gi
 
     worker:
       # nodeSelector:
       #   teehr-hub/nodegroup-name: core-a
+      # As the only worker this pod now absorbs all query execution. The two
+      # workers peaked at 8.70Gi combined, but most of that is lazily-grown
+      # JVM heap rather than live working set, and query.max-memory-per-node
+      # stays at the 1GB default, so a 5G heap is ample.
+      jvm:
+        maxHeapSize: "5G"
       resources:
         requests:
-          cpu: 1
-          memory: "${environment.name == 'local' ? '1Gi' : '4Gi'}"
+          cpu: 500m
+          memory: "${environment.name == 'local' ? '1Gi' : '6Gi'}"
         limits:
           cpu: 2
           memory: 8Gi

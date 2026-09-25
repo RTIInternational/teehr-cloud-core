@@ -71,13 +71,17 @@ spec:
               resources:
                 requests:
                   storage: 50Gi
+        # Memory peaked at 2.31Gi over 47h (2026-09) against a 1Gi request
+        # and a 2Gi limit, so both are raised -- and that sample was taken
+        # while the TSDB was still refilling after a PVC reset, so a full 7d
+        # of retention will need more, not less. CPU p95 was 0.09 cores.
         resources:
           requests:
-            cpu: 200m
-            memory: "${environment.name == 'local' ? '512Mi' : '1Gi'}"
+            cpu: 100m
+            memory: "${environment.name == 'local' ? '512Mi' : '3Gi'}"
           limits:
             cpu: 1
-            memory: 2Gi
+            memory: "${environment.name == 'local' ? '2Gi' : '4Gi'}"
         # Only monitor teehr-hub namespace and kube-system
         serviceMonitorNamespaceSelector: {}
         serviceMonitorSelector: {}
@@ -92,9 +96,10 @@ spec:
         existingSecret: grafana-secrets
         userKey: admin-user
         passwordKey: admin-password
+      # CPU p95 0.04 cores, memory peak 0.22Gi over 47h (2026-09).
       resources:
         requests:
-          cpu: 100m
+          cpu: 50m
           memory: 256Mi
         limits:
           cpu: 500m
