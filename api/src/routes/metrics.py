@@ -11,10 +11,10 @@ import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+
 from ..auth import effective_limit_for_request
-from ..database import (
-    execute_query, sanitize_string, trino_catalog, trino_schema
-)
+from ..database import execute_query, sanitize_string, trino_catalog, trino_schema
+from .filtering import build_equality_filter_conditions, verify_filtered_columns
 from .queryables import get_metrics_table_queryables
 from .utils import (
     create_ogc_geojson_response,
@@ -49,23 +49,6 @@ def _get_collection_schema(table: str) -> dict:
     schema = get_metrics_table_queryables(table)
     _SCHEMA_CACHE[table] = (time.time(), schema)
     return schema
-
-
-def _verify_filtered_columns(
-        schema: dict,
-        filtered_columns: list[str]
-):
-    """Validate filtered columns against group-by columns for collection.
-
-    Respond with 400 if invalid filters found.
-    """
-    available_columns = schema["x-teehr-group-by"]
-    invalid_filters = set(filtered_columns) - set(available_columns)
-    if invalid_filters:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported filters: {', '.join(sorted(invalid_filters))}"
-        )
 
 
 def _order_by_clause(schema: dict) -> str:
@@ -162,7 +145,7 @@ async def get_collection_items(
             if k not in RESERVED_PARAMS
         }
 
-        _verify_filtered_columns(schema, filters.keys())
+        verify_filtered_columns(schema, list(filters.keys()))
 
         where_conditions = []
 
@@ -184,13 +167,7 @@ async def get_collection_items(
                 # keeps unrenderable geometry off the wire.
                 where_conditions.append(f"{ID_COLUMN} LIKE 'usgs-%'")
 
-        for column, value in filters.items():
-            sanitized_column = sanitize_string(column)
-            sanitized_value = sanitize_string(value)
-            if sanitized_value == "null":
-                where_conditions.append(f"{sanitized_column} IS NULL")
-            else:
-                where_conditions.append(f"{sanitized_column} = '{sanitized_value}'")
+        where_conditions.extend(build_equality_filter_conditions(filters))
 
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
 
