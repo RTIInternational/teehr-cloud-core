@@ -10,7 +10,7 @@ Environment variables:
   ICECHUNK_PREFIX        Base prefix path; each repo lives at {prefix}/{name}.
                          Example: "icechunk-ingests"
   ICECHUNK_BRANCH        Branch to open for all repos (default: main)
-  ICECHUNK_STORAGE_MODE  "local" for minio/kind, "remote" for AWS S3 (default: remote)
+  ICECHUNK_STORAGE_MODE  "local" for the in-cluster S3, "remote" for AWS S3 (default: remote)
   PMTILES_BUCKET         S3 bucket holding the .pmtiles vector-tile archives.
   PMTILES_PREFIX         Prefix within that bucket. Example: "vector-tiles"
   CORS_ORIGINS           Comma-separated list of allowed CORS origins
@@ -21,10 +21,10 @@ Environment variables:
                          first request, so the app starts even with none present.
 
   Local (ICECHUNK_STORAGE_MODE=local):
-    ICECHUNK_ENDPOINT_URL   MinIO endpoint (default: http://minio:9000)
+    ICECHUNK_ENDPOINT_URL   In-cluster S3 endpoint (required)
     AWS_DEFAULT_REGION      Region (default: us-east-1)
-    AWS_ACCESS_KEY_ID       MinIO access key
-    AWS_SECRET_ACCESS_KEY   MinIO secret key
+    AWS_ACCESS_KEY_ID       Local S3 access key
+    AWS_SECRET_ACCESS_KEY   Local S3 secret key
 
   Remote (ICECHUNK_STORAGE_MODE=remote):
     AWS_*                   Standard AWS credential env vars or IRSA

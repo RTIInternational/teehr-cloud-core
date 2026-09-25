@@ -23,10 +23,10 @@ os.environ.setdefault("POLARIS_DEFAULT_REALM", "teehr")
 os.environ.setdefault("REMOTE_WAREHOUSE_IDENTIFIER", "teehr")
 os.environ.setdefault("REMOTE_CATALOG_REST_URI", "http://polaris:8181/api/catalog")
 os.environ.setdefault("REMOTE_WAREHOUSE_S3_PATH", "s3://warehouse/")
-os.environ.setdefault("REMOTE_CATALOG_S3_ENDPOINT", "http://minio:9000")
+os.environ.setdefault("REMOTE_CATALOG_S3_ENDPOINT", "http://local-s3:9000")
 os.environ.setdefault("REMOTE_CATALOG_S3_PATH_STYLE_ACCESS", "true")
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "minioadmin")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "minioadmin123")
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "localadmin")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "localadmin123")
 os.environ.setdefault("AWS_REGION", "us-east-2")
 # Set JVM heap size BEFORE PySpark initializes the JVM - must use JAVA_TOOL_OPTIONS
 # spark.driver.memory config is ignored if JVM heap is already too small

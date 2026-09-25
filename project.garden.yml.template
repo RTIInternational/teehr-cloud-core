@@ -29,7 +29,7 @@ environments:
       polaris:
         inCluster: "true"
         catalogS3PathStyleAccess: "true"
-        catalogS3Endpoint: "http://minio:9000"
+        catalogS3Endpoint: "http://local-s3:9000"
         catalogS3Region: ${var.aws.region}
         catalogType: rest
         catalogUri: http://polaris:8181/api/catalog

@@ -1,6 +1,6 @@
 # Polaris Local Spark Simple Example
 
-This is a minimal local-development flow for Polaris on KinD with MinIO using Spark.
+This is a minimal local-development flow for Polaris on KinD with the in-cluster S3 store using Spark.
 
 ## Goal
 
@@ -17,7 +17,7 @@ This is a minimal local-development flow for Polaris on KinD with MinIO using Sp
 
 ## 1. Refresh Polaris bootstrap config
 
-Run this once after changing Polaris/MinIO/catalog settings:
+Run this once after changing Polaris/S3/catalog settings:
 
 ```bash
 kubectl -n teehr-hub delete job polaris-bootstrap --ignore-not-found=true
@@ -41,19 +41,19 @@ EXTRA_ARGS="--keep --namespace spark_demo_manual --table demo_table" bash ./scri
 
 The script prints:
 
-- effective Spark Polaris/MinIO config
+- effective Spark Polaris/S3 config
 - namespace listing
 - namespace creation
 - table creation, insert, and select
 
 ## 4. Known failure signature and meaning
 
-If table creation fails with `UnknownHostException` and a host like `warehouse.minio`, then:
+If table creation fails with `UnknownHostException` and a host like `warehouse.local-s3`, then:
 
 - Spark-to-Polaris auth is working
 - namespace operations are working
 - Polaris server-side object store write is using virtual-host style DNS
-- local MinIO path-style behavior is not being honored for that write path
+- local S3 path-style behavior is not being honored for that write path
 
 Root cause observed in this repo:
 
@@ -63,7 +63,7 @@ Root cause observed in this repo:
 Check quickly:
 
 ```bash
-kubectl -n teehr-hub logs deploy/polaris --since=10m | grep -E 'UnknownHostException|warehouse.minio|Unable to execute HTTP request'
+kubectl -n teehr-hub logs deploy/polaris --since=10m | grep -E 'UnknownHostException|warehouse.local-s3|Unable to execute HTTP request'
 ```
 
 Verify active catalog settings (from a Jupyter pod):
@@ -74,12 +74,12 @@ kubectl -n teehr-hub exec jupyter-admin -c notebook -- python -c "import request
 
 Look for:
 
-- `storageConfigInfo.endpoint = http://minio:9000`
+- `storageConfigInfo.endpoint = http://local-s3:9000`
 - `storageConfigInfo.pathStyleAccess = true`
 - catalog properties containing both:
 	- `s3.path-style-access = true`
 	- `table-default.s3.path-style-access = true`
-	- `table-default.s3.endpoint = http://minio:9000`
+	- `table-default.s3.endpoint = http://local-s3:9000`
 
 ## 5. Durable fix in manifests
 
