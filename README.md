@@ -72,13 +72,13 @@ garden deploy
 ```
 
 This should create all the services in the cluster.  To test, open a browser and go to `https://api.teehr.local.app.garden`. Two notes:
-1) We use a self-sign certificate for local development so you will have to accept it in your browser. Specifically, you will need to do so for the API before the dashboards will work by going to `api.teehr.local.app.garden` and accepting the self-signed cert. To support the gridded dashboard, the same must be done for `xpublish-api.teehr.local.app.garden` and `minio.teehr.local.app.garden`.
+1) We use a self-sign certificate for local development so you will have to accept it in your browser. Specifically, you will need to do so for the API before the dashboards will work by going to `api.teehr.local.app.garden` and accepting the self-signed cert. To support the gridded dashboard, the same must be done for `xpublish-api.teehr.local.app.garden`.
 2) Note you may need to edit your `/etc/hosts` file to have this address point to localhost.  You likely need the following entries in your `/etc/hosts` file.
 
 ```bash
 # Add for TEEHR-HUB development
 127.0.0.1       hub.teehr.local.app.garden
-127.0.0.1       minio.teehr.local.app.garden
+127.0.0.1       s3.teehr.local.app.garden
 127.0.0.1       api.teehr.local.app.garden
 127.0.0.1       prefect.teehr.local.app.garden
 ```
@@ -100,7 +100,7 @@ Loading data is a little fractured depending on what data you are loading.  For 
 2) Copy the contents of `warehouse/local` from the `teehr-hub` or `teehr-fved` repositories to JupyterHub.  Note that the local_data folder and its contents will have to be uploaded as separate operations (i.e. create a folder manually, upload the file(s), and move into the folder).
 
 3) Run the following notebooks in order.  This will create an Iceberg data warehouse in the KinD cluster and populate it with historic observations and simulations for 10 sites.
-- `01_setup_minio_warehouse.ipynb`
+- `01_setup_local_warehouse.ipynb`
 - `02_create_joined_timeseries.ipynb`
 - `03_generate_basic_metrics.ipynb`
 

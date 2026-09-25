@@ -104,8 +104,8 @@ does not need to run before users can access the catalog.
 
 ### Storage
 
-- MinIO (local) / S3 (remote): credentials configured in Polaris catalog `storageConfigInfo`
-- `stsUnavailable=true` for local MinIO (no STS credential vending)
+- Local S3 (local) / AWS S3 (remote): credentials configured in Polaris catalog `storageConfigInfo`
+- `stsUnavailable=true` for local S3 (no STS credential vending)
 - `s3.remote-signing-enabled=false` — clients use their own configured S3 credentials
 
 ---

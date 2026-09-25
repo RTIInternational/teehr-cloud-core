@@ -13,8 +13,8 @@ data:
   PMTILES_PREFIX: "${var.pmtiles.prefix}"
   # Dynamically set based on environment name: "local" or "remote"
   ICECHUNK_STORAGE_MODE: "${environment.name}"
-  # Local mode: explicit MinIO endpoint. Remote mode: empty (AWS SDK handles it).
-  ICECHUNK_ENDPOINT_URL: "${ environment.name == 'local' ? 'http://minio:9000' : '' }"
+  # Cluster S3 endpoint; empty in remote, where the AWS SDK resolves it.
+  ICECHUNK_ENDPOINT_URL: "${var.polaris.catalogS3Endpoint}"
   AWS_DEFAULT_REGION: "${ environment.name == 'local' ? 'us-east-1' : var.aws.region }"
   CORS_ORIGINS: "${var.allowedOrigins}"
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"

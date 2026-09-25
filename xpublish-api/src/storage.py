@@ -26,7 +26,7 @@ def build_s3_client():
     if mode == "local":
         return boto3.client(
             "s3",
-            endpoint_url=os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
+            endpoint_url=os.environ["ICECHUNK_ENDPOINT_URL"],
             region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
@@ -89,7 +89,7 @@ def build_storage_kwargs() -> dict:
     Return kwargs for ic.s3_storage() based on ICECHUNK_STORAGE_MODE.
 
     - "local":  explicit endpoint + credentials via standard AWS_* env vars,
-                plus minio-specific flags (allow_http, force_path_style, endpoint_url).
+                plus local-endpoint flags (allow_http, force_path_style, endpoint_url).
     - "remote": from_env=True — reads AWS_* env vars or uses IRSA on EKS.
     """
     mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
@@ -97,7 +97,7 @@ def build_storage_kwargs() -> dict:
         kwargs: dict = {
             "region": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
             "allow_http": True,
-            "endpoint_url": os.getenv("ICECHUNK_ENDPOINT_URL", "http://minio:9000"),
+            "endpoint_url": os.environ["ICECHUNK_ENDPOINT_URL"],
             "force_path_style": True,
         }
         access_key = os.getenv("AWS_ACCESS_KEY_ID")

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: minio
+  name: local-s3
 spec:
   type: ClusterIP
   ports:
@@ -12,67 +12,69 @@ spec:
       port: 9001
       targetPort: 9001
   selector:
-    app: minio
+    app: local-s3
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: minio
+  name: local-s3
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: minio
+      app: local-s3
   template:
     metadata:
       labels:
-        app: minio
+        app: local-s3
     spec:
       # nodeSelector:
       #   teehr-hub/nodegroup-name: core-a
+
+      # RustFS runs as uid/gid 10001 and needs /data writable.
+      securityContext:
+        fsGroup: 10001
       containers:
-        - name: minio
-          # Stopgap: minio/minio was removed from Docker Hub. quay.io still
-          # mirrors the final community releases; pinned because the tag is
-          # frozen and nothing new will be published.
-          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-          args:
-            - server
-            - /data
-            - --console-address
-            - :9001
+        - name: local-s3
+          image: rustfs/rustfs:1.0.0
           env:
-            - name: MINIO_ROOT_USER
+            - name: RUSTFS_VOLUMES
+              value: /data
+            - name: RUSTFS_ADDRESS
+              value: 0.0.0.0:9000
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "true"
+            - name: RUSTFS_CONSOLE_ADDRESS
+              value: 0.0.0.0:9001
+            - name: RUSTFS_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: minio-secrets
+                  name: local-s3-secrets
                   key: accesskey
-            - name: MINIO_ROOT_PASSWORD
+            - name: RUSTFS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: minio-secrets
+                  name: local-s3-secrets
                   key: secretkey
-            - name: MINIO_BROWSER_REDIRECT_URL
-              value: "https://minio.${var.hostname}/ui/"
           ports:
             - containerPort: 9000
             - containerPort: 9001
           volumeMounts:
-            - name: minio-data
+            - name: local-s3-data
               mountPath: /data
           readinessProbe:
             httpGet:
-              path: /minio/health/ready
+              path: /health/ready
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /minio/health/live
+              path: /health
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
-        - name: minio-data
+        - name: local-s3-data
           emptyDir: {}

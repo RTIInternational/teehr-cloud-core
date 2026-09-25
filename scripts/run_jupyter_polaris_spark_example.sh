@@ -95,7 +95,7 @@ if [[ "$DEBUG_POLARIS" == "1" ]]; then
 
   if [[ "$POLARIS_DOCTOR" == "1" ]]; then
     kubectl -n "$NAMESPACE" logs deploy/polaris --since="${since_seconds}s" > "$diagnostics_dir/polaris.log" || true
-    grep -E "(POST /api/catalog/v1/oauth/tokens|/api/catalog/v1/config|/api/catalog/v1/.*/namespaces|HTTP/1.1\" 401|HTTP/1.1\" 403|HTTP/1.1\" 500|Some principal roles were not found|UnknownHostException|warehouse.minio)" "$diagnostics_dir/polaris.log" > "$diagnostics_dir/polaris-summary.log" || true
+    grep -E "(POST /api/catalog/v1/oauth/tokens|/api/catalog/v1/config|/api/catalog/v1/.*/namespaces|HTTP/1.1\" 401|HTTP/1.1\" 403|HTTP/1.1\" 500|Some principal roles were not found|UnknownHostException|warehouse.local-s3)" "$diagnostics_dir/polaris.log" > "$diagnostics_dir/polaris-summary.log" || true
   fi
 fi
 
@@ -105,7 +105,7 @@ if [[ "$POLARIS_DOCTOR" == "1" ]]; then
     diagnosis="success"
   elif grep -qi "NotAuthorizedException\|HTTP Error 401\|401 Unauthorized" "$run_log" 2>/dev/null; then
     diagnosis="authz_or_realm_mismatch"
-  elif grep -qi "UnknownHostException\|warehouse\.minio\|NoSuchBucket\|AccessDenied" "$run_log" 2>/dev/null; then
+  elif grep -qi "UnknownHostException\|warehouse\.local-s3\|NoSuchBucket\|AccessDenied" "$run_log" 2>/dev/null; then
     diagnosis="storage_or_warehouse_misconfig"
   elif grep -qi "Failed to write to grant records\|grant_records_pkey\|duplicate key value" "$run_log" 2>/dev/null; then
     diagnosis="principal_role_grant_idempotency"
@@ -116,7 +116,7 @@ if [[ "$POLARIS_DOCTOR" == "1" ]]; then
     if [[ "$diagnosis" == "authz_or_realm_mismatch" ]]; then
       echo "hint=Verify token issuer/realm and Polaris principal-role grants for this principal"
     elif [[ "$diagnosis" == "storage_or_warehouse_misconfig" ]]; then
-      echo "hint=Verify Polaris catalog warehouse and MinIO endpoint/path-style settings"
+      echo "hint=Verify Polaris catalog warehouse and S3 endpoint/path-style settings"
     elif [[ "$diagnosis" == "principal_role_grant_idempotency" ]]; then
       echo "hint=Principal sync is re-granting existing role; ensure duplicate grant is treated as success"
     fi

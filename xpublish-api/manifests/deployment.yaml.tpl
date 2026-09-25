@@ -85,18 +85,18 @@ spec:
             configMapKeyRef:
               name: xpublish-api-config
               key: KEYCLOAK_ALLOWED_AUDIENCES
-        # Minio credentials for local/kind — same secret used cluster-wide.
+        # Local S3 credentials for kind — same secret used cluster-wide.
         # Remote/prod: omitted; use IRSA to grant S3 access via service account.
         ${if environment.name == "local"}
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
-              name: minio-secrets
+              name: local-s3-secrets
               key: accesskey
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
-              name: minio-secrets
+              name: local-s3-secrets
               key: secretkey
         ${endif}
         resources:

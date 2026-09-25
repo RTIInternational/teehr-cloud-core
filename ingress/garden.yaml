@@ -10,15 +10,6 @@ environments:
 ---
 kind: Deploy
 type: kubernetes
-name: minio-ingress
-spec:
-  manifestTemplates:
-    - manifests/minio.yaml.tpl
-environments:
-  - local
----
-kind: Deploy
-type: kubernetes
 name: api-ingress
 spec:
   manifestTemplates:
