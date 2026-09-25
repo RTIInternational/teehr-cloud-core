@@ -83,6 +83,9 @@ This should create all the services in the cluster.  To test, open a browser and
 127.0.0.1       prefect.teehr.local.app.garden
 ```
 
+### Local S3 Console
+The in-cluster S3 store (RustFS) has a web console at `https://s3.teehr.local.app.garden/rustfs/console/`. Log in with `localadmin` / `localadmin123` (from `secrets/secrets.local.yaml`). It uses its own self-signed cert, so accept it separately.
+
 ### Create Keycloak User
 The deployment process create 2 users as described in `docs/access-control-matrix.md`
 
