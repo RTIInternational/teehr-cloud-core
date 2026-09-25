@@ -28,6 +28,17 @@ metadata:
   name: keycloak-pg
 spec:
   replicas: 1
+  # Recreate, not the default RollingUpdate. This is a single-replica
+  # database on a ReadWriteOnce EBS volume, so a rolling update deadlocks:
+  # at replicas=1 the defaults compute maxUnavailable=0 and maxSurge=1, so
+  # Kubernetes starts the replacement pod before terminating the old one,
+  # the new pod blocks on FailedAttachVolume because the old pod still holds
+  # the volume, and the rollout never completes. Recreate terminates first
+  # and waits for the detach. Nothing is lost by this: two Postgres pods
+  # could never have shared the volume, so the rollout was never actually
+  # zero-downtime.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: keycloak-pg
