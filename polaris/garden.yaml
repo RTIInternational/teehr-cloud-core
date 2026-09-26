@@ -9,6 +9,15 @@ dependencies:
 environments:
   - local
   - remote
+# Garden's default deploy timeout is 300s, which is too tight here on a cold
+# cluster. This pod pulls two large Java images -- apache/polaris:1.5.0 and the
+# apache/polaris-admin-tool:1.5.0 init container -- and on a fresh KinD that
+# took 3m19s before the init container even started, with the pod reaching
+# Ready at 324s. Garden aborted at 300s and took six downstream actions with
+# it, including the JupyterHub image builds. The bootstrap itself runs in about
+# a second; this is image pull time, so it only bites the first deploy against
+# a new cluster, which is exactly the README's setup path.
+timeout: 600
 spec:
   manifestTemplates:
     - ./manifests/polaris-config.yaml.tpl
