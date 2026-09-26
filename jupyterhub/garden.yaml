@@ -97,6 +97,41 @@ spec:
           # Allow users to create Spark sessions
           c.KubeSpawner.service_account = 'jupyter'
           c.KubeSpawner.automount_service_account_token = True
+        per-user-uid: |
+          # Give each JupyterHub user a distinct uid so that writes to the
+          # shared /data drive are attributable -- `ls -l` shows who made a
+          # file instead of everyone appearing as jovyan (uid 1000).
+          # See RTIInternational/teehr-cloud-core#69.
+          #
+          # The GID is deliberately left at 1000 for everyone. Per-user groups
+          # would recreate the bug #69 is about: files nobody else can delete.
+          # A shared group plus the setgid bit on /data means ownership records
+          # WHO wrote something while anyone can still clean it up.
+          #
+          # This overrides singleuser.uid below; hub.extraConfig is appended to
+          # jupyterhub_config.py last, so it wins.
+          #
+          # spawner.user.id is JupyterHub's own database primary key: unique,
+          # already assigned, stable for the life of the hub DB. Note that
+          # rebuilding that DB would reassign ids and make existing ownership
+          # misleading -- it lives on the hub-db-dir PVC, so that should not
+          # happen by accident.
+          UID_BASE = 20000
+
+          def _uid_for_user(spawner):
+              user_id = getattr(spawner.user, "id", None)
+              if user_id is None:
+                  # Never block a spawn over this; fall back to the shared uid.
+                  spawner.log.warning(
+                      "No user id available for %s; falling back to uid 1000",
+                      spawner.user.name,
+                  )
+                  return 1000
+              return UID_BASE + int(user_id)
+
+          c.KubeSpawner.uid = _uid_for_user
+          c.KubeSpawner.gid = 1000
+          c.KubeSpawner.fs_gid = 1000
         profile-list-loader: |
           import json
           import os
