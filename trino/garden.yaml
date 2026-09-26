@@ -11,7 +11,7 @@ spec:
   chart:
     name: trino
     repo: https://trinodb.github.io/charts
-    version: 1.41.0
+    version: 1.42.2
 
   values:
     server:
@@ -33,6 +33,9 @@ spec:
         iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
         iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
         iceberg.rest-catalog.oauth2.scope=openid
+        # Keycloak does not allow RFC 8693 token exchange for this client, so
+        # refresh by re-running client_credentials instead.
+        iceberg.rest-catalog.oauth2.token-exchange-enabled=false
         # S3 Configuration
         fs.native-s3.enabled=true
         s3.path-style-access=${var.polaris.catalogS3PathStyleAccess}
@@ -84,7 +87,7 @@ spec:
   chart:
     name: trino
     repo: https://trinodb.github.io/charts
-    version: 1.41.0
+    version: 1.42.2
 
   values:
     server:
@@ -144,6 +147,9 @@ spec:
         iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
         iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
         iceberg.rest-catalog.oauth2.scope=openid
+        # Keycloak does not allow RFC 8693 token exchange for this client, so
+        # refresh by re-running client_credentials instead.
+        iceberg.rest-catalog.oauth2.token-exchange-enabled=false
         # S3 Configuration
         # Trino holds no AWS identity of its own for the warehouse bucket;
         # it relies entirely on Polaris to vend scoped, short-lived S3
