@@ -1,0 +1,23 @@
+# Privileged shell for cleaning up the shared /data drive.
+# See manifests/data-admin.yaml.tpl for why this exists.
+kind: Deploy
+type: kubernetes
+name: data-admin
+environments:
+  - local
+dependencies:
+  - deploy.local-storage
+spec:
+  manifestTemplates:
+    - manifests/data-admin.yaml.tpl
+---
+kind: Deploy
+type: kubernetes
+name: data-admin
+environments:
+  - remote
+dependencies:
+  - deploy.nfs-storage
+spec:
+  manifestTemplates:
+    - manifests/data-admin.yaml.tpl
