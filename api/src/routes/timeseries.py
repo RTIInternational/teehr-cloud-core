@@ -100,7 +100,7 @@ def _empty_response(request: Request, collection_id: str, f: str | None) -> JSON
 
 
 @router.get("/collections/primary_timeseries/items")
-async def get_primary_timeseries_items(
+def get_primary_timeseries_items(
     request: Request,
     primary_location_id: list[str] = Query(
         ..., description="Primary location ID(s) - can be specified multiple times"
@@ -320,7 +320,7 @@ async def get_primary_timeseries_items(
 
 
 @router.get("/collections/secondary_timeseries/items")
-async def get_secondary_timeseries_items(
+def get_secondary_timeseries_items(
     request: Request,
     primary_location_id: list[str] | None = Query(None, description="Primary location ID(s) - can be specified multiple times"),
     secondary_location_id: list[str] | None = Query(None, description="Secondary location ID(s) - can be specified multiple times"),

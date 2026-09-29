@@ -75,7 +75,7 @@ async def conformance():
 
 
 @router.get("/collections", response_model=CollectionsResponse)
-async def get_collections():
+def get_collections():
     """List all available data collections."""
 
     # Get extent information from database
@@ -479,11 +479,11 @@ async def get_collections():
 
 
 @router.get("/collections/{collection_id}", response_model=Collection)
-async def get_collection(collection_id: str):
+def get_collection(collection_id: str):
     """Get metadata for a specific collection."""
 
     # Get the collections list
-    collections_response = await get_collections()
+    collections_response = get_collections()
 
     # Find the requested collection
     for collection in collections_response.collections:

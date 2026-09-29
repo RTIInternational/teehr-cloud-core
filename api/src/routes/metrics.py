@@ -87,7 +87,7 @@ def _resolve_format(requested_format: str | None, has_geometry: bool) -> str:
 
 
 @router.get("/collections/{collection_id}/items")
-async def get_collection_items(
+def get_collection_items(
     collection_id: str,
     request: Request,
     location_id: str | None = Query(
