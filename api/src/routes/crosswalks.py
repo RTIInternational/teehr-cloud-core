@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/collections/location_crosswalks/items")
-async def get_crosswalk_items(
+def get_crosswalk_items(
     request: Request,
     primary_location_id: list[str] | None = Query(
         None, description="Filter by primary location ID (can be specified multiple times)"

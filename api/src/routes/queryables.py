@@ -416,7 +416,7 @@ def get_metrics_table_queryables(table_name: str) -> dict:
 
 
 @router.get("/collections/{collection_id}/queryables")
-async def get_collection_queryables(collection_id: str):
+def get_collection_queryables(collection_id: str):
     """
     Get queryable properties for a collection (OGC API - Features Part 3).
 
@@ -433,7 +433,7 @@ async def get_collection_queryables(collection_id: str):
     return JSONResponse(content=schema, media_type="application/schema+json")
 
 @router.get("/collections/{collection_id}/queryables/{property_name}/values")
-async def get_queryable_values(
+def get_queryable_values(
     collection_id: str,
     property_name: str,
     request: Request,

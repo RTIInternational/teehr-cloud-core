@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 @router.get("/collections/configurations/items")
-async def get_configuration_items(
+def get_configuration_items(
     request: Request,
     name: str | None = Query(None, description="Filter by configuration name"),
     timeseries_type: str | None = Query(None, description="Filter by type (primary, secondary)"),
@@ -94,7 +94,7 @@ async def get_configuration_items(
 
 
 @router.get("/collections/units/items")
-async def get_unit_items(
+def get_unit_items(
     request: Request,
     name: str | None = Query(None, description="Filter by unit name"),
     limit: int | None = Query(
@@ -166,7 +166,7 @@ async def get_unit_items(
 
 
 @router.get("/collections/variables/items")
-async def get_variable_items(
+def get_variable_items(
     request: Request,
     name: str | None = Query(None, description="Filter by variable name"),
     limit: int | None = Query(
@@ -238,7 +238,7 @@ async def get_variable_items(
 
 
 @router.get("/collections/attributes/items")
-async def get_attribute_items(
+def get_attribute_items(
     request: Request,
     name: str | None = Query(None, description="Filter by attribute name"),
     limit: int | None = Query(
@@ -310,7 +310,7 @@ async def get_attribute_items(
 
 
 @router.get("/collections/location_attributes/items")
-async def get_location_attribute_items(
+def get_location_attribute_items(
     request: Request,
     location_id: list[str] | None = Query(
         None, description="Filter by location ID(s) - can be specified multiple times"
