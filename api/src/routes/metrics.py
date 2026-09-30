@@ -14,7 +14,12 @@ from fastapi.responses import JSONResponse
 
 from ..auth import effective_limit_for_request
 from ..database import execute_query, sanitize_string, trino_catalog, trino_schema
-from .filtering import build_equality_filter_conditions, verify_filtered_columns
+from .filtering import (
+    build_equality_filter_conditions,
+    get_filterable_columns,
+    resolve_filter_aliases,
+    verify_filtered_columns,
+)
 from .queryables import get_metrics_table_queryables
 from .utils import (
     create_ogc_geojson_response,
@@ -137,11 +142,14 @@ def get_collection_items(
         sanitized_table = sanitize_string(collection_id)
         schema = _get_collection_schema(sanitized_table)
 
-        filters = {
-            k: v
-            for k, v in request.query_params.items()
-            if k not in RESERVED_PARAMS
-        }
+        filters = resolve_filter_aliases(
+            {
+                k: v
+                for k, v in request.query_params.items()
+                if k not in RESERVED_PARAMS
+            },
+            get_filterable_columns(schema),
+        )
 
         verify_filtered_columns(schema, list(filters.keys()))
 

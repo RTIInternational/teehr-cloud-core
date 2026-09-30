@@ -16,7 +16,13 @@ from ..database import (
     trino_catalog,
     trino_schema,
 )
-from .filtering import build_equality_filter_conditions, verify_filtered_columns
+from .filtering import (
+    build_equality_filter_conditions,
+    get_filterable_columns,
+    resolve_column_alias,
+    resolve_filter_aliases,
+    verify_filtered_columns,
+)
 from .utils import id_column, prepare_for_serialization
 
 router = APIRouter()
@@ -453,16 +459,18 @@ def get_queryable_values(
     """
     # Validate and sanitize inputs
     sanitized_collection = sanitize_string(collection_id)
-    sanitized_property = sanitize_string(property_name)
 
-    if not sanitized_collection or not sanitized_property:
+    if not sanitized_collection or not sanitize_string(property_name):
         raise HTTPException(status_code=400, detail="Invalid collection or property name")
 
     try:
         schema = _build_collection_schema(collection_id)
+        columns = get_filterable_columns(schema, default_to_properties=True)
+        property_name = resolve_column_alias(property_name, columns)
+        sanitized_property = sanitize_string(property_name)
         _validate_queryable_property(schema, property_name)
 
-        filters = dict(request.query_params.items())
+        filters = resolve_filter_aliases(dict(request.query_params.items()), columns)
         verify_filtered_columns(
             schema,
             list(filters.keys()),
