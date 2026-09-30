@@ -6,6 +6,8 @@ Extends standard JSON Schema with x-teehr-role to indicate group_by vs metric
 fields.
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -18,6 +20,12 @@ from ..database import (
 )
 from .filtering import build_equality_filter_conditions, verify_filtered_columns
 from .utils import prepare_for_serialization
+
+logger = logging.getLogger("teehr-api.queryables")
+
+# Populated by a deployment workflow with the distinct group_by combinations
+# of each metrics table, because a live DISTINCT on large tables takes seconds.
+COMBINATIONS_TABLE = "queryable_combinations"
 
 router = APIRouter()
 
@@ -38,6 +46,7 @@ def _build_collection_schema(collection_id: str) -> dict:
     sanitized = sanitize_string(collection_id)
     return get_metrics_table_queryables(sanitized)
 
+
 def _validate_queryable_property(schema: dict, property_name: str):
     """Ensure the requested property exists in the collection schema."""
     if property_name not in schema["properties"]:
@@ -46,6 +55,7 @@ def _validate_queryable_property(schema: dict, property_name: str):
             detail=f"Unsupported property: {property_name}",
         )
 
+
 # Known collections and their configurations
 COLLECTION_CONFIGS = {
     "locations": {
@@ -53,15 +63,8 @@ COLLECTION_CONFIGS = {
         "type": "feature",
         "description": "Geographic locations where observations are collected",
         "static_properties": {
-            "id": {
-                "title": "Location ID",
-                "type": "string",
-                "x-ogc-role": "id"
-            },
-            "name": {
-                "title": "Location Name",
-                "type": "string"
-            },
+            "id": {"title": "Location ID", "type": "string", "x-ogc-role": "id"},
+            "name": {"title": "Location Name", "type": "string"},
             "geometry": {
                 "$ref": "https://geojson.org/schema/Point.json",
                 "x-ogc-role": "primary-geometry",
@@ -359,9 +362,7 @@ def get_metrics_table_queryables(table_name: str) -> dict:
 
         group_by = properties_meta.get("group_by", [])
         metrics = properties_meta.get("metrics", [])
-        description = properties_meta.get(
-            "description", f"Metrics table: {table_name}"
-        )
+        description = properties_meta.get("description", f"Metrics table: {table_name}")
 
         # Build properties schema
         properties = {}
@@ -432,6 +433,47 @@ def get_collection_queryables(collection_id: str):
 
     return JSONResponse(content=schema, media_type="application/schema+json")
 
+
+def _query_cached_values(
+    collection: str,
+    property_name: str,
+    filters: dict[str, str],
+) -> list | None:
+    """
+    Return distinct values from the combinations table, or None when it has
+    no answer and the caller must query the source table.
+    """
+    keys = [property_name, *filters]
+    conditions = [f"source_table = '{collection}'"] + [
+        f"contains(map_keys(dimensions), '{key}')" for key in keys
+    ]
+    for key, value in filters.items():
+        sanitized_value = sanitize_string(value)
+        if sanitized_value == "null":
+            conditions.append(f"element_at(dimensions, '{key}') IS NULL")
+        else:
+            conditions.append(f"element_at(dimensions, '{key}') = '{sanitized_value}'")
+
+    query = f"""
+        SELECT DISTINCT element_at(dimensions, '{property_name}')
+            AS {property_name}
+        FROM {trino_catalog}.{trino_schema}.{COMBINATIONS_TABLE}
+        WHERE {" AND ".join(conditions)}
+        ORDER BY {property_name}
+    """
+    try:
+        df = execute_query(query)
+    except Exception as e:
+        # Deployments without the workflow never create the table.
+        if "TABLE_NOT_FOUND" not in str(e):
+            logger.warning(f"Combinations lookup failed, falling back: {e}")
+        return None
+
+    if df.empty:
+        return None
+    return prepare_for_serialization(df)[property_name].tolist()
+
+
 @router.get("/collections/{collection_id}/queryables/{property_name}/values")
 def get_queryable_values(
     collection_id: str,
@@ -455,7 +497,9 @@ def get_queryable_values(
     sanitized_property = sanitize_string(property_name)
 
     if not sanitized_collection or not sanitized_property:
-        raise HTTPException(status_code=400, detail="Invalid collection or property name")
+        raise HTTPException(
+            status_code=400, detail="Invalid collection or property name"
+        )
 
     try:
         schema = _build_collection_schema(collection_id)
@@ -469,21 +513,25 @@ def get_queryable_values(
         )
         where_clause = " AND ".join(build_equality_filter_conditions(filters))
 
+        if sanitized_property in schema.get("x-teehr-group-by", []):
+            cached = _query_cached_values(
+                sanitized_collection, sanitized_property, filters
+            )
+            if cached is not None:
+                return JSONResponse(content=cached, media_type="application/json")
+
         # Query distinct values
         query = f"""
             SELECT DISTINCT {sanitized_property}
             FROM {trino_catalog}.{trino_schema}.{sanitized_collection}
-            {f'WHERE {where_clause}' if where_clause else ''}
+            {f"WHERE {where_clause}" if where_clause else ""}
             ORDER BY {sanitized_property}
         """
         raw_df = execute_query(query)
         df = prepare_for_serialization(raw_df)
         values = df[sanitized_property].tolist() if not df.empty else []
 
-        return JSONResponse(
-            content=values,
-            media_type="application/json"
-        )
+        return JSONResponse(content=values, media_type="application/json")
 
     except HTTPException:
         raise
