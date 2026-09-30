@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ..config import config
 from ..database import (
     execute_query,
     get_trino_connection,
@@ -453,6 +454,15 @@ def _query_cached_values(
             conditions.append(f"element_at(dimensions, '{key}') IS NULL")
         else:
             conditions.append(f"element_at(dimensions, '{key}') = '{sanitized_value}'")
+
+    if config.CACHE_REQUIRES_CURRENT_SNAPSHOT:
+        conditions.append(
+            f"""source_snapshot_id = (
+                SELECT CAST(value AS BIGINT)
+                FROM {trino_catalog}.{trino_schema}."{collection}$properties"
+                WHERE key = 'current-snapshot-id'
+            )"""
+        )
 
     query = f"""
         SELECT DISTINCT element_at(dimensions, '{property_name}')
