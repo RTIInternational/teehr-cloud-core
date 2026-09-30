@@ -17,7 +17,7 @@ from ..database import (
     trino_schema,
 )
 from .filtering import build_equality_filter_conditions, verify_filtered_columns
-from .utils import prepare_for_serialization
+from .utils import id_column, prepare_for_serialization
 
 router = APIRouter()
 
@@ -374,6 +374,7 @@ def get_metrics_table_queryables(table_name: str) -> dict:
             }
 
         # Add group_by fields
+        ogc_id_field = id_column(group_by)
         for field in group_by:
             # geometry is handled separately as a GeoJSON primary geometry;
             # avoid overwriting its schema with a generic string schema.
@@ -384,8 +385,8 @@ def get_metrics_table_queryables(table_name: str) -> dict:
                 "type": "string",
                 "x-teehr-role": "group_by",
             }
-            # Mark primary_location_id as the OGC id
-            if field == "primary_location_id":
+            # Mark the location id column as the OGC id
+            if field == ogc_id_field:
                 properties[field]["x-ogc-role"] = "id"
 
         # Add metric fields

@@ -19,6 +19,7 @@ from .queryables import get_metrics_table_queryables
 from .utils import (
     create_ogc_geojson_response,
     create_ogc_records_response,
+    id_column,
     prepare_for_serialization,
 )
 
@@ -30,9 +31,6 @@ RESERVED_PARAMS = ["collection_id", "location_id", "limit", "offset", "f"]
 
 GEOJSON = "geojson"
 JSON = "json"
-
-# The OGC id column, where a collection has one. Also the leading sort key.
-ID_COLUMN = "primary_location_id"
 
 # Collection schemas come from Iceberg table properties, which only change when
 # the upstream Prefect flows run. Caching avoids a Trino round trip per request.
@@ -151,13 +149,14 @@ def get_collection_items(
 
         # location_id is an alias for the collection's id column, and only
         # applies to collections that have one.
-        if ID_COLUMN in schema["x-teehr-group-by"]:
+        id_col = id_column(schema["x-teehr-group-by"])
+        if id_col is not None:
             if "location_id" in request.query_params:
                 sanitized_location_id = sanitize_string(
                     request.query_params["location_id"]
                 )
                 where_conditions.append(
-                    f"{ID_COLUMN} = '{sanitized_location_id}'"
+                    f"{id_col} = '{sanitized_location_id}'"
                 )
             else:
                 # Restricts results to gage locations. Basin-level rows use a
@@ -165,7 +164,7 @@ def get_collection_items(
                 # geometry, which no current client can render -- and which
                 # would be far too large to ship as GeoJSON anyway. It
                 # keeps unrenderable geometry off the wire.
-                where_conditions.append(f"{ID_COLUMN} LIKE 'usgs-%'")
+                where_conditions.append(f"{id_col} LIKE 'usgs-%'")
 
         where_conditions.extend(build_equality_filter_conditions(filters))
 
