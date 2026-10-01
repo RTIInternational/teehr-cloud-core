@@ -24,7 +24,7 @@ from .queryables import get_metrics_table_queryables
 from .utils import (
     create_ogc_geojson_response,
     create_ogc_records_response,
-    id_column,
+    get_id_column,
     prepare_for_serialization,
 )
 
@@ -157,7 +157,7 @@ def get_collection_items(
 
         # location_id is an alias for the collection's id column, and only
         # applies to collections that have one.
-        id_col = id_column(schema["x-teehr-group-by"])
+        id_col = get_id_column(schema["x-teehr-group-by"])
         if id_col is not None:
             if "location_id" in request.query_params:
                 sanitized_location_id = sanitize_string(

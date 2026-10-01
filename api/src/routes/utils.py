@@ -19,7 +19,7 @@ from ..config import config
 ID_COLUMNS = ("location_id", "primary_location_id")
 
 
-def id_column(group_by: list[str]) -> str | None:
+def get_id_column(group_by: list[str]) -> str | None:
     """Return the collection's id column, or None if it has none."""
     return next((c for c in ID_COLUMNS if c in group_by), None)
 
