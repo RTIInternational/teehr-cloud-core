@@ -14,11 +14,17 @@ from fastapi.responses import JSONResponse
 
 from ..auth import effective_limit_for_request
 from ..database import execute_query, sanitize_string, trino_catalog, trino_schema
-from .filtering import build_equality_filter_conditions, verify_filtered_columns
+from .filtering import (
+    build_equality_filter_conditions,
+    get_filterable_columns,
+    resolve_filter_aliases,
+    verify_filtered_columns,
+)
 from .queryables import get_metrics_table_queryables
 from .utils import (
     create_ogc_geojson_response,
     create_ogc_records_response,
+    get_id_column,
     prepare_for_serialization,
 )
 
@@ -30,9 +36,6 @@ RESERVED_PARAMS = ["collection_id", "location_id", "limit", "offset", "f"]
 
 GEOJSON = "geojson"
 JSON = "json"
-
-# The OGC id column, where a collection has one. Also the leading sort key.
-ID_COLUMN = "primary_location_id"
 
 # Collection schemas come from Iceberg table properties, which only change when
 # the upstream Prefect flows run. Caching avoids a Trino round trip per request.
@@ -139,11 +142,14 @@ def get_collection_items(
         sanitized_table = sanitize_string(collection_id)
         schema = _get_collection_schema(sanitized_table)
 
-        filters = {
-            k: v
-            for k, v in request.query_params.items()
-            if k not in RESERVED_PARAMS
-        }
+        filters = resolve_filter_aliases(
+            {
+                k: v
+                for k, v in request.query_params.items()
+                if k not in RESERVED_PARAMS
+            },
+            get_filterable_columns(schema),
+        )
 
         verify_filtered_columns(schema, list(filters.keys()))
 
@@ -151,13 +157,14 @@ def get_collection_items(
 
         # location_id is an alias for the collection's id column, and only
         # applies to collections that have one.
-        if ID_COLUMN in schema["x-teehr-group-by"]:
+        id_col = get_id_column(schema["x-teehr-group-by"])
+        if id_col is not None:
             if "location_id" in request.query_params:
                 sanitized_location_id = sanitize_string(
                     request.query_params["location_id"]
                 )
                 where_conditions.append(
-                    f"{ID_COLUMN} = '{sanitized_location_id}'"
+                    f"{id_col} = '{sanitized_location_id}'"
                 )
             else:
                 # Restricts results to gage locations. Basin-level rows use a
@@ -165,7 +172,7 @@ def get_collection_items(
                 # geometry, which no current client can render -- and which
                 # would be far too large to ship as GeoJSON anyway. It
                 # keeps unrenderable geometry off the wire.
-                where_conditions.append(f"{ID_COLUMN} LIKE 'usgs-%'")
+                where_conditions.append(f"{id_col} LIKE 'usgs-%'")
 
         where_conditions.extend(build_equality_filter_conditions(filters))
 
