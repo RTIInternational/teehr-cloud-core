@@ -2,7 +2,8 @@
 xpublish REST service for icechunk gridded data.
 
 Serves raster tiles via TilesPlugin (reads from /pyramids group) and
-point queries via CfEdrPlugin (reads from /raw_data group).
+point queries via CfEdrPlugin (reads from each repo's data group: /raw_data, or /references
+when the repo isn't materialized).
 
 Environment variables:
   ICECHUNK_BUCKET        S3 bucket that holds all icechunk repos.
@@ -136,7 +137,7 @@ def build_app() -> FastAPI:
             variables = list(pyramid_dt[children[0]].data_vars.keys())
             logger.info("Variables for dataset '%s': %s", dataset_id, variables)
             return {"dataset_id": dataset_id, "variables": variables}
-        # Pyramid has no children yet (empty repo) — fall back to raw_data variables.
+        # Pyramid has no children yet (empty repo) — fall back to the data group's variables.
         raw_dt = provider.get_datatree_for_dataset(f"{dataset_id}_raw_data")
         if raw_dt is None:
             raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
@@ -144,7 +145,7 @@ def build_app() -> FastAPI:
 
     @api_app.get("/datasets/{dataset_id}/coords/{coord_name}")
     def dataset_coord_values(dataset_id: str, coord_name: str):
-        # Coords (including time) live in the /raw_data group, not /pyramids.
+        # Coords (including time) live in the repo's data group, not /pyramids.
         raw_dt = provider.get_datatree_for_dataset(f"{dataset_id}_raw_data")
         if raw_dt is None:
             raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
