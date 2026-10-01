@@ -11,6 +11,7 @@ data:
   TRINO_USER: "teehr"
   TRINO_CATALOG: "iceberg"
   TRINO_SCHEMA: "teehr"
+  CACHE_REQUIRES_CURRENT_SNAPSHOT: "${environment.name == 'local' ? 'true' : 'false'}"
   CORS_ORIGINS: "${var.allowedOrigins}"
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"
   KEYCLOAK_JWKS_URL: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/certs"
