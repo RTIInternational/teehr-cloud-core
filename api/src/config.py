@@ -28,6 +28,12 @@ class Config:
     TRINO_CATALOG = os.environ.get("TRINO_CATALOG", "iceberg")
     TRINO_SCHEMA = os.environ.get("TRINO_SCHEMA", "teehr")
 
+    # Dev tables change ad hoc between workflow runs, so there a cached
+    # table built from an older source snapshot is bypassed instead of served.
+    CACHE_REQUIRES_CURRENT_SNAPSHOT = os.environ.get(
+        "CACHE_REQUIRES_CURRENT_SNAPSHOT", "false"
+    ).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
     # CORS settings
     CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
 
@@ -75,10 +81,9 @@ class Config:
     AUTH_RATE_LIMIT_RPM = int(os.environ.get("AUTH_RATE_LIMIT_RPM", "120"))
 
     # Polaris token broker settings
-    BROKER_TOKEN_EXCHANGE_ENABLED = (
-        os.environ.get("BROKER_TOKEN_EXCHANGE_ENABLED", "true").strip().lower()
-        in {"1", "true", "t", "yes", "y", "on"}
-    )
+    BROKER_TOKEN_EXCHANGE_ENABLED = os.environ.get(
+        "BROKER_TOKEN_EXCHANGE_ENABLED", "true"
+    ).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
     BROKER_TOKEN_ENDPOINT = os.environ.get(
         "BROKER_TOKEN_ENDPOINT",
         KEYCLOAK_TOKEN_URL,
@@ -86,7 +91,9 @@ class Config:
     BROKER_OAUTH_CLIENT_ID = os.environ.get("BROKER_OAUTH_CLIENT_ID", "teehr-api")
     BROKER_OAUTH_CLIENT_SECRET = os.environ.get("BROKER_OAUTH_CLIENT_SECRET", "")
     BROKER_TARGET_AUDIENCE = os.environ.get("BROKER_TARGET_AUDIENCE", "account")
-    BROKER_DEFAULT_SCOPE = os.environ.get("BROKER_DEFAULT_SCOPE", "openid profile email")
+    BROKER_DEFAULT_SCOPE = os.environ.get(
+        "BROKER_DEFAULT_SCOPE", "openid profile email"
+    )
     BROKER_MIN_TTL_SECONDS = int(os.environ.get("BROKER_MIN_TTL_SECONDS", "120"))
     BROKER_MAX_TTL_SECONDS = int(os.environ.get("BROKER_MAX_TTL_SECONDS", "900"))
     BROKER_REQUEST_TIMEOUT_SECONDS = int(
