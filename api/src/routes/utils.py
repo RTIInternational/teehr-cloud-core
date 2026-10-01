@@ -13,6 +13,17 @@ import geopandas as gpd
 from ..config import config
 
 
+# The OGC id column, where a collection has one, in order of preference. Tables
+# written by teehr >= 0.9 key locations on location_id; older ones (and tables
+# built from the crosswalk) use primary_location_id.
+ID_COLUMNS = ("location_id", "primary_location_id")
+
+
+def get_id_column(group_by: list[str]) -> str | None:
+    """Return the collection's id column, or None if it has none."""
+    return next((c for c in ID_COLUMNS if c in group_by), None)
+
+
 def prepare_for_serialization(
     df: pd.DataFrame,
     datetime_columns: list[str] | None = None,
@@ -178,10 +189,12 @@ def create_ogc_geojson_response(
     for feature in geojson.get("features", []):
         if "id" in feature.get("properties", {}):
             feature["id"] = feature["properties"].get("id")
-        if "location_id" in feature.get("properties", {}):
-            feature["id"] = feature["properties"].get("location_id")
+        # location_id (teehr >= 0.9) wins over primary_location_id, which is
+        # the location key in older tables.
         if "primary_location_id" in feature.get("properties", {}):
             feature["id"] = feature["properties"].get("primary_location_id")
+        if "location_id" in feature.get("properties", {}):
+            feature["id"] = feature["properties"].get("location_id")
 
     # Add timestamp
     geojson["timeStamp"] = datetime.now(UTC).isoformat()

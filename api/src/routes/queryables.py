@@ -19,8 +19,14 @@ from ..database import (
     trino_catalog,
     trino_schema,
 )
-from .filtering import build_equality_filter_conditions, verify_filtered_columns
-from .utils import prepare_for_serialization
+from .filtering import (
+    build_equality_filter_conditions,
+    get_filterable_columns,
+    resolve_column_alias,
+    resolve_filter_aliases,
+    verify_filtered_columns,
+)
+from .utils import get_id_column, prepare_for_serialization
 
 logger = logging.getLogger("teehr-api.queryables")
 
@@ -376,6 +382,7 @@ def get_metrics_table_queryables(table_name: str) -> dict:
             }
 
         # Add group_by fields
+        ogc_id_field = get_id_column(group_by)
         for field in group_by:
             # geometry is handled separately as a GeoJSON primary geometry;
             # avoid overwriting its schema with a generic string schema.
@@ -386,8 +393,8 @@ def get_metrics_table_queryables(table_name: str) -> dict:
                 "type": "string",
                 "x-teehr-role": "group_by",
             }
-            # Mark primary_location_id as the OGC id
-            if field == "primary_location_id":
+            # Mark the location id column as the OGC id
+            if field == ogc_id_field:
                 properties[field]["x-ogc-role"] = "id"
 
         # Add metric fields
@@ -513,9 +520,12 @@ def get_queryable_values(
 
     try:
         schema = _build_collection_schema(collection_id)
+        columns = get_filterable_columns(schema, default_to_properties=True)
+        property_name = resolve_column_alias(property_name, columns)
+        sanitized_property = sanitize_string(property_name)
         _validate_queryable_property(schema, property_name)
 
-        filters = dict(request.query_params.items())
+        filters = resolve_filter_aliases(dict(request.query_params.items()), columns)
         verify_filtered_columns(
             schema,
             list(filters.keys()),
