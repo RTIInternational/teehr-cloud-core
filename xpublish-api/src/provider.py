@@ -3,7 +3,10 @@ Xpublish data provider plugin for icechunk repos.
 
 Each discovered repo is exposed as two dataset IDs:
   - ``<name>``           -> /pyramids group (DataTree for TilesPlugin)
-  - ``<name>_raw_data``  -> /raw_data group (Dataset for CfEdrPlugin)
+  - ``<name>_raw_data``  -> the repo's data group (Dataset for CfEdrPlugin): the group named by
+    the root ``data_group`` attribute the ingest flow records, ``/raw_data`` or ``/references``.
+    Repos without it use ``/raw_data``. ``/references`` chunks are read from the source bucket,
+    so repos are opened with anonymous read access to their virtual chunk containers.
 
 Nothing touches S3 at import time.  Repos are discovered by listing the
 top-level prefixes under ``bucket/prefix`` on the first request and re-listed
@@ -22,6 +25,7 @@ from typing import Any
 
 import icechunk as ic
 import xarray as xr
+import zarr
 from pydantic import PrivateAttr
 from xpublish import Plugin, hookimpl
 from xpublish_tiles.multiscale import assign_leaf_xpublish_ids
@@ -29,6 +33,39 @@ from xpublish_tiles.multiscale import assign_leaf_xpublish_ids
 from .storage import build_s3_client, list_storage_prefixes
 
 logger = logging.getLogger(__name__)
+
+# Root-group attribute the ingest flow writes; must match the flow's DATA_GROUP_ATTR
+DATA_GROUP_ATTR = "data_group"
+DEFAULT_DATA_GROUP = "/raw_data"
+
+
+def _anonymous_credentials(url_prefix: str):
+    scheme = url_prefix.split("://", 1)[0]
+    if scheme in ("http", "https"):
+        return ic.credentials.HttpAccess
+    if scheme in ("gs", "gcs"):
+        return ic.Credentials.Gcs(ic.credentials.gcs_credentials(anonymous=True))
+    if scheme == "s3":
+        return ic.Credentials.S3(ic.credentials.s3_credentials(anonymous=True))
+    return None
+
+
+def _open_with_virtual_access(storage) -> ic.Repository:
+    """Open a repo with anonymous read access to its virtual chunk containers (e.g. NWM on GCS)."""
+    config = ic.Repository.fetch_config(storage)
+    containers = (config.virtual_chunk_containers if config else None) or {}
+    return ic.Repository.open(
+        storage,
+        authorize_virtual_chunk_access={prefix: _anonymous_credentials(prefix) for prefix in containers},
+    )
+
+
+def _data_group(store) -> str:
+    try:
+        attrs = zarr.open_group(store, mode="r", zarr_format=3).attrs
+    except (zarr.errors.GroupNotFoundError, FileNotFoundError):
+        return DEFAULT_DATA_GROUP
+    return attrs.get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
 
 
 @dataclass
@@ -231,7 +268,7 @@ class IcechunkDatasetProvider(Plugin):
             if dataset_id == cfg.name:
                 return cfg, "/pyramids"
             if dataset_id == f"{cfg.name}_raw_data":
-                return cfg, "/raw_data"
+                return cfg, "data"  # resolved to the repo's data group on load
         return None, ""
 
     def _open_repo(self, cfg: RepoConfig) -> ic.Repository:
@@ -242,7 +279,7 @@ class IcechunkDatasetProvider(Plugin):
                 if cfg.name not in self._repos:
                     storage = ic.s3_storage(bucket=cfg.bucket, prefix=cfg.prefix, **self._storage_kwargs)
                     _ensure_repo_initialized(storage, self.branch)
-                    self._repos[cfg.name] = ic.Repository.open(storage)
+                    self._repos[cfg.name] = _open_with_virtual_access(storage)
         return self._repos[cfg.name]
 
     def _load_datatree(self, dataset_id: str, cfg: RepoConfig, zarr_group: str) -> _CacheEntry:
@@ -259,7 +296,7 @@ class IcechunkDatasetProvider(Plugin):
             dt.attrs["_xpublish_id"] = dataset_id
             assign_leaf_xpublish_ids(dt)
         else:
-            ds = xr.open_zarr(session.store, group="/raw_data", consolidated=False)
+            ds = xr.open_zarr(session.store, group=_data_group(session.store), consolidated=False)
             if "time" in ds.dims:
                 ds = ds.sortby("time")
             dt = xr.DataTree(dataset=ds)
