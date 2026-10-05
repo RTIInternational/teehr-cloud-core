@@ -15,8 +15,9 @@ Environment variables:
   PMTILES_BUCKET         S3 bucket holding the .pmtiles vector-tile archives.
   PMTILES_PREFIX         Prefix within that bucket. Example: "vector-tiles"
   CORS_ORIGINS           Comma-separated list of allowed CORS origins
-  DATASET_CACHE_TTL      Seconds to cache dataset metadata before re-opening from icechunk
-                         (default: 60). Set to 0 to disable caching (re-open on every request).
+  DATASET_CACHE_TTL      Seconds between checks for a new snapshot on each dataset's branch;
+                         a dataset is re-opened only when the tip moved (default: 60).
+                         0 checks on every request.
   REPO_DISCOVERY_TTL     Seconds before re-listing {prefix} for new/removed repos
                          (default: DATASET_CACHE_TTL). Repos are discovered lazily on the
                          first request, so the app starts even with none present.

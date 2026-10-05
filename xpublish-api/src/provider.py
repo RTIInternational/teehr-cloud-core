@@ -12,9 +12,8 @@ Nothing touches S3 at import time.  Repos are discovered by listing the
 top-level prefixes under ``bucket/prefix`` on the first request and re-listed
 whenever ``discovery_ttl_seconds`` has elapsed, so a repo created by a Prefect
 ingest workflow after the pod started is picked up without a redeploy or
-restart.  Datasets themselves are loaded lazily and cached for
-``cache_ttl_seconds``; after that TTL the next request re-opens a fresh
-icechunk readonly session so newly written snapshots become visible.
+restart.  Datasets are loaded lazily and cached; every ``cache_ttl_seconds``
+the branch tip is checked and a dataset is re-opened only if it moved.
 """
 
 import logging
@@ -83,10 +82,11 @@ class _CacheEntry:
     # Python session object is GC'd before the entry expires, the underlying
     # Rust session could be dropped, causing a dangling pointer on next access.
     session: Any
-    loaded_at: float = field(default_factory=time.monotonic)
+    snapshot_id: str
+    checked_at: float = field(default_factory=time.monotonic)
 
-    def is_fresh(self, ttl: float) -> bool:
-        return (time.monotonic() - self.loaded_at) < ttl
+    def is_checked(self, ttl: float) -> bool:
+        return (time.monotonic() - self.checked_at) < ttl
 
 
 def _ensure_repo_initialized(storage, branch: str) -> None:
@@ -121,9 +121,9 @@ class IcechunkDatasetProvider(Plugin):
     xpublish resolves dataset IDs dynamically on each request.  Repos are
     discovered from ``bucket/prefix`` and re-listed on the
     ``discovery_ttl_seconds`` interval; repository objects are then cached for
-    the lifetime of the plugin, and DataTree/Dataset objects for
-    ``cache_ttl_seconds``.  Both layers refresh on their own so that new repos
-    and new snapshots appear without a pod restart.
+    the lifetime of the plugin, and DataTree/Dataset objects until their
+    branch tip moves (checked every ``cache_ttl_seconds``).  New repos and new
+    snapshots appear without a pod restart.
     """
 
     name: str = "icechunk-dataset-provider"
@@ -138,6 +138,7 @@ class IcechunkDatasetProvider(Plugin):
     _discovered_at: float | None = PrivateAttr(default=None)
     _repos: dict = PrivateAttr(default_factory=dict)
     _cache: dict = PrivateAttr(default_factory=dict)
+    _dataset_locks: dict = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _discovery_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
@@ -163,6 +164,7 @@ class IcechunkDatasetProvider(Plugin):
         self._discovered_at = None
         self._repos = {}
         self._cache = {}
+        self._dataset_locks = {}
         self._lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self._discovery_lock = threading.Lock()
@@ -179,18 +181,17 @@ class IcechunkDatasetProvider(Plugin):
     def _evict(self, names: set[str]) -> None:
         """Drop cached repos and datasets for repos that are no longer present.
 
-        The two locks are taken one after another rather than nested: the read
-        path holds ``_cache_lock`` while acquiring ``_lock`` (via
-        ``_open_repo``), so nesting them the other way round here could
-        deadlock.
+        The two locks are taken one after another, never nested, so this can't
+        deadlock with a load (which holds a dataset lock, then ``_lock``).
         """
         with self._lock:
             for name in names:
                 self._repos.pop(name, None)
         with self._cache_lock:
             for name in names:
-                self._cache.pop(name, None)
-                self._cache.pop(f"{name}_raw_data", None)
+                for dataset_id in (name, f"{name}_raw_data"):
+                    self._cache.pop(dataset_id, None)
+                    self._dataset_locks.pop(dataset_id, None)
 
     def _repo_configs_fresh(self) -> bool:
         if self._discovered_at is None:
@@ -282,9 +283,8 @@ class IcechunkDatasetProvider(Plugin):
                     self._repos[cfg.name] = _open_with_virtual_access(storage)
         return self._repos[cfg.name]
 
-    def _load_datatree(self, dataset_id: str, cfg: RepoConfig, zarr_group: str) -> _CacheEntry:
-        repo = self._open_repo(cfg)
-        session = repo.readonly_session(self.branch)
+    def _load_datatree(self, dataset_id: str, repo: ic.Repository, zarr_group: str, snapshot_id: str) -> _CacheEntry:
+        session = repo.readonly_session(snapshot_id=snapshot_id)
         if zarr_group == "/pyramids":
             dt = xr.open_datatree(
                 session.store,
@@ -296,13 +296,26 @@ class IcechunkDatasetProvider(Plugin):
             dt.attrs["_xpublish_id"] = dataset_id
             assign_leaf_xpublish_ids(dt)
         else:
-            ds = xr.open_zarr(session.store, group=_data_group(session.store), consolidated=False)
-            if "time" in ds.dims:
+            # Lazy without dask (one task per chunk made point queries slow);
+            # cache=False so a full read is never pinned in the cached dataset
+            ds = xr.open_dataset(
+                session.store,
+                engine="zarr",
+                group=_data_group(session.store),
+                consolidated=False,
+                chunks=None,
+                cache=False,
+            )
+            if "time" in ds.dims and not ds.indexes["time"].is_monotonic_increasing:
                 ds = ds.sortby("time")
             dt = xr.DataTree(dataset=ds)
             dt.attrs["_xpublish_id"] = dataset_id
         dt._icechunk_session = session  # Anchors session to dt so it outlives the _CacheEntry on cache refresh
-        return _CacheEntry(datatree=dt, session=session)
+        return _CacheEntry(datatree=dt, session=session, snapshot_id=snapshot_id)
+
+    def _dataset_lock(self, dataset_id: str) -> threading.Lock:
+        with self._cache_lock:
+            return self._dataset_locks.setdefault(dataset_id, threading.Lock())
 
     def get_datatree_for_dataset(self, dataset_id: str) -> xr.DataTree | None:
         """Return a (possibly cached) DataTree for the given dataset_id.
@@ -315,13 +328,29 @@ class IcechunkDatasetProvider(Plugin):
         if cfg is None:
             return None
         entry = self._cache.get(dataset_id)
-        if entry is None or not entry.is_fresh(self.cache_ttl_seconds):
-            with self._cache_lock:
-                entry = self._cache.get(dataset_id)
-                if entry is None or not entry.is_fresh(self.cache_ttl_seconds):
-                    logger.info("Loading dataset '%s' from icechunk (cache miss or TTL expired)", dataset_id)
-                    self._cache[dataset_id] = self._load_datatree(dataset_id, cfg, zarr_group)
-        return self._cache[dataset_id].datatree
+        if entry is not None and entry.is_checked(self.cache_ttl_seconds):
+            return entry.datatree
+        # Per-dataset lock: different datasets load in parallel, the same one loads once
+        with self._dataset_lock(dataset_id):
+            entry = self._cache.get(dataset_id)
+            if entry is not None and entry.is_checked(self.cache_ttl_seconds):
+                return entry.datatree
+            repo = self._open_repo(cfg)
+            try:
+                tip = repo.lookup_branch(self.branch)
+            except Exception:
+                if entry is None:
+                    raise
+                logger.warning("Branch lookup failed for '%s'; serving cached snapshot", dataset_id, exc_info=True)
+                entry.checked_at = time.monotonic()
+                return entry.datatree
+            if entry is not None and entry.snapshot_id == tip:
+                entry.checked_at = time.monotonic()
+                return entry.datatree
+            logger.info("Loading dataset '%s' at snapshot %s", dataset_id, tip)
+            entry = self._load_datatree(dataset_id, repo, zarr_group, tip)
+            self._cache[dataset_id] = entry
+            return entry.datatree
 
     @hookimpl
     def get_datasets(self) -> list[str]:
