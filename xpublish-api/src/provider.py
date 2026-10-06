@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import icechunk as ic
+import numpy as np
 import xarray as xr
 import zarr
 from pydantic import PrivateAttr
@@ -36,6 +37,18 @@ logger = logging.getLogger(__name__)
 # Root-group attribute the ingest flow writes; must match the flow's DATA_GROUP_ATTR
 DATA_GROUP_ATTR = "data_group"
 DEFAULT_DATA_GROUP = "/raw_data"
+# Per-step status the ingest flow writes along its time grid; -1 marks a slot not yet written
+STATUS_COORD = "status"
+UNWRITTEN = -1
+
+
+def written_coord_values(ds: xr.Dataset, coord_name: str) -> np.ndarray:
+    """A coordinate's values, without time-grid slots not yet written; unchanged for repos without status."""
+    values = ds.coords[coord_name].values
+    status = ds.coords.get(STATUS_COORD)
+    if status is not None and status.dims == (coord_name,):
+        values = values[status.values != UNWRITTEN]
+    return values
 
 
 def _anonymous_credentials(url_prefix: str):

@@ -53,7 +53,7 @@ from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
 from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
-from .provider import IcechunkDatasetProvider
+from .provider import IcechunkDatasetProvider, written_coord_values
 from .storage import build_storage_kwargs, resolve_icechunk_location
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,8 @@ def build_app() -> FastAPI:
         ds = raw_dt.dataset
         if coord_name not in ds.coords:
             raise HTTPException(status_code=404, detail=f"Coordinate '{coord_name}' not found")
-        values = ds.coords[coord_name].values
+        # Time-grid slots not yet written have no data to show
+        values = written_coord_values(ds, coord_name)
         if values.ndim != 1:
             values = values.ravel()
         serialized = [
