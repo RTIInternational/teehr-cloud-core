@@ -85,6 +85,9 @@ spec:
             configMapKeyRef:
               name: xpublish-api-config
               key: KEYCLOAK_ALLOWED_AUDIENCES
+        # Parallel chunk reads per request; 32 halved point-timeseries reads vs the default 10
+        - name: ZARR_ASYNC__CONCURRENCY
+          value: "32"
         # Local S3 credentials for kind — same secret used cluster-wide.
         # Remote/prod: omitted; use IRSA to grant S3 access via service account.
         ${if environment.name == "local"}
