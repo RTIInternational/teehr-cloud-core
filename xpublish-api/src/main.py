@@ -201,9 +201,17 @@ def build_app() -> FastAPI:
         logger.info("Vector tile layers: %s", [item["id"] for item in items])
         return {"items": items}
 
-    # --- api_app middleware (gzip only; CORS is on the outer app) ---
+    # --- api_app middleware (gzip, tile caching; CORS is on the outer app) ---
 
     api_app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    # A tile URL pins dataset, date and style, so the browser can reuse it briefly
+    @api_app.middleware("http")
+    async def tile_cache_headers(request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code == 200 and "/tiles/" in request.url.path:
+            response.headers.setdefault("Cache-Control", "private, max-age=300")
+        return response
 
     # --- Outer app ---
 
