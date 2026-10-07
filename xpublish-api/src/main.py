@@ -15,8 +15,9 @@ Environment variables:
   PMTILES_BUCKET         S3 bucket holding the .pmtiles vector-tile archives.
   PMTILES_PREFIX         Prefix within that bucket. Example: "vector-tiles"
   CORS_ORIGINS           Comma-separated list of allowed CORS origins
-  DATASET_CACHE_TTL      Seconds to cache dataset metadata before re-opening from icechunk
-                         (default: 60). Set to 0 to disable caching (re-open on every request).
+  DATASET_CACHE_TTL      Seconds between checks for a new snapshot on each dataset's branch;
+                         a dataset is re-opened only when the tip moved (default: 60).
+                         0 checks on every request.
   REPO_DISCOVERY_TTL     Seconds before re-listing {prefix} for new/removed repos
                          (default: DATASET_CACHE_TTL). Repos are discovered lazily on the
                          first request, so the app starts even with none present.
@@ -52,7 +53,7 @@ from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
 from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
-from .provider import IcechunkDatasetProvider
+from .provider import IcechunkDatasetProvider, written_coord_values
 from .storage import build_storage_kwargs, resolve_icechunk_location
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,8 @@ def build_app() -> FastAPI:
         ds = raw_dt.dataset
         if coord_name not in ds.coords:
             raise HTTPException(status_code=404, detail=f"Coordinate '{coord_name}' not found")
-        values = ds.coords[coord_name].values
+        # Time-grid slots not yet written have no data to show
+        values = written_coord_values(ds, coord_name)
         if values.ndim != 1:
             values = values.ravel()
         serialized = [
@@ -199,9 +201,17 @@ def build_app() -> FastAPI:
         logger.info("Vector tile layers: %s", [item["id"] for item in items])
         return {"items": items}
 
-    # --- api_app middleware (gzip only; CORS is on the outer app) ---
+    # --- api_app middleware (gzip, tile caching; CORS is on the outer app) ---
 
     api_app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    # A tile URL pins dataset, date and style, so the browser can reuse it briefly
+    @api_app.middleware("http")
+    async def tile_cache_headers(request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code == 200 and "/tiles/" in request.url.path:
+            response.headers.setdefault("Cache-Control", "private, max-age=300")
+        return response
 
     # --- Outer app ---
 

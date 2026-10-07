@@ -85,6 +85,18 @@ spec:
             configMapKeyRef:
               name: xpublish-api-config
               key: KEYCLOAK_ALLOWED_AUDIENCES
+        # Parallel chunk reads per request; 32 halved point-timeseries reads vs the default 10
+        - name: ZARR_ASYNC__CONCURRENCY
+          value: "32"
+        # numba (tbb layer) otherwise starts one thread per node core; match the CPU limit
+        - name: NUMBA_NUM_THREADS
+          value: "2"
+        # One grid per pyramid level and variable; the default 16 is fewer than our levels
+        - name: XPUBLISH_TILES_GRID_CACHE_MAX_SIZE
+          value: "64"
+        # Tile data loads in flight at once (default 4); a map view requests 15-20 tiles together
+        - name: XPUBLISH_TILES_NUM_CONCURRENT_DATA_LOADS
+          value: "8"
         # Local S3 credentials for kind — same secret used cluster-wide.
         # Remote/prod: omitted; use IRSA to grant S3 access via service account.
         ${if environment.name == "local"}
