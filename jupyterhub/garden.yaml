@@ -40,6 +40,32 @@ spec:
       #   teehr-hub/nodegroup-name: core-a
       # baseUrl: /jupyter
 
+      # Shows the message from the platform status.json (served outside the
+      # cluster) as a hub announcement. statusUrl is unset in deployments
+      # without one, which leaves the page unchanged.
+      extraFiles:
+        status-banner-template:
+          mountPath: /usr/local/share/jupyterhub/custom_templates/page.html
+          stringData: |
+            {% extends "templates/page.html" %}
+            {% block announcement %}
+              {{ super() }}
+              {% if teehr_status_url %}
+                <div id="teehr-status-banner" class="container text-center announcement alert alert-warning" style="display: none"></div>
+                <script>
+                  fetch({{ teehr_status_url | tojson }}, { cache: "no-store" })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (s) {
+                      if (s && s.message) {
+                        var el = document.getElementById("teehr-status-banner");
+                        el.textContent = s.message;
+                        el.style.display = "";
+                      }
+                    })
+                    .catch(function () {});
+                </script>
+              {% endif %}
+            {% endblock announcement %}
       config:
         GenericOAuthenticator:
           login_service: Keycloak
@@ -142,6 +168,9 @@ spec:
           c.MappingKernelManager.cull_idle_timeout = 3600
           c.MappingKernelManager.cull_connected = True
           c.MappingKernelManager.cull_busy = False
+        status-banner: |
+          c.JupyterHub.template_paths = ["/usr/local/share/jupyterhub/custom_templates"]
+          c.JupyterHub.template_vars = {"teehr_status_url": "${var.statusUrl || ''}"}
 
     singleuser:
       image:
@@ -259,6 +288,32 @@ spec:
     hub:
       nodeSelector:
         teehr-hub/nodegroup-name: core-a
+      # Shows the message from the platform status.json (served outside the
+      # cluster) as a hub announcement. statusUrl is unset in deployments
+      # without one, which leaves the page unchanged.
+      extraFiles:
+        status-banner-template:
+          mountPath: /usr/local/share/jupyterhub/custom_templates/page.html
+          stringData: |
+            {% extends "templates/page.html" %}
+            {% block announcement %}
+              {{ super() }}
+              {% if teehr_status_url %}
+                <div id="teehr-status-banner" class="container text-center announcement alert alert-warning" style="display: none"></div>
+                <script>
+                  fetch({{ teehr_status_url | tojson }}, { cache: "no-store" })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (s) {
+                      if (s && s.message) {
+                        var el = document.getElementById("teehr-status-banner");
+                        el.textContent = s.message;
+                        el.style.display = "";
+                      }
+                    })
+                    .catch(function () {});
+                </script>
+              {% endif %}
+            {% endblock announcement %}
       config:
         GenericOAuthenticator:
           login_service: Keycloak
@@ -360,6 +415,9 @@ spec:
           c.MappingKernelManager.cull_idle_timeout = 3600
           c.MappingKernelManager.cull_connected = True
           c.MappingKernelManager.cull_busy = False
+        status-banner: |
+          c.JupyterHub.template_paths = ["/usr/local/share/jupyterhub/custom_templates"]
+          c.JupyterHub.template_vars = {"teehr_status_url": "${var.statusUrl || ''}"}
 
     singleuser:
       image:
