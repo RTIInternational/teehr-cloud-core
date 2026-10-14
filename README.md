@@ -94,6 +94,15 @@ The deployment process create 2 users as described in `docs/access-control-matri
 | Admin test user | admin | admin |basic-user, iceberg-user, jupyter-admin, key-management-admin, prefect-admin, webapi-admin |
 | Regular test user | user | user |basic-user, jupyter-user |
 
+### Export Keycloak Users
+`scripts/export-keycloak-users.sh` writes a CSV of realm users (e.g. for announcement emails). It's read-only: it reads `keycloak-admin-secrets`, port-forwards to Keycloak, and calls the Admin REST API.
+
+```bash
+CONTEXT=<kube-context> INCLUDE_GROUPS=true ./scripts/export-keycloak-users.sh > users.csv
+```
+
+By default it lists only enabled users with an email; set `ALL_USERS=true` for everyone. To list only members of certain groups, set `GROUP_FILTER` to a comma-separated list, e.g. `GROUP_FILTER=jupyter-user,jupyter-admin`. Other settings: `NAMESPACE` (default `teehr-hub`) and `REALM` (default `teehr`). The CSV contains personal data, so don't commit it.
+
 
 ### Load Test Data to Warehouse
 Loading data is a little fractured depending on what data you are loading.  For the purpose of developing there are 2 different types of data that can be loaded. Regardless, you first need to create an Iceberg warehouse in the KinD cluster, then load some data.
