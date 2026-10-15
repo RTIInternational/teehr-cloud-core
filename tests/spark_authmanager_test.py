@@ -63,7 +63,7 @@ os.environ.setdefault("REMOTE_CATALOG_S3_ENDPOINT", "http://local-s3:9000")
 os.environ.setdefault("REMOTE_CATALOG_S3_PATH_STYLE_ACCESS", "true")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "localadmin")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "localadmin123")
-os.environ.setdefault("AWS_REGION", "us-east-2")
+os.environ.setdefault("AWS_REGION", "us-east-1")
 # Broker and OAuth endpoints
 os.environ.setdefault("POLARIS_BROKER_URL", "http://teehr-api:8000/auth/polaris-token")
 os.environ.setdefault(

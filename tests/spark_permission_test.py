@@ -27,7 +27,7 @@ os.environ.setdefault("REMOTE_CATALOG_S3_ENDPOINT", "http://local-s3:9000")
 os.environ.setdefault("REMOTE_CATALOG_S3_PATH_STYLE_ACCESS", "true")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "localadmin")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "localadmin123")
-os.environ.setdefault("AWS_REGION", "us-east-2")
+os.environ.setdefault("AWS_REGION", "us-east-1")
 # Set JVM heap size BEFORE PySpark initializes the JVM - must use JAVA_TOOL_OPTIONS
 # spark.driver.memory config is ignored if JVM heap is already too small
 os.environ["JAVA_TOOL_OPTIONS"] = "-Xmx1g"
