@@ -39,7 +39,10 @@ environments:
 
 A target file is a Garden varfile. It is deep-merged over the project and environment variables and takes
 precedence over the environment's `variables`, so it only needs the keys that differ between clusters.
-Committing target files is fine; they hold ARNs and names, not secrets. Secrets stay in
+Templates in the environment's `variables` (e.g. `catalogS3Region: ${var.aws.region}`) are resolved against the
+project-level `variables` before the target file is merged in. Don't give a key a project-level default if a
+target sets it; put local defaults in the local environment instead. Committing target files is fine; they hold
+ARNs and names, not secrets. Secrets stay in
 `secrets/secrets.remote.yaml`.
 
 ### Required Keys
