@@ -2,7 +2,7 @@
 
 This document summarizes how access is currently enforced across services in this repository.
 
-Last updated: 2026-07-30
+Last updated: 2026-10-16
 
 ## Identity Model
 
@@ -22,6 +22,7 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 | basic-user | basic-user | None |
 | teehr-read-only | teehr-read-only | None |
 | teehr-read-write | teehr-read-write, teehr-read-only | None |
+| icechunk-read-only | icechunk-read-only | None |
 | jupyter-user | jupyter-user | None |
 | jupyter-admin | jupyter-user | None |
 | key-management-admin | admin | None |
@@ -43,6 +44,8 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 | Iceberg catalog (Polaris) — JupyterHub users | Polaris principal roles via JWT **groups** claim | Groups: teehr-read-only, teehr-read-write, iceberg-catalog-admins | JWT group → Polaris principal role mapping; no per-user sync needed |
 | Iceberg catalog (Polaris) — service accounts | Polaris principal roles via JWT **realm_access/roles** claim | Realm roles: iceberg-catalog-admin (trino-polaris), teehr-read-write (prefect-polaris) | Service account JWTs carry the realm role assigned to the Keycloak service account user |
 | Iceberg catalog (Polaris) — namespace privileges | Polaris catalog role grants on `teehr` namespace | Polaris principal roles | See `polaris-access-control.md` for the full privilege matrix |
+| Gridded dashboard (Icechunk repos, vector-tile layers) | xpublish-api middleware and filtered listings | Realm roles via `xpublish.accessRules` | Unlisted repos and layers: users in icechunk-read-only (a default group, so all new users). Listed ones: only users holding a listed role. See `icechunk-access-control.md` |
+| Icechunk repos from notebooks | xpublish-api `POST /api/auth/icechunk-credentials` (STS session policy on remote) | Realm roles via `xpublish.accessRules` | Same as the gridded dashboard; read-only, 15-minute credentials |
 | Trino queries | Trino access-control rules.json | Catalog: iceberg read-only | All Trino queries restricted to read-only regardless of user identity |
 
 ## Important Notes
@@ -51,16 +54,18 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 2. Prefect is intentionally stricter: it checks membership in the prefect-admin group directly, not just the admin role.
 3. JupyterHub authorization is also group-based, not based on the admin realm role.
 4. Polaris access is now centered on a single `iceberg.teehr` namespace with default read-only access for all users.
+5. Icechunk access is separate from Polaris: `icechunk-read-only` and `teehr-read-only` are both in the realm's `defaultGroups`, so new users get both, but either can be removed on its own.
 
 ## Local Test Users
 
-Local environments now seed three Keycloak users automatically via a local-only bootstrap job:
+Local environments now seed four Keycloak users automatically via a local-only bootstrap job:
 
 | User type | Default username | Default password | Group membership |
 |---|---|---|---|
-| Admin test user | admin | admin |basic-user, teehr-read-only, teehr-read-write, jupyter-admin, key-management-admin, prefect-admin, webapi-admin |
-| PowerUser test user | poweruser | poweruser |basic-user, teehr-read-write, jupyter-user |
-| Regular test user | user | user |basic-user, teehr-read-only, jupyter-user |
+| Admin test user | admin | admin |basic-user, teehr-read-only, teehr-read-write, icechunk-read-only, jupyter-admin, key-management-admin, prefect-admin, webapi-admin |
+| PowerUser test user | poweruser | poweruser |basic-user, teehr-read-write, icechunk-read-only, jupyter-user |
+| Regular test user | user | user |basic-user, teehr-read-only, icechunk-read-only, jupyter-user |
+| No-data test user | noaccess | noaccess |basic-user, jupyter-user (no data roles, for deny tests) |
 
 To add more personas as permissions evolve, update user entries and group assignments in `keycloak-bootstrap/manifests/local-users-configmap.yaml.tpl`.
 
@@ -75,4 +80,6 @@ To add more personas as permissions evolve, update user entries and group assign
 - Prefect groups claim source: [prefect-server/manifests/oauth2-proxy.yaml.tpl](../prefect-server/manifests/oauth2-proxy.yaml.tpl#L166)
 - JupyterHub allowed groups: [jupyterhub/garden.yaml](../jupyterhub/garden.yaml#L57)
 - JupyterHub admin groups: [jupyterhub/garden.yaml](../jupyterhub/garden.yaml#L68)
+- Icechunk access rules: [xpublish-api/src/authz.py](../xpublish-api/src/authz.py)
+- Icechunk credential vending: [xpublish-api/src/credentials.py](../xpublish-api/src/credentials.py)
 - Iceberg REST auth status in plan: [plan.md](../plan.md#L46)

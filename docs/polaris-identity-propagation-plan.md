@@ -1,6 +1,6 @@
 # TEEHR Hub Identity Propagation and Fine-Grained Data Authorization Plan
 
-Last updated: 2026-07-30
+Last updated: 2026-10-16
 
 > **Status: Flow A implemented and tested.** Flow B (Trino with user identity propagation) pending.
 >
@@ -11,10 +11,10 @@ Last updated: 2026-07-30
 > - Per-user Polaris permission enforcement verified by integration tests (`garden test`)
 > - Three tiers: `teehr-read-only`, `teehr-read-write`, `iceberg-catalog-admin`
 > - Service accounts: `trino-polaris` (admin) and `prefect-polaris` (read-write) via Keycloak realm role → Polaris mapping
+> - Pattern C: Polaris vends scoped, short-lived S3 credentials (see [`iceberg-auth-storage-roadmap.md`](./iceberg-auth-storage-roadmap.md)); xpublish-api vends per-user Icechunk credentials to notebooks (see [`icechunk-authorization-plan.md`](./icechunk-authorization-plan.md))
 >
 > **Pending:**
 > - Flow B: Trino user identity propagation (currently uses `trino-polaris` service account for all queries)
-> - Pattern C: S3 credential vending per user (currently shared MinIO/S3 credentials)
 > - Per-user table-level grants via optional principal sync
 >
 > See [`polaris-access-control.md`](./polaris-access-control.md) for the current design.

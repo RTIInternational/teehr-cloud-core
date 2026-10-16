@@ -1,6 +1,9 @@
-# Polaris Integration Tests
+# Platform Integration Tests
 
-This directory contains **Python-based integration tests** for the Polaris + Keycloak + Spark ecosystem running in KinD.
+This directory contains **Python-based integration tests** running in KinD for:
+
+- the Polaris + Keycloak + Spark ecosystem (Iceberg access);
+- xpublish-api's Icechunk access rules.
 
 ## Test Files
 
@@ -65,6 +68,7 @@ garden test
 garden test polaris-keycloak-users
 garden test polaris-oidc-token-validation
 garden test spark-session-auth
+garden test xpublish-access-enforcement
 ```
 
 ### Run tests locally (for development):
@@ -76,6 +80,8 @@ python3 tests/polaris_namespace_test.py
 python3 tests/polaris_roles_test.py
 python3 tests/spark_session_auth_test.py
 ```
+
+`xpublish_access_test.py` needs in-cluster service names and xpublish-api's ConfigMap values, so run it through Garden.
 
 ### Run tests with verbose output:
 ```bash
@@ -91,6 +97,8 @@ Garden automatically resolves dependencies. The test order is:
 3. `polaris-namespace-list` (runs after `deploy.polaris-bootstrap`)
 4. `polaris-role-acl-validation` (runs after `deploy.polaris-bootstrap`)
 5. `spark-session-auth` (runs after `deploy.polaris-bootstrap` and `deploy.spark`)
+
+`xpublish-access-enforcement` is independent of the Polaris tests; it runs after `deploy.xpublish-api` and `deploy.keycloak-local-users-bootstrap`.
 
 ## Future Tests
 
