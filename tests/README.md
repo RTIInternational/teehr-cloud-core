@@ -9,6 +9,7 @@ This directory contains **Python-based integration tests** for the Polaris + Key
 - `polaris_namespace_test.py` — Validates namespace provisioning
 - `polaris_roles_test.py` — Validates role-based access control setup
 - `spark_session_auth_test.py` — Validates Spark session creation and write permissions
+- `xpublish_access_test.py` — Validates Icechunk access rules enforced by xpublish-api
 
 ## What These Tests Do
 
@@ -41,6 +42,16 @@ These are **end-to-end integration tests** that validate:
    - Read-only user can list tables in `iceberg.teehr` namespace
    - Poweruser **can create tables** in `iceberg.teehr` namespace
    - Read-only user **cannot create tables** (write denied)
+
+6. **Icechunk Access Rules** (`xpublish-access-enforcement`)
+   - Creates two throwaway repos, `authz_test_open` and `authz_test_restricted`, and deletes them afterwards
+   - For `admin`, `poweruser`, `user` and `noaccess`: dataset listings, dataset routes (and `_raw_data` ids),
+     the notebook credentials route and vector-tile listings match the deployed rules (xpublish-api's
+     `TEEHR_ACCESS_RULES`)
+   - `noaccess` has no data roles; no token or a malformed token is 401; `/health` lists no datasets;
+     `GET /api/datasets` and unrecognised dataset routes are 403; anonymous S3 reads fail
+   - To exercise a restriction, the deployment's local rules should restrict `authz_test_restricted`
+     (e.g. to `["admin"]`); otherwise those checks are skipped
 
 ## Running the Tests
 
