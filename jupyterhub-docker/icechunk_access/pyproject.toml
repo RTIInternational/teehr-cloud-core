@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teehr-icechunk-access"
+version = "0.1.0"
+description = "Open the Icechunk repos a TEEHR JupyterHub user may read"
+requires-python = ">=3.11"
+# Installed with --no-deps: icechunk, requests, xarray and teehr come from the image. Listing them
+# here could let pip replace the image's pinned versions (teehr is installed from git).
+dependencies = []
+
+[tool.setuptools]
+py-modules = ["icechunk_access"]
