@@ -34,6 +34,7 @@ class AuthIdentity:
     auth_type: str
     roles: list[str] = field(default_factory=list)
     scopes: list[str] = field(default_factory=list)
+    preferred_username: str | None = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -128,6 +129,7 @@ class KeycloakJWTValidator:
                 auth_type="jwt",
                 roles=claims.get("realm_access", {}).get("roles", []),
                 scopes=claims.get("scope", "").split() if claims.get("scope") else [],
+                preferred_username=claims.get("preferred_username"),
             )
         except httpx.HTTPError as exc:
             logger.error("Keycloak connectivity error during token validation: %s", str(exc))
