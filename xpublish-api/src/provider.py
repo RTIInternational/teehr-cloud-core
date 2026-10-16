@@ -19,6 +19,7 @@ the branch tip is checked and a dataset is re-opened only if it moved.
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -155,6 +156,7 @@ class IcechunkDatasetProvider(Plugin):
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _discovery_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    _on_repos_changed: Callable[[list[str]], None] | None = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -164,6 +166,7 @@ class IcechunkDatasetProvider(Plugin):
         branch: str = "main",
         cache_ttl_seconds: float = 60.0,
         discovery_ttl_seconds: float = 60.0,
+        on_repos_changed: Callable[[list[str]], None] | None = None,
     ):
         super().__init__(
             branch=branch,
@@ -181,6 +184,8 @@ class IcechunkDatasetProvider(Plugin):
         self._lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self._discovery_lock = threading.Lock()
+        # Called with the repo names whenever the set changes, e.g. to check access rules against them
+        self._on_repos_changed = on_repos_changed
 
     # --- Repo discovery ---
 
@@ -262,6 +267,8 @@ class IcechunkDatasetProvider(Plugin):
             if removed:
                 logger.info("Icechunk repo(s) no longer present, evicting: %s", sorted(removed))
                 self._evict(removed)
+            if self._on_repos_changed and (first_discovery or added or removed):
+                self._on_repos_changed(sorted(current))
 
         return self._repo_configs
 

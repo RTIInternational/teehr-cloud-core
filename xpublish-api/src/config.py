@@ -12,6 +12,8 @@ class Config:
     KEYCLOAK_ALLOWED_AUDIENCES: str = os.getenv(
         "KEYCLOAK_ALLOWED_AUDIENCES", "teehr-frontend"
     )
+    # Read access by Keycloak realm role (JSON); parsed and validated in authz.parse_access_rules
+    TEEHR_ACCESS_RULES: str = os.getenv("TEEHR_ACCESS_RULES", "{}")
 
 
 config = Config()

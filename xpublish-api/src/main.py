@@ -52,6 +52,8 @@ from xpublish_tiles import lib as xpublish_tiles_lib
 from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
+from .authz import parse_access_rules, unmatched
+from .config import config
 from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
 from .provider import IcechunkDatasetProvider, written_coord_values
 from .storage import build_storage_kwargs, resolve_icechunk_location
@@ -82,6 +84,14 @@ def build_app() -> FastAPI:
     storage_mode = os.getenv("ICECHUNK_STORAGE_MODE", "remote")
     cache_ttl = float(os.getenv("DATASET_CACHE_TTL", "60"))
     discovery_ttl = float(os.getenv("REPO_DISCOVERY_TTL", str(cache_ttl)))
+    # Invalid rules fail startup rather than silently changing who can read a repo
+    access_rules = parse_access_rules(config.TEEHR_ACCESS_RULES)
+    logger.info(
+        "Access rules: default=%s | restricted repos: %s | restricted layers: %s",
+        list(access_rules.default) if access_rules.default is not None else "none (open to logged-in users)",
+        sorted(access_rules.items["icechunk"]),
+        sorted(access_rules.items["vector_tiles"]),
+    )
 
     # Only the configuration is resolved here — repos are discovered lazily by
     # the provider, so the app starts before storage is reachable or populated.
@@ -99,6 +109,12 @@ def build_app() -> FastAPI:
         discovery_ttl,
     )
 
+    def warn_unmatched_repo_rules(repo_names: list[str]) -> None:
+        # A misspelled restriction matches nothing and leaves the real repo readable by default
+        missing = unmatched(access_rules, "icechunk", repo_names)
+        if missing:
+            logger.warning("Access rules name icechunk repo(s) that don't exist: %s", missing)
+
     provider = IcechunkDatasetProvider(
         bucket=bucket,
         prefix=prefix,
@@ -106,6 +122,7 @@ def build_app() -> FastAPI:
         branch=branch,
         cache_ttl_seconds=cache_ttl,
         discovery_ttl_seconds=discovery_ttl,
+        on_repos_changed=warn_unmatched_repo_rules,
     )
 
     rest = xpublish.Rest(

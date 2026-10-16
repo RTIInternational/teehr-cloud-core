@@ -26,6 +26,7 @@ data:
           "groups": [
             "/basic-user",
             "/teehr-read-only",
+            "/icechunk-read-only",
             "/teehr-read-write",
             "/iceberg-catalog-admins",
             "/jupyter-admin",
@@ -51,6 +52,7 @@ data:
           "groups": [
             "/basic-user",
             "/teehr-read-only",
+            "/icechunk-read-only",
             "/jupyter-user"
           ]
         },
@@ -71,6 +73,26 @@ data:
           "groups": [
             "/basic-user",
             "/teehr-read-write",
+            "/icechunk-read-only",
+            "/jupyter-user"
+          ]
+        },
+        {
+          "username": "noaccess",
+          "enabled": true,
+          "email": "noaccess@example.local",
+          "emailVerified": true,
+          "firstName": "Local",
+          "lastName": "NoAccess",
+          "credentials": [
+            {
+              "type": "password",
+              "value": "noaccess",
+              "temporary": false
+            }
+          ],
+          "groups": [
+            "/basic-user",
             "/jupyter-user"
           ]
         }
