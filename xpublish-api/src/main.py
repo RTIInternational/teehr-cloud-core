@@ -39,10 +39,13 @@ Environment variables:
 
 import logging
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 import numpy as np
 import xpublish
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -54,6 +57,16 @@ from xpublish_tiles.xpublish.tiles import TilesPlugin
 from .auth import KeycloakJWTValidator, resolve_identity
 from .authz import is_permitted, is_request_permitted, parse_access_rules, unmatched
 from .config import config
+from .credentials import (
+    CREDENTIALS_TTL_SECONDS,
+    IcechunkCredentialsResponse,
+    PolicyTooLargeError,
+    S3SessionCredentials,
+    build_session_policy,
+    policy_for,
+    session_name,
+    vend_credentials,
+)
 from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
 from .provider import IcechunkDatasetProvider, written_coord_values
 from .storage import build_storage_kwargs, resolve_icechunk_location
@@ -92,6 +105,9 @@ def build_app() -> FastAPI:
         sorted(access_rules.items["icechunk"]),
         sorted(access_rules.items["vector_tiles"]),
     )
+    # STS on without a role to assume is a misconfiguration; fail now rather than on the first notebook
+    if not config.ICECHUNK_STS_UNAVAILABLE and not config.ICECHUNK_ACCESS_ROLE_ARN:
+        raise RuntimeError("ICECHUNK_ACCESS_ROLE_ARN is required when ICECHUNK_STS_UNAVAILABLE is false")
 
     # Only the configuration is resolved here — repos are discovered lazily by
     # the provider, so the app starts before storage is reachable or populated.
@@ -135,6 +151,55 @@ def build_app() -> FastAPI:
     )
 
     api_app = rest.app
+
+    # --- Notebook credentials (icechunk_access.py in the JupyterHub image) ---
+
+    @api_app.post("/auth/icechunk-credentials", response_model=IcechunkCredentialsResponse)
+    def icechunk_credentials(request: Request):
+        """Short-lived, read-only S3 credentials for the Icechunk repos the user may read."""
+        identity = request.state.identity
+        trace_id = uuid.uuid4().hex
+        repos = [name for name in provider.repo_names() if is_permitted(access_rules, identity, "icechunk", name)]
+        response = {"bucket": bucket, "prefix": prefix, "repos": repos, "trace_id": trace_id}
+        no_credentials = {"credentials": None, "expires_at_epoch_seconds": None, "expires_in_seconds": None}
+
+        # Local S3 has no STS: the notebook uses its own keys and refuses repos not in `repos`
+        if config.ICECHUNK_STS_UNAVAILABLE:
+            return IcechunkCredentialsResponse(**no_credentials, **response)
+        deny_mode, policy_repos = policy_for(access_rules, identity)
+        if not deny_mode and not policy_repos:
+            logger.info(
+                "No readable icechunk repos for %s; no credentials | trace_id=%s", session_name(identity), trace_id
+            )
+            return IcechunkCredentialsResponse(**no_credentials, **response)
+
+        policy = build_session_policy(bucket, prefix, deny_mode, policy_repos)
+        try:
+            sts_credentials = vend_credentials(config.ICECHUNK_ACCESS_ROLE_ARN, identity, policy)
+        except PolicyTooLargeError as exc:
+            logger.error("%s | trace_id=%s", exc, trace_id)
+            raise HTTPException(status_code=500, detail=f"{exc} (trace_id {trace_id})") from exc
+        except (BotoCoreError, ClientError) as exc:
+            logger.error("STS AssumeRole failed: %s | trace_id=%s", type(exc).__name__, trace_id)
+            raise HTTPException(status_code=502, detail=f"Could not create credentials (trace_id {trace_id})") from exc
+
+        expires_at = int(sts_credentials["Expiration"].timestamp())
+        # Log ids and counts only, never the credentials or the policy's keys
+        logger.info(
+            "Vended icechunk credentials | user=%s ttl=%ss mode=%s policy_repos=%d | trace_id=%s",
+            session_name(identity), CREDENTIALS_TTL_SECONDS, "deny" if deny_mode else "allow",
+            len(policy_repos), trace_id,
+        )
+        return IcechunkCredentialsResponse(
+            credentials=S3SessionCredentials(
+                access_key_id=sts_credentials["AccessKeyId"],
+                secret_access_key=sts_credentials["SecretAccessKey"],
+                session_token=sts_credentials["SessionToken"],
+            ),
+            expires_at_epoch_seconds=expires_at,
+            expires_in_seconds=max(expires_at - int(time.time()), 0),
+            **response,
+        )
 
     # --- Custom discovery endpoints consumed by the frontend ---
 

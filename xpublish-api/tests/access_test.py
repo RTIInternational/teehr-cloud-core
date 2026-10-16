@@ -7,8 +7,11 @@ one gets 403.
 """
 import json
 import os
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
 for key, value in {
@@ -42,7 +45,16 @@ class _StubValidator:
 
 @pytest.fixture
 def client(monkeypatch):
+    with _client(monkeypatch) as test_client:
+        yield test_client
+
+
+@contextmanager
+def _client(monkeypatch, sts_role_arn=""):
+    """The app with fake repos, layers and tokens; STS is on when a role ARN is given."""
     monkeypatch.setattr(main.config, "TEEHR_ACCESS_RULES", json.dumps(RULES))
+    monkeypatch.setattr(main.config, "ICECHUNK_ACCESS_ROLE_ARN", sts_role_arn)
+    monkeypatch.setattr(main.config, "ICECHUNK_STS_UNAVAILABLE", not sts_role_arn)
     monkeypatch.setattr(
         IcechunkDatasetProvider,
         "_discover_repo_configs",
@@ -147,3 +159,86 @@ def test_unmatched_layer_rule_is_warned_once(client, caplog, monkeypatch):
         get(client, "/api/vector-tiles", *ADMIN)
     warnings = [r for r in caplog.records if "vector-tile layer(s) that don't exist" in r.getMessage()]
     assert len(warnings) == 1 and "rfc-basins" in warnings[0].getMessage()
+
+
+# --- Notebook credentials route ---
+
+CREDENTIALS = "/api/auth/icechunk-credentials"
+
+
+def post(client, path, *roles):
+    return client.post(path, headers={"Authorization": f"Bearer roles:{','.join(roles)}"})
+
+
+@pytest.fixture
+def sts(monkeypatch):
+    """The app with STS on and a fake AssumeRole; yields (client, calls)."""
+    calls = []
+
+    def fake_vend(role_arn, identity, policy):
+        calls.append({"role_arn": role_arn, "policy": policy})
+        expiration = datetime.now(timezone.utc) + timedelta(seconds=900)
+        return {"AccessKeyId": "AK", "SecretAccessKey": "SK", "SessionToken": "ST", "Expiration": expiration}
+
+    monkeypatch.setattr(main, "vend_credentials", fake_vend)
+    with _client(monkeypatch, sts_role_arn="arn:aws:iam::1:role/icechunk") as test_client:
+        yield test_client, calls
+
+
+def test_credentials_without_sts_list_repos_only(client):
+    body = post(client, CREDENTIALS, *USER).json()
+    assert body["credentials"] is None and body["repos"] == ["ua_swann_4km"]
+    assert body["bucket"] == "bkt" and body["prefix"] == "icechunk-ingests" and body["trace_id"]
+    assert post(client, CREDENTIALS, *ADMIN).json()["repos"] == REPOS
+    assert post(client, CREDENTIALS, *NOACCESS).json()["repos"] == []
+
+
+def test_credentials_need_a_token(client):
+    assert client.post(CREDENTIALS).status_code == 401
+
+
+def test_default_role_holder_gets_deny_mode_credentials(sts):
+    client, calls = sts
+    body = post(client, CREDENTIALS, *USER).json()
+    assert body["repos"] == ["ua_swann_4km"]
+    assert body["credentials"] == {"access_key_id": "AK", "secret_access_key": "SK", "session_token": "ST"}
+    assert 0 < body["expires_in_seconds"] <= 900 and body["expires_at_epoch_seconds"]
+    assert calls[0]["role_arn"] == "arn:aws:iam::1:role/icechunk"
+    denied = [s for s in calls[0]["policy"]["Statement"] if s["Effect"] == "Deny" and s["Action"] == "s3:GetObject"]
+    assert denied[0]["Resource"] == ["arn:aws:s3:::bkt/icechunk-ingests/isnobal_boise/*"]
+
+
+def test_user_without_any_readable_repo_gets_no_credentials(sts):
+    client, calls = sts
+    body = post(client, CREDENTIALS, *NOACCESS).json()
+    assert body["credentials"] is None and body["repos"] == []
+    assert calls == []
+
+
+def test_oversized_policy_is_a_clear_500(sts, monkeypatch):
+    client, _ = sts
+
+    def too_large(*args):
+        raise main.PolicyTooLargeError("too many repo rules for one credential policy")
+
+    monkeypatch.setattr(main, "vend_credentials", too_large)
+    response = post(client, CREDENTIALS, *USER)
+    assert response.status_code == 500 and "too many repo rules" in response.json()["detail"]
+
+
+def test_sts_failure_is_a_502(sts, monkeypatch):
+    client, _ = sts
+
+    def denied(*args):
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "no"}}, "AssumeRole")
+
+    monkeypatch.setattr(main, "vend_credentials", denied)
+    response = post(client, CREDENTIALS, *USER)
+    assert response.status_code == 502 and "trace_id" in response.json()["detail"]
+
+
+def test_sts_without_a_role_fails_startup(monkeypatch):
+    monkeypatch.setattr(main.config, "ICECHUNK_STS_UNAVAILABLE", False)
+    monkeypatch.setattr(main.config, "ICECHUNK_ACCESS_ROLE_ARN", "")
+    with pytest.raises(RuntimeError, match="ICECHUNK_ACCESS_ROLE_ARN"):
+        main.build_app()

@@ -93,6 +93,16 @@ spec:
             configMapKeyRef:
               name: xpublish-api-config
               key: TEEHR_ACCESS_RULES
+        - name: ICECHUNK_ACCESS_ROLE_ARN
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_ACCESS_ROLE_ARN
+        - name: ICECHUNK_STS_UNAVAILABLE
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_STS_UNAVAILABLE
         # Parallel chunk reads per request; 32 halved point-timeseries reads vs the default 10
         - name: ZARR_ASYNC__CONCURRENCY
           value: "32"
