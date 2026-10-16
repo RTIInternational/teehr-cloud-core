@@ -95,3 +95,57 @@ def unmatched(rules: AccessRules, kind: Kind, existing: list[str]) -> list[str]:
     """Rules naming items that don't exist, e.g. a misspelled repo that stays readable by default."""
     return sorted(set(rules.items[kind]) - set(existing))
 
+
+# --- Request paths ---
+
+# Every route under /api/datasets/{id}/ that xpublish-api serves (custom routes, the tiles and EDR
+# plugins). Anything else under that prefix is denied, so a route added by an xpublish or plugin
+# upgrade can't skip the check: when upgrading, list the new routes here and in the tests.
+DATASET_ROUTES = ("coords/", "variable-attrs", "edr/", "tiles/")
+DENY = "deny"
+RAW_DATA_SUFFIX = "_raw_data"
+
+
+def _repo_candidates(dataset_id: str) -> list[str]:
+    """Repos a dataset id can refer to; the provider matches the exact name, then strips ``_raw_data``."""
+    candidates = [dataset_id]
+    if dataset_id.endswith(RAW_DATA_SUFFIX) and dataset_id != RAW_DATA_SUFFIX:
+        candidates.append(dataset_id[: -len(RAW_DATA_SUFFIX)])
+    return candidates
+
+
+def request_target(path: str) -> tuple[Kind, list[str]] | str | None:
+    """What a request reads: ``(kind, names)``, None for no repo or layer, or DENY for an unrecognised path.
+
+    A request is allowed only if the user may read every name, so an ambiguous dataset id (a repo
+    itself named ``*_raw_data``) is checked against both repos it could mean.
+    """
+    if path in ("/api/datasets", "/api/datasets/"):
+        return DENY  # xpublish's built-in list of every dataset; the frontend uses /api/dataset-keys
+    if path.startswith("/api/datasets/"):
+        dataset_id, _, rest = path[len("/api/datasets/"):].partition("/")
+        if not dataset_id or not (rest == "variable-attrs" or rest.startswith(DATASET_ROUTES)):
+            return DENY
+        return "icechunk", _repo_candidates(dataset_id)
+    if path.startswith("/api/dataset-variables/"):
+        dataset_id = path[len("/api/dataset-variables/"):]
+        if not dataset_id or "/" in dataset_id:
+            return DENY
+        return "icechunk", _repo_candidates(dataset_id)
+    if path.startswith("/api/vector-tiles/"):
+        archive = path[len("/api/vector-tiles/"):]
+        if not archive.endswith(".pmtiles") or "/" in archive or archive == ".pmtiles":
+            return DENY
+        return "vector_tiles", [archive[: -len(".pmtiles")]]
+    return None
+
+
+def is_request_permitted(rules: AccessRules, identity: AuthIdentity, path: str) -> bool:
+    """Whether the user may make a request; unrecognised paths under the dataset routes are denied."""
+    target = request_target(path)
+    if target is None:
+        return True
+    if target == DENY:
+        return False
+    kind, names = target
+    return all(is_permitted(rules, identity, kind, name) for name in names)

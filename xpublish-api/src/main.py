@@ -52,7 +52,7 @@ from xpublish_tiles import lib as xpublish_tiles_lib
 from xpublish_tiles.xpublish.tiles import TilesPlugin
 
 from .auth import KeycloakJWTValidator, resolve_identity
-from .authz import parse_access_rules, unmatched
+from .authz import is_permitted, is_request_permitted, parse_access_rules, unmatched
 from .config import config
 from .pmtiles import list_pmtiles_layers, read_pmtiles_range, resolve_pmtiles_location
 from .provider import IcechunkDatasetProvider, written_coord_values
@@ -139,11 +139,17 @@ def build_app() -> FastAPI:
     # --- Custom discovery endpoints consumed by the frontend ---
 
     @api_app.get("/dataset-keys")
-    def list_dataset_keys():
-        # Only the tiles-capable dataset names (not the _raw_data variants).
+    def list_dataset_keys(request: Request):
+        # Only the tiles-capable dataset names (not the _raw_data variants) the user may read.
         # Read through the provider rather than a startup snapshot so repos
         # created after the pod started show up on the next page load.
-        return {"datasets": provider.repo_names()}
+        identity = request.state.identity
+        return {
+            "datasets": [
+                name for name in provider.repo_names()
+                if is_permitted(access_rules, identity, "icechunk", name)
+            ]
+        }
 
     @api_app.get("/dataset-variables/{dataset_id}")
     def dataset_variables(dataset_id: str):
@@ -201,10 +207,12 @@ def build_app() -> FastAPI:
         logger.info("Variable attrs for dataset '%s': %s", dataset_id, list(result.keys()))
         return {"dataset_id": dataset_id, "variables": result}
 
+    unmatched_layer_rules: list[str] = []
+
     @api_app.get("/vector-tiles")
-    def list_vector_tiles():
+    def list_vector_tiles(request: Request):
         """
-        List the .pmtiles archives available under the configured prefix.
+        List the .pmtiles archives under the configured prefix that the user may read.
 
         Returns ``{"items": [{"id": "usgs-basins", "source_layer": "usgs-basins"}]}``.
         Fetch an archive's bytes from ``/api/vector-tiles/{id}.pmtiles``.
@@ -215,8 +223,16 @@ def build_app() -> FastAPI:
             logger.error("Vector tile listing failed: %s", exc)
             raise HTTPException(status_code=500, detail="Vector tile listing failed") from exc
 
-        logger.info("Vector tile layers: %s", [item["id"] for item in items])
-        return {"items": items}
+        layer_ids = [item["id"] for item in items]
+        logger.info("Vector tile layers: %s", layer_ids)
+        # Warn only when the set changes; a misspelled restriction leaves the real layer readable by default
+        missing = unmatched(access_rules, "vector_tiles", layer_ids)
+        if missing != unmatched_layer_rules:
+            unmatched_layer_rules[:] = missing
+            if missing:
+                logger.warning("Access rules name vector-tile layer(s) that don't exist: %s", missing)
+        identity = request.state.identity
+        return {"items": [item for item in items if is_permitted(access_rules, identity, "vector_tiles", item["id"])]}
 
     # --- api_app middleware (gzip, tile caching; CORS is on the outer app) ---
 
@@ -273,6 +289,10 @@ def build_app() -> FastAPI:
                 content={"detail": "Authentication required"},
             )
 
+        # Access rules for every dataset and vector-tile request; unrecognised dataset paths are denied
+        if not is_request_permitted(access_rules, request.state.identity, path):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
         return await call_next(request)
 
     if "*" in cors_origins:
@@ -293,9 +313,10 @@ def build_app() -> FastAPI:
         expose_headers=["Content-Range", "Content-Length", "ETag", "Accept-Ranges"],
     )
 
+    # Unauthenticated (probes and the Docker HEALTHCHECK only check the status code), so no dataset names
     @app.get("/health")
     def health():
-        return {"status": "ok", "datasets": provider.dataset_ids()}
+        return {"status": "ok"}
 
     return app
 
