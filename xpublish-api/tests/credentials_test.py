@@ -19,7 +19,7 @@ from src.credentials import (
 BUCKET, PREFIX = "dev-fved-icechunk-warehouse-rti-use1", "icechunk-ingests"
 RULES = parse_access_rules(json.dumps({
     "default": ["icechunk-read-only"],
-    "icechunk": {"isnobal_boise": ["boise-snow-reader"], "staged": []},
+    "repos": {"isnobal_boise": ["boise-snow-reader"], "staged": []},
 }))
 
 

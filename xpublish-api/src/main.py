@@ -102,8 +102,8 @@ def build_app() -> FastAPI:
     logger.info(
         "Access rules: default=%s | restricted repos: %s | restricted layers: %s",
         list(access_rules.default) if access_rules.default is not None else "none (open to logged-in users)",
-        sorted(access_rules.items["icechunk"]),
-        sorted(access_rules.items["vector_tiles"]),
+        sorted(access_rules.items["repos"]),
+        sorted(access_rules.items["layers"]),
     )
     # STS on without a role to assume is a misconfiguration; fail now rather than on the first notebook
     if not config.ICECHUNK_STS_UNAVAILABLE and not config.ICECHUNK_ACCESS_ROLE_ARN:
@@ -127,7 +127,7 @@ def build_app() -> FastAPI:
 
     def warn_unmatched_repo_rules(repo_names: list[str]) -> None:
         # A misspelled restriction matches nothing and leaves the real repo readable by default
-        missing = unmatched(access_rules, "icechunk", repo_names)
+        missing = unmatched(access_rules, "repos", repo_names)
         if missing:
             logger.warning("Access rules name icechunk repo(s) that don't exist: %s", missing)
 
@@ -159,7 +159,7 @@ def build_app() -> FastAPI:
         """Short-lived, read-only S3 credentials for the Icechunk repos the user may read."""
         identity = request.state.identity
         trace_id = uuid.uuid4().hex
-        repos = [name for name in provider.repo_names() if is_permitted(access_rules, identity, "icechunk", name)]
+        repos = [name for name in provider.repo_names() if is_permitted(access_rules, identity, "repos", name)]
         response = {"bucket": bucket, "prefix": prefix, "repos": repos, "trace_id": trace_id}
         no_credentials = {"credentials": None, "expires_at_epoch_seconds": None, "expires_in_seconds": None}
 
@@ -212,7 +212,7 @@ def build_app() -> FastAPI:
         return {
             "datasets": [
                 name for name in provider.repo_names()
-                if is_permitted(access_rules, identity, "icechunk", name)
+                if is_permitted(access_rules, identity, "repos", name)
             ]
         }
 
@@ -291,13 +291,13 @@ def build_app() -> FastAPI:
         layer_ids = [item["id"] for item in items]
         logger.info("Vector tile layers: %s", layer_ids)
         # Warn only when the set changes; a misspelled restriction leaves the real layer readable by default
-        missing = unmatched(access_rules, "vector_tiles", layer_ids)
+        missing = unmatched(access_rules, "layers", layer_ids)
         if missing != unmatched_layer_rules:
             unmatched_layer_rules[:] = missing
             if missing:
                 logger.warning("Access rules name vector-tile layer(s) that don't exist: %s", missing)
         identity = request.state.identity
-        return {"items": [item for item in items if is_permitted(access_rules, identity, "vector_tiles", item["id"])]}
+        return {"items": [item for item in items if is_permitted(access_rules, identity, "layers", item["id"])]}
 
     # --- api_app middleware (gzip, tile caching; CORS is on the outer app) ---
 

@@ -3,8 +3,8 @@
 The rules map (``TEEHR_ACCESS_RULES``, JSON) has three optional keys::
 
     {"default": ["icechunk-read-only"],
-     "icechunk": {"<repo>": ["<role>", ...]},
-     "vector_tiles": {"<layer>": ["<role>", ...]}}
+     "repos": {"<repo>": ["<role>", ...]},
+     "layers": {"<layer>": ["<role>", ...]}}
 
 - ``default``: roles that can read any repo or layer not listed.
 - A listed repo or layer replaces the default with its own roles; ``[]`` means nobody.
@@ -18,8 +18,8 @@ from typing import Literal
 
 from .auth import AuthIdentity
 
-Kind = Literal["icechunk", "vector_tiles"]
-KINDS: tuple[Kind, ...] = ("icechunk", "vector_tiles")
+Kind = Literal["repos", "layers"]
+KINDS: tuple[Kind, ...] = ("repos", "layers")
 
 
 @dataclass(frozen=True)
@@ -126,17 +126,17 @@ def request_target(path: str) -> tuple[Kind, list[str]] | str | None:
         dataset_id, _, rest = path[len("/api/datasets/"):].partition("/")
         if not dataset_id or not (rest == "variable-attrs" or rest.startswith(DATASET_ROUTES)):
             return DENY
-        return "icechunk", _repo_candidates(dataset_id)
+        return "repos", _repo_candidates(dataset_id)
     if path.startswith("/api/dataset-variables/"):
         dataset_id = path[len("/api/dataset-variables/"):]
         if not dataset_id or "/" in dataset_id:
             return DENY
-        return "icechunk", _repo_candidates(dataset_id)
+        return "repos", _repo_candidates(dataset_id)
     if path.startswith("/api/vector-tiles/"):
         archive = path[len("/api/vector-tiles/"):]
         if not archive.endswith(".pmtiles") or "/" in archive or archive == ".pmtiles":
             return DENY
-        return "vector_tiles", [archive[: -len(".pmtiles")]]
+        return "layers", [archive[: -len(".pmtiles")]]
     return None
 
 

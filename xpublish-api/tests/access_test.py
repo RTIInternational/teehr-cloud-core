@@ -30,8 +30,8 @@ from src.provider import IcechunkDatasetProvider, RepoConfig  # noqa: E402
 
 RULES = {
     "default": ["icechunk-read-only"],
-    "icechunk": {"isnobal_boise": ["admin"]},
-    "vector_tiles": {"rfc-basins": ["admin"]},
+    "repos": {"isnobal_boise": ["admin"]},
+    "layers": {"rfc-basins": ["admin"]},
 }
 REPOS = ["isnobal_boise", "ua_swann_4km"]
 LAYERS = ["rfc-basins", "usgs-basins"]

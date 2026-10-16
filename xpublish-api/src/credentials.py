@@ -96,8 +96,8 @@ def build_session_policy(bucket: str, prefix: str, deny_mode: bool, repos: list[
 def policy_for(rules: AccessRules, identity: AuthIdentity) -> tuple[bool, list[str]]:
     """The policy mode (True for deny mode) and its repos for one user."""
     if has_default(rules, identity):
-        return True, unreadable_listed(rules, identity, "icechunk")
-    return False, readable_listed(rules, identity, "icechunk")
+        return True, unreadable_listed(rules, identity, "repos")
+    return False, readable_listed(rules, identity, "repos")
 
 
 def session_name(identity: AuthIdentity) -> str:
