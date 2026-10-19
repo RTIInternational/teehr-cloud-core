@@ -136,7 +136,7 @@ spec:
               value: ${var.polaris.oidcIssuerUri}
             ${endif}
             - name: AWS_REGION
-              value: us-east-2
+              value: ${var.aws.region}
           ports:
             - name: api
               containerPort: 8181
