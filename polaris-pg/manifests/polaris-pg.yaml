@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris-pg
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: polaris-pg
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris-pg
+spec:
+  replicas: 1
+  # Recreate, not the default RollingUpdate. This is a single-replica
+  # database on a ReadWriteOnce EBS volume, so a rolling update deadlocks:
+  # at replicas=1 the defaults compute maxUnavailable=0 and maxSurge=1, so
+  # Kubernetes starts the replacement pod before terminating the old one,
+  # the new pod blocks on FailedAttachVolume because the old pod still holds
+  # the volume, and the rollout never completes. Recreate terminates first
+  # and waits for the detach. Nothing is lost by this: two Postgres pods
+  # could never have shared the volume, so the rollout was never actually
+  # zero-downtime.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: polaris-pg
+  template:
+    metadata:
+      labels:
+        app: polaris-pg
+    spec:
+      # nodeSelector:
+      #   teehr-hub/nodegroup-name: core-a
+      containers:
+        - name: postgres
+          image: postgres:15
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-db-secrets
+                  key: database
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-db-secrets
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-db-secrets
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - polaris
+                - -d
+                - polaris
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - polaris
+                - -d
+                - polaris
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # CPU p95 0.01 cores, memory peak 0.06Gi over 47h (2026-09).
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: polaris-pg-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: polaris-pg-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

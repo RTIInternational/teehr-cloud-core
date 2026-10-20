@@ -10,39 +10,10 @@ environments:
 ---
 kind: Deploy
 type: kubernetes
-name: minio-ingress
-spec:
-  manifestTemplates:
-    - manifests/minio.yaml.tpl
-environments:
-  - local
----
-kind: Deploy
-type: kubernetes
-name: panel-ingress
-spec:
-  manifestTemplates:
-    - manifests/panel.yaml.tpl
-environments:
-  - local
-  - remote
----
-kind: Deploy
-type: kubernetes
 name: api-ingress
 spec:
   manifestTemplates:
     - manifests/api.yaml.tpl
-environments:
-  - local
-  - remote
----
-kind: Deploy
-type: kubernetes
-name: dashboards-ingress
-spec:
-  manifestTemplates:
-    - manifests/dashboards.yaml.tpl
 environments:
   - local
   - remote
@@ -67,6 +38,30 @@ spec:
     - manifests/prefect.yaml.tpl
 dependencies:
   - deploy.prefect-oidc-proxy
+environments:
+  - local
+  - remote
+---
+kind: Deploy
+type: kubernetes
+name: polaris-ingress
+spec:
+  manifestTemplates:
+    - manifests/polaris.yaml.tpl
+dependencies:
+  - deploy.polaris
+environments:
+  - local
+  - remote
+---
+kind: Deploy
+type: kubernetes
+name: xpublish-api-ingress
+spec:
+  manifestTemplates:
+    - manifests/xpublish-api.yaml.tpl
+dependencies:
+  - deploy.xpublish-api
 environments:
   - local
   - remote

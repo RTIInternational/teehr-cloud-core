@@ -33,3 +33,38 @@ spec:
       kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" delete job keycloak-bootstrap --ignore-not-found=true &&
       kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" apply -f ./manifests/bootstrap-job.yaml &&
       kubectl --context "$KUBE_CONTEXT" -n "${environment.namespace}" wait --for=condition=Complete job/keycloak-bootstrap --timeout=300s
+
+---
+kind: Deploy
+type: kubernetes
+name: keycloak-local-users-config
+description: Deploy local Keycloak test user bootstrap ConfigMap
+dependencies:
+  - deploy.keycloak
+  - deploy.secrets
+environments:
+  - local
+spec:
+  manifestTemplates:
+    - ./manifests/local-users-configmap.yaml.tpl
+
+---
+kind: Deploy
+type: exec
+name: keycloak-local-users-bootstrap
+description: Bootstrap local Keycloak test users and group membership
+dependencies:
+  - deploy.keycloak
+  - deploy.secrets
+  - deploy.keycloak-bootstrap
+  - deploy.keycloak-local-users-config
+environments:
+  - local
+spec:
+  deployCommand:
+    - bash
+    - -c
+    - >-
+      kubectl --context kind-kind -n "${environment.namespace}" delete job keycloak-local-users-bootstrap --ignore-not-found=true &&
+      kubectl --context kind-kind -n "${environment.namespace}" apply -f ./manifests/local-users-job.yaml &&
+      kubectl --context kind-kind -n "${environment.namespace}" wait --for=condition=Complete job/keycloak-local-users-bootstrap --timeout=300s

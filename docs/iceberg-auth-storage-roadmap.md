@@ -1,7 +1,19 @@
 # Iceberg Auth and Storage Permissions Roadmap
 
-Last updated: 2026-05-10
-Status: deferred for active implementation
+Last updated: 2026-09-25
+
+> **Status: superseded. Pattern C (credential vending) is implemented.**
+> `iceberg-rest` has been replaced by Apache Polaris 1.5.0 with Keycloak OIDC integration,
+> and the legacy `iceberg-rest`/`iceberg-pg` deployments have been deleted.
+> Per-user catalog permissions are enforced at the Polaris level via JWT group claim mapping.
+> Storage access is vended, not shared: Polaris assumes a dedicated data-access role via STS to
+> mint scoped, short-lived credentials, and Trino runs with
+> `iceberg.rest-catalog.vended-credentials-enabled=true`. No service holds standing warehouse
+> access. (Local KinD is the exception — MinIO has no real STS, so subscoping is skipped there.)
+> The phased plan below is kept as a historical record and no longer describes current state.
+> See [`polaris-access-control.md`](./polaris-access-control.md) for the implemented access control design.
+
+---
 
 ## Why this document exists
 

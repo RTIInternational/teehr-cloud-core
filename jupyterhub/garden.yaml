@@ -40,6 +40,32 @@ spec:
       #   teehr-hub/nodegroup-name: core-a
       # baseUrl: /jupyter
 
+      # Shows the message from the platform status.json (served outside the
+      # cluster) as a hub announcement. statusUrl is unset in deployments
+      # without one, which leaves the page unchanged.
+      extraFiles:
+        status-banner-template:
+          mountPath: /usr/local/share/jupyterhub/custom_templates/page.html
+          stringData: |
+            {% extends "templates/page.html" %}
+            {% block announcement %}
+              {{ super() }}
+              {% if teehr_status_url %}
+                <div id="teehr-status-banner" class="container text-center announcement alert alert-warning" style="display: none"></div>
+                <script>
+                  fetch({{ teehr_status_url | tojson }}, { cache: "no-store" })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (s) {
+                      if (s && s.message) {
+                        var el = document.getElementById("teehr-status-banner");
+                        el.textContent = s.message;
+                        el.style.display = "";
+                      }
+                    })
+                    .catch(function () {});
+                </script>
+              {% endif %}
+            {% endblock announcement %}
       config:
         GenericOAuthenticator:
           login_service: Keycloak
@@ -54,6 +80,7 @@ spec:
             - openid
             - profile
             - email
+            - offline_access
           claim_groups_key: groups
           allowed_groups:
             - jupyter-user
@@ -85,6 +112,11 @@ spec:
               name: jupyterhub-profile-list
               key: profile-list.json
               optional: true
+        JUPYTERHUB_CRYPT_KEY:
+          valueFrom:
+            secretKeyRef:
+              name: jupyterhub
+              key: JUPYTERHUB_CRYPT_KEY
 
       extraConfig:
         spark-config: |
@@ -120,10 +152,25 @@ spec:
                       raise RuntimeError(f"Profile at index {index} is missing required key: display_name")
 
               c.KubeSpawner.profile_list = profile_list
+        auth-state: |
+          c.Authenticator.enable_auth_state = True
+          async def auth_state_hook(spawner, auth_state):
+            spawner.environment["POLARIS_CLIENT_ID"] = os.environ.get("OAUTH_CLIENT_ID", "jupyterhub")
+            client_secret = os.environ.get("OAUTH_CLIENT_SECRET")
+            if client_secret:
+              spawner.environment["POLARIS_CLIENT_SECRET"] = client_secret
+            if auth_state and "access_token" in auth_state:
+              spawner.environment["POLARIS_USER_TOKEN"] = auth_state["access_token"]
+            if auth_state and "refresh_token" in auth_state:
+              spawner.environment["POLARIS_REFRESH_TOKEN"] = auth_state["refresh_token"]
+          c.Spawner.auth_state_hook = auth_state_hook
         cull-kernels: |
           c.MappingKernelManager.cull_idle_timeout = 3600
           c.MappingKernelManager.cull_connected = True
           c.MappingKernelManager.cull_busy = False
+        status-banner: |
+          c.JupyterHub.template_paths = ["/usr/local/share/jupyterhub/custom_templates"]
+          c.JupyterHub.template_vars = {"teehr_status_url": "${var.statusUrl || ''}"}
 
     singleuser:
       image:
@@ -145,17 +192,31 @@ spec:
         TEEHR_SPARK_IMAGE: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
         TEEHR_NAMESPACE: ${environment.namespace}
         AWS_REGION: ${var.aws.region}
+        AWS_ACCESS_KEY_ID:
+          valueFrom:
+            secretKeyRef:
+              name: local-s3-secrets
+              key: accesskey
+        AWS_SECRET_ACCESS_KEY:
+          valueFrom:
+            secretKeyRef:
+              name: local-s3-secrets
+              key: secretkey
         TEEHR_DOWNLOAD_API_KEY:
           valueFrom:
             secretKeyRef:
               name: jupyter-user-secrets
               key: api-key
-        REMOTE_CATALOG_TYPE: ${var.iceberg.catalogType}
-        REMOTE_CATALOG_REST_URI: ${var.iceberg.catalogUri}
-        REMOTE_WAREHOUSE_S3_PATH: ${var.iceberg.catalogWarehouse}
-        REMOTE_CATALOG_S3_ENDPOINT: ${var.iceberg.catalogS3Endpoint}
-        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.iceberg.catalogS3PathStyleAccess}
-        IN_CLUSTER: ${var.iceberg.inCluster}
+        REMOTE_CATALOG_TYPE: ${var.polaris.catalogType}
+        REMOTE_CATALOG_REST_URI: ${var.polaris.catalogUri}
+        REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.catalogWarehouse}
+        REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
+        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
+        REMOTE_WAREHOUSE_IDENTIFIER: ${var.polaris.defaultRealm}
+        IN_CLUSTER: ${var.polaris.inCluster}
+        POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
+        POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
+        POLARIS_USE_AUTHMANAGER: "true"
       extraFiles:
         jupyter_config:
           mountPath: /etc/jupyter/jupyter_notebook_config.py
@@ -227,6 +288,32 @@ spec:
     hub:
       nodeSelector:
         teehr-hub/nodegroup-name: core-a
+      # Shows the message from the platform status.json (served outside the
+      # cluster) as a hub announcement. statusUrl is unset in deployments
+      # without one, which leaves the page unchanged.
+      extraFiles:
+        status-banner-template:
+          mountPath: /usr/local/share/jupyterhub/custom_templates/page.html
+          stringData: |
+            {% extends "templates/page.html" %}
+            {% block announcement %}
+              {{ super() }}
+              {% if teehr_status_url %}
+                <div id="teehr-status-banner" class="container text-center announcement alert alert-warning" style="display: none"></div>
+                <script>
+                  fetch({{ teehr_status_url | tojson }}, { cache: "no-store" })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (s) {
+                      if (s && s.message) {
+                        var el = document.getElementById("teehr-status-banner");
+                        el.textContent = s.message;
+                        el.style.display = "";
+                      }
+                    })
+                    .catch(function () {});
+                </script>
+              {% endif %}
+            {% endblock announcement %}
       config:
         GenericOAuthenticator:
           login_service: Keycloak
@@ -241,6 +328,7 @@ spec:
             - openid
             - profile
             - email
+            - offline_access
           claim_groups_key: groups
           allowed_groups:
             - jupyter-user
@@ -272,6 +360,11 @@ spec:
               name: jupyterhub-profile-list
               key: profile-list.json
               optional: true
+        JUPYTERHUB_CRYPT_KEY:
+          valueFrom:
+            secretKeyRef:
+              name: jupyterhub
+              key: JUPYTERHUB_CRYPT_KEY
       extraConfig:
         spark-config: |
           # Allow users to create Spark sessions
@@ -306,10 +399,25 @@ spec:
                       raise RuntimeError(f"Profile at index {index} is missing required key: display_name")
 
               c.KubeSpawner.profile_list = profile_list
+        auth-state: |
+          c.Authenticator.enable_auth_state = True
+          async def auth_state_hook(spawner, auth_state):
+            spawner.environment["POLARIS_CLIENT_ID"] = os.environ.get("OAUTH_CLIENT_ID", "jupyterhub")
+            client_secret = os.environ.get("OAUTH_CLIENT_SECRET")
+            if client_secret:
+              spawner.environment["POLARIS_CLIENT_SECRET"] = client_secret
+            if auth_state and "access_token" in auth_state:
+              spawner.environment["POLARIS_USER_TOKEN"] = auth_state["access_token"]
+            if auth_state and "refresh_token" in auth_state:
+              spawner.environment["POLARIS_REFRESH_TOKEN"] = auth_state["refresh_token"]
+          c.Spawner.auth_state_hook = auth_state_hook
         cull-kernels: |
           c.MappingKernelManager.cull_idle_timeout = 3600
           c.MappingKernelManager.cull_connected = True
           c.MappingKernelManager.cull_busy = False
+        status-banner: |
+          c.JupyterHub.template_paths = ["/usr/local/share/jupyterhub/custom_templates"]
+          c.JupyterHub.template_vars = {"teehr_status_url": "${var.statusUrl || ''}"}
 
     singleuser:
       image:
@@ -332,12 +440,17 @@ spec:
         TEEHR_SPARK_IMAGE: ${actions.build.teehr-spark-executor-image.outputs.deploymentImageId}
         TEEHR_NAMESPACE: ${environment.namespace}
         AWS_REGION: ${var.aws.region}
-        REMOTE_CATALOG_TYPE: ${var.iceberg.catalogType}
-        REMOTE_CATALOG_REST_URI: ${var.iceberg.catalogUri}
-        REMOTE_WAREHOUSE_S3_PATH: ${var.iceberg.catalogWarehouse}
-        REMOTE_CATALOG_S3_ENDPOINT: ${var.iceberg.catalogS3Endpoint}
-        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.iceberg.catalogS3PathStyleAccess}
-        IN_CLUSTER: ${var.iceberg.inCluster}
+        REMOTE_CATALOG_TYPE: ${var.polaris.catalogType}
+        REMOTE_CATALOG_REST_URI: ${var.polaris.catalogUri}
+        REMOTE_WAREHOUSE_S3_PATH: ${var.polaris.defaultRealm}
+        REMOTE_CATALOG_S3_ENDPOINT: ${var.polaris.catalogS3Endpoint}
+        REMOTE_CATALOG_S3_PATH_STYLE_ACCESS: ${var.polaris.catalogS3PathStyleAccess}
+        REMOTE_WAREHOUSE_IDENTIFIER: ${var.polaris.defaultRealm}
+        IN_CLUSTER: ${var.polaris.inCluster}
+        POLARIS_DEFAULT_REALM: ${var.polaris.defaultRealm}
+        POLARIS_OAUTH2_SERVER_URI: ${var.polaris.oauthServerUri}
+        POLARIS_USE_AUTHMANAGER: "true"
+        POLARIS_USE_STS: "true"
         TRINO_HOST: ${var.trino.host}
         TRINO_PORT: ${var.trino.port}
         TRINO_CATALOG: ${var.trino.catalog}

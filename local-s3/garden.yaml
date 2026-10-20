@@ -1,0 +1,39 @@
+# In-cluster S3 for local dev. Consumers rely only on http://local-s3:9000,
+# the local-s3-secrets secret and the warehouse bucket.
+kind: Deploy
+type: kubernetes
+name: local-s3-deploy
+description: K8s Deploy local S3 (RustFS)
+spec:
+  manifestTemplates:
+  - "./manifests/server.yaml.tpl"
+dependencies:
+  - deploy.secrets
+environments:
+  - local
+---
+kind: Deploy
+type: kubernetes
+name: create-local-s3-bucket
+description: K8s Job Create local S3 warehouse bucket
+spec:
+  manifestFiles:
+  - "./manifests/create-bucket.yaml"
+dependencies:
+  - deploy.secrets
+  - deploy.local-s3-deploy
+environments:
+  - local
+---
+kind: Deploy
+type: kubernetes
+name: local-s3-ingress
+description: K8s local S3 certificate and ingress
+spec:
+  manifestTemplates:
+  - "./manifests/ingress.yaml.tpl"
+dependencies:
+  - deploy.letsencrypt
+  - deploy.local-s3-deploy
+environments:
+  - local

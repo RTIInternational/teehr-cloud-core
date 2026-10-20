@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xpublish-api
+  labels:
+    app: xpublish-api
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: xpublish-api
+  template:
+    metadata:
+      labels:
+        app: xpublish-api
+        component: backend
+    spec:
+      serviceAccountName: xpublish-api
+      containers:
+      - name: xpublish-api
+        image: ${actions.build.xpublish-api.outputs.deploymentImageId}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: ICECHUNK_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_BUCKET
+        - name: ICECHUNK_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_PREFIX
+        - name: ICECHUNK_BRANCH
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_BRANCH
+        - name: PMTILES_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: PMTILES_BUCKET
+        - name: PMTILES_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: PMTILES_PREFIX
+        - name: ICECHUNK_STORAGE_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_STORAGE_MODE
+        - name: ICECHUNK_ENDPOINT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: ICECHUNK_ENDPOINT_URL
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: AWS_DEFAULT_REGION
+        - name: CORS_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: CORS_ORIGINS
+        - name: KEYCLOAK_ISSUER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: KEYCLOAK_ISSUER_URL
+        - name: KEYCLOAK_JWKS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: KEYCLOAK_JWKS_URL
+        - name: KEYCLOAK_ALLOWED_AUDIENCES
+          valueFrom:
+            configMapKeyRef:
+              name: xpublish-api-config
+              key: KEYCLOAK_ALLOWED_AUDIENCES
+        # Parallel chunk reads per request; 32 halved point-timeseries reads vs the default 10
+        - name: ZARR_ASYNC__CONCURRENCY
+          value: "32"
+        # numba (tbb layer) otherwise starts one thread per node core; match the CPU limit
+        - name: NUMBA_NUM_THREADS
+          value: "2"
+        # One grid per pyramid level and variable; the default 16 is fewer than our levels
+        - name: XPUBLISH_TILES_GRID_CACHE_MAX_SIZE
+          value: "64"
+        # Tile data loads in flight at once (default 4); a map view requests 15-20 tiles together
+        - name: XPUBLISH_TILES_NUM_CONCURRENT_DATA_LOADS
+          value: "8"
+        # Local S3 credentials for kind — same secret used cluster-wide.
+        # Remote/prod: omitted; use IRSA to grant S3 access via service account.
+        ${if environment.name == "local"}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: local-s3-secrets
+              key: accesskey
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: local-s3-secrets
+              key: secretkey
+        ${endif}
+        # Sized from 47h of production metrics (2026-09): CPU p95 ~0 cores,
+        # memory peak 0.22Gi. Limits left generous for gridded-data bursts.
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "50m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          failureThreshold: 3

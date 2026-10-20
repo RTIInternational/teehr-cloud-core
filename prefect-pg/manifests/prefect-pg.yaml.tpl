@@ -17,6 +17,17 @@ metadata:
   name: prefect-pg
 spec:
   replicas: 1
+  # Recreate, not the default RollingUpdate. This is a single-replica
+  # database on a ReadWriteOnce EBS volume, so a rolling update deadlocks:
+  # at replicas=1 the defaults compute maxUnavailable=0 and maxSurge=1, so
+  # Kubernetes starts the replacement pod before terminating the old one,
+  # the new pod blocks on FailedAttachVolume because the old pod still holds
+  # the volume, and the rollout never completes. Recreate terminates first
+  # and waits for the detach. Nothing is lost by this: two Postgres pods
+  # could never have shared the volume, so the rollout was never actually
+  # zero-downtime.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prefect-pg
@@ -74,13 +85,19 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
+          # Sized from 47h of production metrics (2026-09). CPU p95 was 0.21
+          # cores against a 2-core request. Memory, by contrast, sat at
+          # 7.1-7.9Gi against a 4Gi request and an 8Gi limit -- i.e. routinely
+          # ~2x its request and pressed up against the limit, which risks
+          # eviction. The request is raised to match observed steady state and
+          # the limit lifted to leave real headroom.
           resources:
             requests:
-              cpu: "2"
-              memory: "${environment.name == 'local' ? '1Gi' : '4Gi'}"
+              cpu: "250m"
+              memory: "${environment.name == 'local' ? '1Gi' : '8Gi'}"
             limits:
               cpu: "4"
-              memory: 8Gi
+              memory: "${environment.name == 'local' ? '2Gi' : '12Gi'}"
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/data

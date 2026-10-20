@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.get("/collections/locations/items")
-async def get_locations_items(
+def get_locations_items(
     request: Request,
     bbox: str | None = Query(
         None, description="Bounding box (minLon,minLat,maxLon,maxLat)"

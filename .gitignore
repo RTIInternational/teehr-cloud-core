@@ -11,3 +11,4 @@ secrets.remote.yaml:Zone.Identifier
 __pycache__/
 .python-version
 *.egg-info
+project.garden.yml

@@ -5,16 +5,30 @@ Utility functions for OGC API compliance.
 import json
 import time
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 
 from ..config import config
 
 
+# The OGC id column, where a collection has one, in order of preference. Tables
+# written by teehr >= 0.9 key locations on location_id; older ones (and tables
+# built from the crosswalk) use primary_location_id.
+ID_COLUMNS = ("location_id", "primary_location_id")
+
+
+def get_id_column(group_by: list[str]) -> str | None:
+    """Return the collection's id column, or None if it has none."""
+    return next((c for c in ID_COLUMNS if c in group_by), None)
+
+
 def prepare_for_serialization(
     df: pd.DataFrame,
     datetime_columns: list[str] | None = None,
     replace_nan: bool = True,
+    replace_inf: bool = True,
 ) -> pd.DataFrame:
     """Prepare DataFrame for JSON serialization.
 
@@ -28,6 +42,8 @@ def prepare_for_serialization(
                           ['created_at', 'updated_at'] if None.
         replace_nan: If True, replaces NaN values with None in all columns
                      for JSON compliance. Defaults to True.
+        replace_inf: If True, replaces inf and -inf values with None in all
+                     columns for JSON compliance. Defaults to True.
 
     Returns:
         DataFrame ready for JSON serialization
@@ -45,6 +61,10 @@ def prepare_for_serialization(
     # Replace NaN/NaT with None for JSON serialization
     if replace_nan:
         df = df.astype(object).where(pd.notna(df), None)
+
+    # Replace inf/-inf with None for JSON serialization
+    if replace_inf:
+        df = df.replace([np.inf, -np.inf], None)
 
     return df
 
@@ -169,10 +189,12 @@ def create_ogc_geojson_response(
     for feature in geojson.get("features", []):
         if "id" in feature.get("properties", {}):
             feature["id"] = feature["properties"].get("id")
-        if "location_id" in feature.get("properties", {}):
-            feature["id"] = feature["properties"].get("location_id")
+        # location_id (teehr >= 0.9) wins over primary_location_id, which is
+        # the location key in older tables.
         if "primary_location_id" in feature.get("properties", {}):
             feature["id"] = feature["properties"].get("primary_location_id")
+        if "location_id" in feature.get("properties", {}):
+            feature["id"] = feature["properties"].get("location_id")
 
     # Add timestamp
     geojson["timeStamp"] = datetime.now(UTC).isoformat()
@@ -187,8 +209,6 @@ def create_ogc_geojson_response(
         geojson["numberMatched"] = number_returned
 
     # Parse base URL for pagination links
-    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
     parsed = urlparse(request_url)
     query_params = parse_qs(parsed.query)
 
@@ -252,5 +272,94 @@ def create_ogc_geojson_response(
 
     format_time = time.time() - format_start
     print(f"Formatting to GeoJSON time: {format_time:.3f} seconds")
-    
+
     return geojson
+
+
+def create_ogc_records_response(
+    df: pd.DataFrame,
+    request_url: str,
+    number_matched: int | None = None,
+    collection_id: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> dict:
+    """Wrap tabular records in an OGC-style paging envelope.
+
+    The non-spatial counterpart to create_ogc_geojson_response, for collections
+    served as records rather than as GeoJSON features.
+
+    Args:
+        df: Input DataFrame, already prepared for serialization
+        request_url: URL of the current request
+        number_matched: Total number of records matching query
+        collection_id: Collection identifier for link generation
+        limit: Current page size for pagination links
+        offset: Current offset for pagination links
+    """
+    items = df.to_dict(orient="records") if not df.empty else []
+    number_returned = len(items)
+
+    links = [
+        {
+            "href": request_url,
+            "rel": "self",
+            "type": "application/json",
+            "title": "This document",
+        }
+    ]
+
+    if collection_id:
+        links.append(
+            {
+                "href": f"/collections/{collection_id}",
+                "rel": "collection",
+                "type": "application/json",
+                "title": "The collection document",
+            }
+        )
+
+    # Pagination links. An absent offset means the first page, so a next link
+    # is still meaningful when only limit was supplied.
+    if limit is not None:
+        parsed = urlparse(request_url)
+        query_params = parse_qs(parsed.query)
+        current_offset = offset or 0
+
+        def _page_url(new_offset: int) -> str:
+            query_params["offset"] = [str(new_offset)]
+            query_params["limit"] = [str(limit)]
+            query = urlencode({k: v[0] for k, v in query_params.items()})
+            return urlunparse(parsed._replace(query=query))
+
+        # Next link (if we returned a full page)
+        if number_returned == limit:
+            links.append(
+                {
+                    "href": _page_url(current_offset + limit),
+                    "rel": "next",
+                    "type": "application/json",
+                    "title": "Next page",
+                }
+            )
+
+        # Previous link (if not on first page)
+        if current_offset > 0:
+            links.append(
+                {
+                    "href": _page_url(max(0, current_offset - limit)),
+                    "rel": "prev",
+                    "type": "application/json",
+                    "title": "Previous page",
+                }
+            )
+
+    response = {
+        "items": items,
+        "timeStamp": datetime.now(UTC).isoformat(),
+        "numberReturned": number_returned,
+        "links": links,
+    }
+    if number_matched is not None:
+        response["numberMatched"] = number_matched
+    return response

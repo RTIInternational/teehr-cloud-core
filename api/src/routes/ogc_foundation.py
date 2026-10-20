@@ -75,7 +75,7 @@ async def conformance():
 
 
 @router.get("/collections", response_model=CollectionsResponse)
-async def get_collections():
+def get_collections():
     """List all available data collections."""
 
     # Get extent information from database
@@ -307,6 +307,54 @@ async def get_collections():
             crs=[CRS84],
         ),
         Collection(
+            id="configurations_by_location",
+            title="Configurations by Location",
+            description="Configurations, variables and units available at each primary location, with timeseries time ranges and ensemble member counts",
+            links=[
+                Link(
+                    href="/collections/configurations_by_location",
+                    rel="self",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configurations_by_location/items",
+                    rel="items",
+                    type="application/geo+json",
+                ),
+                Link(
+                    href="/collections/configurations_by_location/queryables",
+                    rel=REL_QUERYABLES,
+                    type="application/schema+json",
+                ),
+            ],
+            extent=Extent(spatial=spatial_extent) if spatial_extent else None,
+            itemType="feature",
+            crs=[CRS84],
+        ),
+        Collection(
+            id="configurations_summary",
+            title="Configurations Summary",
+            description="Per-configuration summary of available timeseries: variables, units, time ranges and location counts",
+            links=[
+                Link(
+                    href="/collections/configurations_summary",
+                    rel="self",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configurations_summary/items",
+                    rel="items",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configurations_summary/queryables",
+                    rel=REL_QUERYABLES,
+                    type="application/schema+json",
+                ),
+            ],
+            itemType="record",
+        ),
+        Collection(
             id="configurations",
             title="Configurations",
             description="Data source configurations (e.g., nwm30_retrospective, usgs_observations)",
@@ -396,24 +444,6 @@ async def get_collections():
             ],
             itemType="record",
         ),
-        Collection(
-            id="locations_with_attributes",
-            title="Locations with Attributes",
-            description="Location data with attributes pivoted as columns (location_id, name, state_name, drainage_area, slope_mean_percent, rfc, etc.)",
-            links=[
-                Link(
-                    href="/collections/locations_with_attributes",
-                    rel="self",
-                    type="application/json",
-                ),
-                Link(
-                    href="/collections/locations_with_attributes/items",
-                    rel="items",
-                    type="application/json",
-                ),
-            ],
-            itemType="record",
-        ),
     ]
 
     return CollectionsResponse(
@@ -426,11 +456,11 @@ async def get_collections():
 
 
 @router.get("/collections/{collection_id}", response_model=Collection)
-async def get_collection(collection_id: str):
+def get_collection(collection_id: str):
     """Get metadata for a specific collection."""
 
     # Get the collections list
-    collections_response = await get_collections()
+    collections_response = get_collections()
 
     # Find the requested collection
     for collection in collections_response.collections:

@@ -11,8 +11,8 @@ spec:
   chart:
     name: trino
     repo: https://trinodb.github.io/charts
-    version: 1.41.0
-  
+    version: 1.42.2
+
   values:
     server:
       workers: 1
@@ -26,13 +26,20 @@ spec:
     catalogs:
       iceberg: |-
         connector.name=iceberg
-        iceberg.catalog.type=${var.iceberg.catalogType}
-        iceberg.rest-catalog.uri=${var.iceberg.catalogUri}
-        iceberg.rest-catalog.warehouse=${var.iceberg.catalogWarehouse}
+        iceberg.catalog.type=${var.polaris.catalogType}
+        iceberg.rest-catalog.uri=${var.polaris.catalogUri}
+        iceberg.rest-catalog.warehouse=${var.polaris.defaultRealm}
+        iceberg.rest-catalog.security=OAUTH2
+        iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
+        iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
+        iceberg.rest-catalog.oauth2.scope=openid
+        # Keycloak does not allow RFC 8693 token exchange for this client, so
+        # refresh by re-running client_credentials instead.
+        iceberg.rest-catalog.oauth2.token-exchange-enabled=false
         # S3 Configuration
         fs.native-s3.enabled=true
-        s3.path-style-access=${var.iceberg.catalogS3PathStyleAccess}
-        s3.endpoint=${var.iceberg.catalogS3Endpoint}
+        s3.path-style-access=${var.polaris.catalogS3PathStyleAccess}
+        s3.endpoint=${var.polaris.catalogS3Endpoint}
         s3.region=${var.aws.region}
     accessControl:
       type: configmap
@@ -54,13 +61,18 @@ spec:
     - name: AWS_ACCESS_KEY_ID
       valueFrom:
         secretKeyRef:
-          name: minio-secrets
+          name: local-s3-secrets
           key: accesskey
     - name: AWS_SECRET_ACCESS_KEY
       valueFrom:
         secretKeyRef:
-          name: minio-secrets
+          name: local-s3-secrets
           key: secretkey
+    - name: POLARIS_CREDENTIAL
+      valueFrom:
+        secretKeyRef:
+          name: trino-polaris-secrets
+          key: credential
 ---
 # Remote environment deployment
 kind: Deploy
@@ -75,30 +87,52 @@ spec:
   chart:
     name: trino
     repo: https://trinodb.github.io/charts
-    version: 1.41.0
-  
+    version: 1.42.2
+
   values:
     server:
-      workers: "${environment.name == 'local' ? 1 : 2}"
+      # Dropped from 2 workers to 1. Over 47h (2026-09) the two workers
+      # together drew a CPU p95 of 0.04 cores, with a single 1.04-core spike;
+      # the coordinator sat at a p50 of 0.010 cores. One worker covers this
+      # comfortably and the chart can be scaled back up if query load grows.
+      workers: 1
 
+    # NOTE ON HEAP vs CONTAINER LIMIT
+    # The chart defaults to jvm.maxHeapSize 8G, and these pods previously ran
+    # with a container memory limit of exactly 8Gi. A JVM needs its heap PLUS
+    # metaspace, thread stacks, direct buffers and a 512M reserved code cache,
+    # so at full heap the container would have been OOMKilled before the JVM
+    # hit its own ceiling. It only survived because real usage (~4.5Gi) never
+    # approached the heap max. Heap is now set explicitly and each limit
+    # leaves ~1.5-2Gi above it for non-heap overhead.
     coordinator:
       # nodeSelector:
       #   teehr-hub/nodegroup-name: core-a
+      # node-scheduler.include-coordinator is false, so the coordinator only
+      # plans queries and never executes them: observed peak 1.20Gi.
+      jvm:
+        maxHeapSize: "2G"
       resources:
         requests:
-          cpu: 1
-          memory: "${environment.name == 'local' ? '1Gi' : '4Gi'}"
+          cpu: 200m
+          memory: "${environment.name == 'local' ? '1Gi' : '3Gi'}"
         limits:
           cpu: 2
-          memory: 8Gi
+          memory: 4Gi
 
     worker:
       # nodeSelector:
       #   teehr-hub/nodegroup-name: core-a
+      # As the only worker this pod now absorbs all query execution. The two
+      # workers peaked at 8.70Gi combined, but most of that is lazily-grown
+      # JVM heap rather than live working set, and query.max-memory-per-node
+      # stays at the 1GB default, so a 5G heap is ample.
+      jvm:
+        maxHeapSize: "5G"
       resources:
         requests:
-          cpu: 1
-          memory: "${environment.name == 'local' ? '1Gi' : '4Gi'}"
+          cpu: 500m
+          memory: "${environment.name == 'local' ? '1Gi' : '6Gi'}"
         limits:
           cpu: 2
           memory: 8Gi
@@ -106,10 +140,21 @@ spec:
     catalogs:
       iceberg: |-
         connector.name=iceberg
-        iceberg.catalog.type=${var.iceberg.catalogType}
-        iceberg.rest-catalog.uri=${var.iceberg.catalogUri}
-        iceberg.rest-catalog.warehouse=${var.iceberg.catalogWarehouse}
+        iceberg.catalog.type=${var.polaris.catalogType}
+        iceberg.rest-catalog.uri=${var.polaris.catalogUri}
+        iceberg.rest-catalog.warehouse=${var.polaris.defaultRealm}
+        iceberg.rest-catalog.security=OAUTH2
+        iceberg.rest-catalog.oauth2.server-uri=${var.polaris.oauthServerUri}
+        iceberg.rest-catalog.oauth2.credential=$${ENV:POLARIS_CREDENTIAL}
+        iceberg.rest-catalog.oauth2.scope=openid
+        # Keycloak does not allow RFC 8693 token exchange for this client, so
+        # refresh by re-running client_credentials instead.
+        iceberg.rest-catalog.oauth2.token-exchange-enabled=false
         # S3 Configuration
+        # Trino holds no AWS identity of its own for the warehouse bucket;
+        # it relies entirely on Polaris to vend scoped, short-lived S3
+        # credentials via the REST catalog protocol.
+        iceberg.rest-catalog.vended-credentials-enabled=true
         fs.native-s3.enabled=true
         s3.region=${var.aws.region}
     accessControl:
@@ -128,8 +173,13 @@ spec:
             ]
           }
 
+    env:
+    - name: POLARIS_CREDENTIAL
+      valueFrom:
+        secretKeyRef:
+          name: trino-polaris-secrets
+          key: credential
+
     serviceAccount:
       create: true
       name: trino
-      annotations:
-        eks.amazonaws.com/role-arn: ${var.irsa.icebergReadWriteRoleArn}

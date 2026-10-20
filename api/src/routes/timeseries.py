@@ -3,6 +3,7 @@ Timeseries endpoints (OGC API - GeoJSON and TEEHR TS).
 """
 
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -32,6 +33,43 @@ def _build_string_in_condition(column: str, values: list[str], table_alias: str 
     return f"{qualified_column} IN ({quoted_values})"
 
 
+def _parse_iso_duration_to_seconds(duration_str: str) -> int:
+    """Parse an ISO 8601 duration string (e.g. 'PT1H', 'PT15M') to total seconds.
+
+    Supports day, hour, minute, and second components only. Year and month
+    components are not supported as they are variable-length.
+
+    Raises ValueError for invalid, unsupported, or zero-length durations.
+    """
+    match = re.fullmatch(
+        r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$",
+        duration_str,
+    )
+    if not match:
+        raise ValueError(
+            f"Invalid or unsupported ISO 8601 duration: '{duration_str}'. "
+            "Year and month components (P[n]Y, P[n]M) are not supported."
+        )
+    days = int(match.group(1) or 0)
+    hours = int(match.group(2) or 0)
+    minutes = int(match.group(3) or 0)
+    seconds = float(match.group(4) or 0)
+    total = days * 86400 + hours * 3600 + minutes * 60 + int(seconds)
+    if total == 0:
+        raise ValueError(f"Duration '{duration_str}' resolves to zero seconds.")
+    return total
+
+
+def _build_duration_condition(column: str, duration_str: str) -> str:
+    """Build a SQL modulo condition filtering rows to those aligned with an ISO 8601 duration.
+
+    Raises ValueError for invalid or unsupported durations (callers should
+    convert this to an HTTP 400 response).
+    """
+    duration_seconds = _parse_iso_duration_to_seconds(duration_str)
+    return f"CAST(to_unixtime({column}) AS BIGINT) % {duration_seconds} = 0"
+
+
 def _empty_response(request: Request, collection_id: str, f: str | None) -> JSONResponse:
     """Return a format-appropriate empty response."""
     if f and f.lower() == "geojson":
@@ -48,9 +86,6 @@ def _empty_response(request: Request, collection_id: str, f: str | None) -> JSON
             },
         )
 
-    if f and f.lower() == "timeseries":
-        return JSONResponse(content=[], media_type="application/json")
-
     return JSONResponse(
         content={
             "items": [],
@@ -65,7 +100,7 @@ def _empty_response(request: Request, collection_id: str, f: str | None) -> JSON
 
 
 @router.get("/collections/primary_timeseries/items")
-async def get_primary_timeseries_items(
+def get_primary_timeseries_items(
     request: Request,
     primary_location_id: list[str] = Query(
         ..., description="Primary location ID(s) - can be specified multiple times"
@@ -81,6 +116,13 @@ async def get_primary_timeseries_items(
     configuration_name: list[str] | None = Query(
         None, description="Configuration name filter(s) - can be specified multiple times"
     ),
+    timestep_duration: str | None = Query(
+        None,
+        description="ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M'). "
+                    "Returns rows where value_time is divisible by the duration. Mixed timesteps may be returned "
+                    "if multiple sources are present — e.g. 'PT15M' returns 00, 15, 30, 45 timestamps from any available data."
+                    "Year and month components (e.g. 'P1Y', 'P1M') are not supported and will return a 400 error.",
+    ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
     ),
@@ -91,8 +133,7 @@ async def get_primary_timeseries_items(
         "json",
         description=(
             "Output format. 'json' (default) returns an OGC-style paging envelope "
-            "({items, numberReturned, links}); 'timeseries' returns formatted objects containing metadata "
-            "and grouped timeseries objects; 'geojson' returns an OGC GeoJSON FeatureCollection."
+            "({items, numberReturned, links}); 'geojson' returns an OGC GeoJSON FeatureCollection."
         ),
     ),
 ):
@@ -103,14 +144,14 @@ async def get_primary_timeseries_items(
         - datetime: ISO 8601 interval for value_time (e.g., 2020-01-01/2020-12-31)
         - variable_name: Variable name(s) (repeat query param for multiple)
         - configuration_name: Configuration name(s) (repeat query param for multiple)
+        - timestep duration: ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M').
         - limit and offset for pagination
 
         Multi-value example:
         - /collections/primary_timeseries/items?primary_location_id=123&variable_name=streamflow&variable_name=stage&configuration_name=obs_usgs&configuration_name=obs_alt
 
-        Output format. 'json' (default) returns an OGC-style paging envelope 
-        ({items, numberReturned, links}); 'timeseries' returns formatted objects containing metadata
-        and grouped timeseries objects; 'geojson' returns an OGC GeoJSON FeatureCollection.
+        Output format. 'json' (default) returns an OGC-style paging envelope
+        ({items, numberReturned, links}); 'geojson' returns an OGC GeoJSON FeatureCollection.
     """
     try:
         limit = effective_limit_for_request(request, limit)
@@ -155,6 +196,14 @@ async def get_primary_timeseries_items(
             )
             if configuration_condition:
                 where_conditions.append(configuration_condition)
+
+        # Filter value_time by timestep duration
+        if timestep_duration:
+            try:
+                where_conditions.append(_build_duration_condition("value_time", timestep_duration))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
         where_clause = " AND ".join(where_conditions)
 
         # Build query based on format
@@ -209,7 +258,6 @@ async def get_primary_timeseries_items(
 
         logger.debug("Primary query returned %s records", len(df))
 
-        format_start = time.time()
         df["value_time"] = pd.to_datetime(df["value_time"]).dt.strftime(
             "%Y-%m-%d %H:%M:%S"
         )
@@ -231,47 +279,6 @@ async def get_primary_timeseries_items(
                     "Content-Crs": "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>",  # noqa: E501
                 },
             )
-        
-        if f and f.lower() == "timeseries":
-            grouped = df.groupby(
-                [
-                    "series_type",
-                    "primary_location_id",
-                    "reference_time",
-                    "configuration_name",
-                    "variable_name",
-                    "unit_name",
-                ],
-                dropna=False  # Don't drop rows with NaN - important for retrospective data
-            )
-
-            data = []
-            for (
-                series_type,
-                primary_location_id,
-                reference_time,
-                configuration_name,
-                variable_name,
-                unit_name,
-            ), group in grouped:
-                # Handle NaN values from groupby keys - convert to None for JSON
-                ref_time_value = None if pd.isna(reference_time) else reference_time
-
-                timeseries_data = {
-                    "series_type": series_type,
-                    "primary_location_id": primary_location_id,
-                    "reference_time": ref_time_value,
-                    "configuration_name": configuration_name,
-                    "variable_name": variable_name,
-                    "unit_name": unit_name,
-                    "timeseries": group[["value_time", "value"]].to_dict(orient="records"),
-                }
-                data.append(timeseries_data)
-
-            format_time = time.time() - format_start
-            logger.debug("Primary formatting time: %.3f seconds", format_time)
-
-            return JSONResponse(content=data, media_type="application/json")
 
         # Default format: return raw records with pagination metadata
         items = df.to_dict(orient="records")
@@ -304,7 +311,7 @@ async def get_primary_timeseries_items(
             )
 
         return JSONResponse(content=response, media_type="application/json")
-    
+
     except Exception as e:
         logger.error("Primary timeseries error: %s", str(e))
         raise HTTPException(
@@ -313,7 +320,7 @@ async def get_primary_timeseries_items(
 
 
 @router.get("/collections/secondary_timeseries/items")
-async def get_secondary_timeseries_items(
+def get_secondary_timeseries_items(
     request: Request,
     primary_location_id: list[str] | None = Query(None, description="Primary location ID(s) - can be specified multiple times"),
     secondary_location_id: list[str] | None = Query(None, description="Secondary location ID(s) - can be specified multiple times"),
@@ -332,6 +339,13 @@ async def get_secondary_timeseries_items(
     configuration_name: list[str] | None = Query(
         None, description="Configuration name filter(s) - can be specified multiple times"
     ),
+    timestep_duration: str | None = Query(
+        None,
+        description="ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M'). "
+                    "Returns rows where value_time is divisible by the duration. Mixed timesteps may be returned "
+                    "if multiple sources are present — e.g. 'PT15M' returns 00, 15, 30, 45 timestamps from any available data."
+                    "Year and month components (e.g. 'P1Y', 'P1M') are not supported and will return a 400 error.",
+    ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
     ),
@@ -342,8 +356,7 @@ async def get_secondary_timeseries_items(
         "json",
         description=(
             "Output format. 'json' (default) returns an OGC-style paging envelope "
-            "({items, numberReturned, links}); 'timeseries' returns formatted objects containing metadata "
-            "and grouped timeseries objects; 'geojson' returns an OGC GeoJSON FeatureCollection."
+            "({items, numberReturned, links}); 'geojson' returns an OGC GeoJSON FeatureCollection."
         ),
     ),
 ):
@@ -355,14 +368,14 @@ async def get_secondary_timeseries_items(
     - reference_time: ISO 8601 interval for reference_time (e.g., 2025-11-01/..)
     - variable_name: Variable name(s) (repeat query param for multiple)
     - configuration_name: Configuration name(s) (repeat query param for multiple)
+    - timestep duration: ISO 8601 duration for timestep alignment filtering (e.g. 'PT1H', 'PT15M').
     - limit and offset for pagination
 
     Multi-value example:
     - /collections/secondary_timeseries/items?primary_location_id=123&variable_name=streamflow&variable_name=stage&configuration_name=nwm30_short_range&configuration_name=nwm30_medium_range
 
-    Output format. 'json' (default) returns an OGC-style paging envelope 
-    ({items, numberReturned, links}); 'timeseries' returns formatted objects containing metadata
-    and grouped timeseries objects; 'geojson' returns an OGC GeoJSON FeatureCollection.
+    Output format. 'json' (default) returns an OGC-style paging envelope
+    ({items, numberReturned, links}); 'geojson' returns an OGC GeoJSON FeatureCollection.
     """
     try:
         limit = effective_limit_for_request(request, limit)
@@ -376,9 +389,9 @@ async def get_secondary_timeseries_items(
             variable_name,
             configuration_name,
         )
-        
+
         where_conditions = []
-        
+
         # Handle location filtering - either primary or secondary
         if primary_location_id and secondary_location_id:
             raise HTTPException(
@@ -448,6 +461,13 @@ async def get_secondary_timeseries_items(
             if configuration_condition:
                 where_conditions.append(configuration_condition)
 
+        # Filter value_time by timestep duration
+        if timestep_duration:
+            try:
+                where_conditions.append(_build_duration_condition("st.value_time", timestep_duration))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
         where_clause = " AND ".join(where_conditions)
 
         # Build query based on format
@@ -494,7 +514,6 @@ async def get_secondary_timeseries_items(
 
         logger.debug("Secondary query returned %s records", len(df))
 
-        format_start = time.time()
         df["value_time"] = pd.to_datetime(df["value_time"]).dt.strftime(
             "%Y-%m-%d %H:%M:%S"
         )
@@ -517,56 +536,6 @@ async def get_secondary_timeseries_items(
                 },
             )
 
-        if f and f.lower() == "timeseries":
-            grouped = df.groupby(
-                [
-                    "series_type",
-                    "primary_location_id",
-                    "secondary_location_id",
-                    "reference_time",
-                    "configuration_name",
-                    "variable_name",
-                    "unit_name",
-                    "member",
-                ],
-                dropna=False  # Don't drop rows with NaN - important for retrospective data
-            )
-
-            logger.debug("Number of unique secondary series: %s", len(grouped))
-            data = []
-            for (
-                series_type,
-                primary_location_id,
-                secondary_location_id,
-                reference_time,
-                configuration_name,
-                variable_name,
-                unit_name,
-                member,
-            ), group in grouped:
-                
-                # Handle NaN values from groupby keys - convert to None for JSON
-                ref_time_value = None if pd.isna(reference_time) else reference_time
-                member_value = None if pd.isna(member) else member
-                
-                timeseries_data = {
-                    "series_type": series_type,
-                    "primary_location_id": primary_location_id,
-                    "secondary_location_id": secondary_location_id,
-                    "reference_time": ref_time_value,
-                    "configuration_name": configuration_name,
-                    "variable_name": variable_name,
-                    "unit_name": unit_name,
-                    "member": member_value,
-                    "timeseries": group[["value_time", "value"]].to_dict(orient="records"),
-                }
-                data.append(timeseries_data)
-
-            format_time = time.time() - format_start
-            logger.debug("Secondary formatting time: %.3f seconds", format_time)
-
-            return JSONResponse(content=data, media_type="application/json")
-        
         # Default format: return raw records with pagination metadata
         items = df.to_dict(orient="records")
 

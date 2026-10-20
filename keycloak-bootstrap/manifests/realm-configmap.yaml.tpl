@@ -9,6 +9,7 @@ data:
     {
       "realm": "teehr",
       "enabled": true,
+      "accessTokenLifespan": 300,
       "loginTheme": "teehr",
       "registrationAllowed": true,
       "loginWithEmailAllowed": true,
@@ -33,7 +34,9 @@ data:
           { "name": "admin" },
           { "name": "basic-user" },
           { "name": "jupyter-user" },
-          { "name": "iceberg-user" }
+          { "name": "teehr-read-only" },
+          { "name": "teehr-read-write" },
+          { "name": "iceberg-catalog-admin" },
         ]
       },
       "groups": [
@@ -50,8 +53,12 @@ data:
           "realmRoles": ["jupyter-user"]
         },
         {
-          "name": "iceberg-user",
-          "realmRoles": ["iceberg-user"]
+          "name": "teehr-read-only",
+          "realmRoles": ["teehr-read-only"]
+        },
+        {
+          "name": "teehr-read-write",
+          "realmRoles": ["teehr-read-write", "teehr-read-only"]
         },
         {
           "name": "key-management-admin",
@@ -73,10 +80,15 @@ data:
               "view-realm"
             ]
           }
+        },
+        {
+          "name": "iceberg-catalog-admins",
+          "realmRoles": ["iceberg-catalog-admin"]
         }
       ],
       "defaultGroups": [
-        "/basic-user"
+        "/basic-user",
+        "/teehr-read-only"
       ],
       "clients": [
         {
@@ -102,6 +114,9 @@ data:
           "protocol": "openid-connect",
           "publicClient": false,
           "serviceAccountsEnabled": true,
+          "attributes": {
+            "standard.token.exchange.enabled": "true"
+          },
           "secret": "$(env:TEEHR_API_CLIENT_SECRET)"
         },
         {
@@ -125,6 +140,31 @@ data:
                 "access.token.claim": "true",
                 "userinfo.token.claim": "true",
                 "claim.name": "groups"
+              }
+            },
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            },
+            {
+              "name": "audience-teehr-api",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": "teehr-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
               }
             }
           ],
@@ -165,6 +205,68 @@ data:
           "webOrigins": [
             "https://prefect.${var.hostname}"
           ]
+        },
+        {
+          "clientId": "trino-polaris",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "secret": "$(env:TRINO_POLARIS_CLIENT_SECRET)",
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "prefect-polaris",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "secret": "$(env:PREFECT_POLARIS_CLIENT_SECRET)",
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        }
+      ],
+      "users": [
+        {
+          "username": "service-account-trino-polaris",
+          "enabled": true,
+          "serviceAccountClientId": "trino-polaris",
+          "realmRoles": ["iceberg-catalog-admin"]
+        },
+        {
+          "username": "service-account-prefect-polaris",
+          "enabled": true,
+          "serviceAccountClientId": "prefect-polaris",
+          "realmRoles": ["teehr-read-write"]
         }
       ]
     }
