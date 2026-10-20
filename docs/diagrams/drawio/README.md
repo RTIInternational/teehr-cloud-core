@@ -21,11 +21,11 @@ Schematic diagrams for the TEEHR-Cloud journal article. The diagrams are generat
    - Around the cluster: external data sources, the TEEHR-Python package, external clients, and the infrastructure (AWS via Terraform or OpenTofu, or local kind).
 2. **Core and client deployments.** teehr (pip-installed from a pinned git SHA) and teehr-cloud-core (included as a git submodule) feed the CIROH TEEHR-Hub (teehr-hub) and USBR FVED (teehr-fved) client deployments, which share a common set of client components. Garden deploys each client to a local kind cluster or to a remote AWS EKS cluster, which infrastructure-as-code provisions.
 3. **End-to-end data flow.** External data → ingest → core tables → join and add calculated fields → joined timeseries → metrics → metrics and summary tables → API and dashboards. Prefect orchestrates the steps, and JupyterHub gives interactive access to the warehouse tables.
-4. **TEEHR-Python overview.** The `Evaluation` components:
-   - `fetch`, `load` and `generate`
+4. **TEEHR-Python overview.** The `Evaluation` components, grouped by purpose:
+   - Data input: fetch (external sources), load (user files; validated and written with append, upsert or overwrite), download (from the TEEHR-Cloud warehouse) and generate (benchmark and signature timeseries)
    - Tables and views
-   - Query, calculated fields, `metrics` and I/O
-   - The engine layer: Spark, the Iceberg catalog (local or remote) and storage
+   - Analysis: query, calculated fields and metrics
+   - Engine and storage: Spark, the Iceberg catalog (local or remote) and storage
 5. **Local warehouse directory.** An annotated directory tree of a local evaluation.
 
 The data model schematic already exists at `teehr/docs/drawio/data_model.drawio`. Copy that page into this file in draw.io if you want all the figures in one place.
@@ -91,7 +91,7 @@ There are two ways to edit a diagram. Pick one per diagram so edits don't get lo
 
 - **Styles:** `CORE`, `CLIENT`, `PY`, `INFRA`, `EXT` (colored rounded boxes), `STORE` (a cylinder for data stores), `NOTE` and `TEXT` (plain text), `DASHED` (add to an edge style for a dashed arrow) and `DIRECT` (add to an edge style to draw jump arcs where it crosses other arrows; add that edge after the ones it crosses).
 - **`tb(title, body)`:** a label with a bold title and smaller body text. Use `<br>` for line breaks.
-- **`p.group(..., sub=True)`:** a lighter dashed outline for nested groups.
+- **`p.group(..., sub=True, label_right=False)`:** `sub=True` draws a lighter dashed outline for nested groups; `label_right=True` puts the label at the right end of the top border.
 - **`p.legend(x, y, items, width, lines)`:** a legend. `items` is a list of `(style, text)` pairs and defaults to the full color legend. `lines` adds arrow samples as `(edge style, text)` pairs.
 - **`p.line(id, x1, y1, x2, y2, style)`:** an arrow that isn't attached to any shape.
 - **Draw.io styles:** any style string works, so you can copy one from draw.io via *Edit Style* on a shape. In Python strings, escape special characters the usual way; the helpers handle the XML escaping.

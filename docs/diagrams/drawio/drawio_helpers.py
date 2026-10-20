@@ -73,13 +73,15 @@ class Page:
             f'<mxPoint x="{x1}" y="{y1}" as="sourcePoint"/><mxPoint x="{x2}" y="{y2}" as="targetPoint"/></mxGeometry></mxCell>'
         )
 
-    def group(self, id, label, x, y, w, h, sub=False):
-        """Dashed outline with its label sitting on the top border."""
+    def group(self, id, label, x, y, w, h, sub=False, label_right=False):
+        """Dashed outline with its label sitting on the top border (left end, or right end)."""
         self.box(id, "", SUB if sub else GROUP, x, y, w, h)
         if sub:
-            self.box(f"{id}-label", label, SUB_LABEL, x + 10, y - 10, 12 + 7 * len(label), 20)
+            lw = 12 + 7 * len(label)
+            self.box(f"{id}-label", label, SUB_LABEL, x + w - lw - 10 if label_right else x + 10, y - 10, lw, 20)
         else:
-            self.box(f"{id}-label", label, GROUP_LABEL, x + 20, y - 14, 20 + 8 * len(label), 30)
+            lw = 20 + 8 * len(label)
+            self.box(f"{id}-label", label, GROUP_LABEL, x + w - lw - 20 if label_right else x + 20, y - 14, lw, 30)
 
     def legend(self, x, y, items=LEGEND_ITEMS, width=200, lines=()):
         """Legend of box swatches, plus optional arrow samples as (edge style, text) pairs."""
