@@ -83,9 +83,9 @@ def deployment_model():
     p.box("core", tb("teehr-cloud-core", "Shared platform services: Keycloak, JupyterHub, Prefect server, Spark, Trino, Polaris, APIs, local S3, monitoring"), CORE, 50, 200, 240, 140)
 
     p.group("grp-clients", "Client deployments", 420, 40, 640, 330)
-    client_body = "React dashboards<br>Prefect workflows<br>Warehouse migrations<br>JupyterHub profiles<br>Garden project (local and remote environments)"
-    p.box("hub", tb("teehr-hub (TEEHR Hub)", "CIROH National Water Model evaluation<br><br>" + client_body), CLIENT, 450, 80, 280, 260)
-    p.box("fved", tb("teehr-fved (FVED)", "U.S. Bureau of Reclamation forecast evaluation; adds gridded ingests and RiverWare workflows<br><br>" + client_body), CLIENT, 750, 80, 280, 260)
+    p.box("hub", tb("CIROH TEEHR-Hub", "teehr-hub repository<br>National Water Model evaluation"), CLIENT, 450, 80, 280, 110)
+    p.box("fved", tb("USBR FVED", "teehr-fved repository<br>Forecast evaluation; adds gridded ingests and RiverWare workflows"), CLIENT, 750, 80, 280, 110)
+    p.box("common", tb("Each client deployment adds", "React dashboards<br>Prefect workflows<br>Warehouse migrations<br>JupyterHub profiles<br>Garden project (local and remote environments)"), CLIENT + "fillColor=#ffffff;", 450, 215, 580, 125)
 
     p.box("local", tb("Local environment", "kind cluster, local S3, self-signed certificates"), INFRA, 450, 450, 280, 80)
     p.box("remote", tb("Remote environment", "AWS EKS cluster"), INFRA, 750, 450, 280, 80)
