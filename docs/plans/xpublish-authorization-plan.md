@@ -48,7 +48,7 @@ who guesses a dataset id must still get a 403.
 
 Polaris already maps `realm_access.roles` (derived from Keycloak group
 membership) to its principal roles, and `AuthIdentity` in
-[`xpublish-api/src/auth.py`](../xpublish-api/src/auth.py) already parses that
+[`xpublish-api/src/auth.py`](../../xpublish-api/src/auth.py) already parses that
 claim. Using the same claim means no new Keycloak groups and consistent
 behavior between the Iceberg catalog and the gridded data.
 
@@ -132,7 +132,7 @@ The route and its range handling already exist; this is only the decision.
 
 ### Phase 3 — close out
 
-1. Add rows to [`access-control-matrix.md`](./access-control-matrix.md) for the
+1. Add rows to [`access-control-matrix.md`](../reference/access-control-matrix.md) for the
    new enforcement points.
 2. Full `garden test`, then a browser check that a permitted user sees the
    polygon layer and `noaccess` does not.
@@ -165,7 +165,7 @@ Notes for when it is picked up:
 - Keycloak **token exchange with a different audience strips the
   `realm_access.roles` claim** — this was found the hard way during the Polaris
   work and is recorded in
-  [`polaris-access-control.md`](./polaris-access-control.md). AWS needs a
+  [`polaris-access-control.md`](../reference/polaris-access-control.md). AWS needs a
   specific `aud` for `AssumeRoleWithWebIdentity`; that tension is unresolved.
 - AWS must reach Keycloak's JWKS publicly to register it as an IAM OIDC
   provider. The in-cluster issuer URL will not work.
@@ -176,11 +176,11 @@ Notes for when it is picked up:
 
 ## References
 
-- [`polaris-access-control.md`](./polaris-access-control.md) — the group/role
+- [`polaris-access-control.md`](../reference/polaris-access-control.md) — the group/role
   model this mirrors
 - [`polaris-identity-propagation-plan.md`](./polaris-identity-propagation-plan.md)
   — Pattern C status
 - [`iceberg-auth-storage-roadmap.md`](./iceberg-auth-storage-roadmap.md) —
   Pattern A/B/C taxonomy
-- [`access-control-matrix.md`](./access-control-matrix.md) — per-service
+- [`access-control-matrix.md`](../reference/access-control-matrix.md) — per-service
   enforcement points and the local test personas

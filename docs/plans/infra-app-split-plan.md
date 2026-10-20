@@ -21,9 +21,9 @@ Related follow-on items in the same migration wave:
 Current repo mixes platform and app concerns, and includes account-specific values in app deployment paths.
 
 Examples:
-- Hardcoded account/context in Garden provider config: [project.garden.yml](project.garden.yml#L75)
+- Hardcoded account/context in Garden provider config: [project.garden.yml](../../project.garden.yml.template)
 - Cluster autoscaler module in this repo has been removed; ownership is now in teehr-platform.
-- App service accounts hardcode IRSA role ARNs: [jupyterhub/manifests/jupyter-serviceaccount.yaml.tpl](jupyterhub/manifests/jupyter-serviceaccount.yaml.tpl#L7)
+- App service accounts hardcode IRSA role ARNs: [jupyterhub/manifests/jupyter-serviceaccount.yaml.tpl](../../jupyterhub/manifests/jupyter-serviceaccount.yaml.tpl#L7)
 - Ingress deploys depend on Contour CRDs and cert-manager-provided TLS artifacts.
 - Terraform backend/account concerns now live in teehr-platform.
 
@@ -107,7 +107,7 @@ Current status:
 
 ## Phase 3: Decouple App from Account IDs (3-4 days)
 - Replace hardcoded ARNs/account IDs in app manifests with variables sourced from contract.
-- Remove hardcoded AWS account/cluster context from [project.garden.yml](project.garden.yml).
+- Remove hardcoded AWS account/cluster context from [project.garden.yml](../../project.garden.yml.template).
 - Keep local environment defaults intact where feasible.
 
 Deliverables:
@@ -161,7 +161,7 @@ Deliverables:
 6. Create new platform repo with moved terraform directory.
 7. Completed: cert-manager and contour ownership moved to teehr-platform.
 8. Completed: autoscaler ownership moved to teehr-platform.
-9. Completed: remove platform module dependencies from [ingress/garden.yaml](ingress/garden.yaml).
+9. Completed: remove platform module dependencies from [ingress/garden.yaml](../../ingress/garden.yaml).
 10. Add CI compatibility check that validates required contract values before app deploy.
 
 ## Open Decisions

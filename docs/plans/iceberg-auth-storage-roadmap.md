@@ -11,7 +11,7 @@ Last updated: 2026-09-25
 > `iceberg.rest-catalog.vended-credentials-enabled=true`. No service holds standing warehouse
 > access. (Local KinD is the exception — MinIO has no real STS, so subscoping is skipped there.)
 > The phased plan below is kept as a historical record and no longer describes current state.
-> See [`polaris-access-control.md`](./polaris-access-control.md) for the implemented access control design.
+> See [`polaris-access-control.md`](../reference/polaris-access-control.md) for the implemented access control design.
 
 ---
 

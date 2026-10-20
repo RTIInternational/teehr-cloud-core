@@ -15,7 +15,7 @@ Keycloak uses both groups and roles:
 
 ## Group to Role Mapping (Current Bootstrap)
 
-Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-bootstrap/manifests/realm-configmap.yaml.tpl#L31)
+Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../../keycloak-bootstrap/manifests/realm-configmap.yaml.tpl#L31)
 
 | Group | Realm role(s) granted | Extra client roles |
 |---|---|---|
@@ -66,13 +66,13 @@ To add more personas as permissions evolve, update user entries and group assign
 
 ## Code and Config References
 
-- Frontend authenticated-route guard: [frontend/src/App.jsx](../frontend/src/App.jsx#L16)
-- Frontend admin-role check: [frontend/src/App.jsx](../frontend/src/App.jsx#L56)
-- Frontend navbar admin visibility: [frontend/src/components/common/Navbar.jsx](../frontend/src/components/common/Navbar.jsx#L8)
-- API admin identity dependency: [api/src/auth.py](../api/src/auth.py#L183)
-- API key routes using admin identity: [api/src/routes/auth.py](../api/src/routes/auth.py#L25)
-- Prefect group gate: [prefect-server/manifests/oauth2-proxy.yaml.tpl](../prefect-server/manifests/oauth2-proxy.yaml.tpl#L165)
-- Prefect groups claim source: [prefect-server/manifests/oauth2-proxy.yaml.tpl](../prefect-server/manifests/oauth2-proxy.yaml.tpl#L166)
-- JupyterHub allowed groups: [jupyterhub/garden.yaml](../jupyterhub/garden.yaml#L57)
-- JupyterHub admin groups: [jupyterhub/garden.yaml](../jupyterhub/garden.yaml#L68)
-- Iceberg REST auth status in plan: [plan.md](../plan.md#L46)
+- Frontend authenticated-route guard: [frontend/src/App.jsx](../../frontend/src/App.jsx#L16)
+- Frontend admin-role check: [frontend/src/App.jsx](../../frontend/src/App.jsx#L56)
+- Frontend navbar admin visibility: [frontend/src/components/common/Navbar.jsx](../../frontend/src/components/common/Navbar.jsx#L8)
+- API admin identity dependency: [api/src/auth.py](../../api/src/auth.py#L183)
+- API key routes using admin identity: [api/src/routes/auth.py](../../api/src/routes/auth.py#L25)
+- Prefect group gate: [prefect-server/manifests/oauth2-proxy.yaml.tpl](../../prefect-server/manifests/oauth2-proxy.yaml.tpl#L165)
+- Prefect groups claim source: [prefect-server/manifests/oauth2-proxy.yaml.tpl](../../prefect-server/manifests/oauth2-proxy.yaml.tpl#L166)
+- JupyterHub allowed groups: [jupyterhub/garden.yaml](../../jupyterhub/garden.yaml#L57)
+- JupyterHub admin groups: [jupyterhub/garden.yaml](../../jupyterhub/garden.yaml#L68)
+- Iceberg REST auth status in plan: [plan.md](../../plan.md#L46)

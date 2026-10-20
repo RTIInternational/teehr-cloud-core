@@ -17,7 +17,7 @@ Last updated: 2026-07-30
 > - Pattern C: S3 credential vending per user (currently shared MinIO/S3 credentials)
 > - Per-user table-level grants via optional principal sync
 >
-> See [`polaris-access-control.md`](./polaris-access-control.md) for the current design.
+> See [`polaris-access-control.md`](../reference/polaris-access-control.md) for the current design.
 
 ---
 
@@ -799,7 +799,7 @@ Preferred flow:
 
 Concrete broker/auth artifacts:
 
-- broker contract: `docs/polaris-broker-api-contract.md`
+- broker contract: `docs/reference/polaris-broker-api-contract.md`
 - published Spark AuthManager package: `org.rtiamanzi:teehr-iceberg-authmanager`
 - manager class in package: `org.teehr.iceberg.auth.TeehrBrokerAuthManager`
 
