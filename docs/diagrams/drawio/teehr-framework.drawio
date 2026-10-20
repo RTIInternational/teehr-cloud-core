@@ -1,0 +1,484 @@
+<mxfile host="65bd71144e">
+    <diagram id="page-0" name="Overall architecture">
+        <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1580" pageHeight="960" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="users" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" value="&lt;b&gt;Users&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Web browser: dashboards, notebooks, workflow UI&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="50" width="440" x="560" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-cloud" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=2;dashPattern=8 8;strokeColor=#363636;" value="" vertex="1">
+                    <mxGeometry height="690" width="1040" x="260" y="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-cloud-label" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=14;fontStyle=1;fontColor=#363636;" value="TEEHR-Cloud (Kubernetes)" vertex="1">
+                    <mxGeometry height="30" width="212" x="280" y="96" as="geometry"/>
+                </mxCell>
+                <mxCell id="ingress" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Ingress&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;TLS termination and routing (Contour, cert-manager)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="40" width="780" x="290" y="145" as="geometry"/>
+                </mxCell>
+                <mxCell id="keycloak" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Identity and access&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Keycloak: single sign-on (OIDC), group- and role-based access, API keys&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="40" width="780" x="290" y="195" as="geometry"/>
+                </mxCell>
+                <mxCell id="monitor" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Monitoring&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Prometheus, Grafana&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="90" width="180" x="1090" y="145" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-apps" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=1;dashPattern=4 4;strokeColor=#888888;" value="" vertex="1">
+                    <mxGeometry height="130" width="1000" x="280" y="255" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-apps-label" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=12;fontStyle=3;fontColor=#555555;spacingLeft=4;" value="Applications" vertex="1">
+                    <mxGeometry height="20" width="96" x="290" y="245" as="geometry"/>
+                </mxCell>
+                <mxCell id="pyenv" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=bottom;spacingBottom=2;" value="&lt;b&gt;TEEHR-Python environment&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Spark for Iceberg tables; xarray / Icechunk for gridded data&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="113" width="390" x="285" y="265" as="geometry"/>
+                </mxCell>
+                <mxCell id="workflows" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;b&gt;Prefect workflows&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Data ingests, metric calculations, maintenance (Prefect server)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="72" width="180" x="295" y="272" as="geometry"/>
+                </mxCell>
+                <mxCell id="jupyter" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;JupyterHub&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Notebooks for interactive evaluation&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="72" width="180" x="485" y="272" as="geometry"/>
+                </mxCell>
+                <mxCell id="api" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;REST / Download API&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;FastAPI: locations, timeseries, metrics, downloads&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="108" width="180" x="690" y="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="dash" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;b&gt;Dashboards&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Purpose-built web frontend (React)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="108" width="180" x="890" y="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="xpub" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Gridded data and vector tile API&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;xpublish: Zarr datasets, PMTiles vector tiles&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="108" width="180" x="1090" y="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-compute" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=1;dashPattern=4 4;strokeColor=#888888;" value="" vertex="1">
+                    <mxGeometry height="90" width="1000" x="280" y="410" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-compute-label" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=12;fontStyle=3;fontColor=#555555;spacingLeft=4;" value="Compute" vertex="1">
+                    <mxGeometry height="20" width="61" x="290" y="400" as="geometry"/>
+                </mxCell>
+                <mxCell id="spark" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Apache Spark&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Distributed processing; executor pods scale on Kubernetes&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="60" width="380" x="290" y="425" as="geometry"/>
+                </mxCell>
+                <mxCell id="trino" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Trino&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Distributed SQL queries&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="60" width="180" x="690" y="425" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-wh" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=1;dashPattern=4 4;strokeColor=#888888;" value="" vertex="1">
+                    <mxGeometry height="265" width="1000" x="280" y="520" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-wh-label" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=12;fontStyle=3;fontColor=#555555;spacingLeft=4;" value="Data warehouse" vertex="1">
+                    <mxGeometry height="20" width="110" x="290" y="510" as="geometry"/>
+                </mxCell>
+                <mxCell id="polaris" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;Apache Polaris&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Iceberg REST catalog: table metadata, access control&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="55" width="580" x="290" y="540" as="geometry"/>
+                </mxCell>
+                <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;" value="&lt;b&gt;Object storage (S3)&lt;/b&gt;" vertex="1">
+                    <mxGeometry height="155" width="980" x="290" y="615" as="geometry"/>
+                </mxCell>
+                <mxCell id="iceberg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;fillColor=#ffffff;" value="&lt;b&gt;Evaluation-ready tables (Apache Iceberg / Parquet)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Domains, locations, primary and secondary timeseries, metrics&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="100" width="540" x="310" y="650" as="geometry"/>
+                </mxCell>
+                <mxCell id="gridded" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;fillColor=#ffffff;" value="&lt;b&gt;Gridded datasets (Icechunk repositories)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Zarr / Icechunk stores, GeoZarr pyramids; not registered in Polaris&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="100" width="170" x="890" y="650" as="geometry"/>
+                </mxCell>
+                <mxCell id="tiles" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;fillColor=#ffffff;" value="&lt;b&gt;Vector tiles (PMTiles)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Map layers built by workflows&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="100" width="140" x="1110" y="650" as="geometry"/>
+                </mxCell>
+                <mxCell id="sources" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;align=left;spacingLeft=6;" value="&lt;b&gt;External data sources&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;USGS observations&lt;br&gt;National Water Model (retrospective and forecasts, point and gridded)&lt;br&gt;NWPS / RFC forecasts&lt;br&gt;NRCS water supply forecasts&lt;br&gt;Other gridded datasets&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="175" width="210" x="20" y="255" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-clients" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" value="&lt;b&gt;External clients&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Local TEEHR-Python / Spark sessions&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="75" width="210" x="20" y="530" as="geometry"/>
+                </mxCell>
+                <mxCell id="py-pkg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="&lt;b&gt;TEEHR-Python package&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Fetching, loading and validation, querying, metrics, calculated fields; runs locally or in the cloud&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="110" width="210" x="20" y="650" as="geometry"/>
+                </mxCell>
+                <mxCell id="infra-cloud" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="&lt;b&gt;Cloud infrastructure (AWS, infrastructure as code)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;EKS, VPC, IAM/IRSA, S3, ECR, EFS, cluster autoscaler&lt;br&gt;Terraform (TEEHR Hub) / OpenTofu (FVED)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="65" width="640" x="260" y="830" as="geometry"/>
+                </mxCell>
+                <mxCell id="infra-local" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="&lt;b&gt;Local development&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;kind cluster with local S3&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="65" width="380" x="920" y="830" as="geometry"/>
+                </mxCell>
+                <mxCell id="garden" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontStyle=2;fontColor=#555555;" value="Services deployed with Garden; the shared core (teehr-cloud-core) is included in each client deployment as a git submodule" vertex="1">
+                    <mxGeometry height="30" width="1040" x="260" y="900" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#bbbbbb;" value="" vertex="1">
+                    <mxGeometry height="180" width="220" x="1340" y="255" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;" value="&lt;b&gt;Legend&lt;/b&gt;" vertex="1">
+                    <mxGeometry height="20" width="100" x="1350" y="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw0" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="1352" y="287" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx0" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="Shared core (teehr-cloud-core)" vertex="1">
+                    <mxGeometry height="24" width="168" x="1388" y="284" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="1352" y="315" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx1" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="Client deployment (CIROH, USBR)" vertex="1">
+                    <mxGeometry height="24" width="168" x="1388" y="312" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="1352" y="343" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx2" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="TEEHR-Python" vertex="1">
+                    <mxGeometry height="24" width="168" x="1388" y="340" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="1352" y="371" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx3" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="Infrastructure" vertex="1">
+                    <mxGeometry height="24" width="168" x="1388" y="368" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="1352" y="399" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx4" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="External" vertex="1">
+                    <mxGeometry height="24" width="168" x="1388" y="396" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-users" edge="1" parent="1" source="users" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" target="ingress" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-src" edge="1" parent="1" source="sources" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=1;exitY=0.25;entryX=0;entryY=0.3;" target="workflows" value="fetch">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-py-spark" edge="1" parent="1" source="pyenv" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="spark" value="Iceberg tables">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-dash-api" edge="1" parent="1" source="dash" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="api" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-dash-xpub" edge="1" parent="1" source="dash" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="xpub" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-api-trino" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" target="trino" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-spark-pol" edge="1" parent="1" source="spark" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=1;entryX=0.33;entryY=0;" target="polaris" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-trino-pol" edge="1" parent="1" source="trino" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=1;entryX=0.845;entryY=0;" target="polaris" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-pol-ice" edge="1" parent="1" source="polaris" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="iceberg" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-xpub-grid" edge="1" parent="1" source="xpub" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.03;exitY=1;entryX=1;entryY=0.5;" target="gridded" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1095" y="700"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-xpub-tiles" edge="1" parent="1" source="xpub" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.6;exitY=1;entryX=0.629;entryY=0;" target="tiles" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-py-grid" edge="1" parent="1" source="pyenv" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.95;exitY=1;entryX=0.529;entryY=0;jumpStyle=arc;jumpSize=10;" target="gridded" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="656" y="397"/>
+                            <mxPoint x="980" y="397"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-py-tiles" edge="1" parent="1" source="pyenv" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.95;exitY=1;entryX=0.286;entryY=0;jumpStyle=arc;jumpSize=10;" target="tiles" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="656" y="397"/>
+                            <mxPoint x="980" y="397"/>
+                            <mxPoint x="980" y="632"/>
+                            <mxPoint x="1150" y="632"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="py-grid-label" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="&lt;b&gt;Direct object storage access&lt;/b&gt;&lt;br&gt;Icechunk reads and writes;&lt;br&gt;PMTiles built by workflows&lt;br&gt;(bypasses Polaris)" vertex="1">
+                    <mxGeometry height="75" width="170" x="990" y="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-ext-pol" edge="1" parent="1" source="ext-clients" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=1;exitY=0.5;entryX=0;entryY=0.5;dashed=1;" target="polaris" value="Iceberg REST">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-pkg-ext" edge="1" parent="1" source="py-pkg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;dashed=1;" target="ext-clients" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="page-1" name="Core and client deployments">
+        <mxGraphModel dx="1148" dy="806" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="760" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="grp-repos" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=2;dashPattern=8 8;strokeColor=#363636;" value="" vertex="1">
+                    <mxGeometry height="330" width="300" x="20" y="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-repos-label" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=14;fontStyle=1;fontColor=#363636;" value="Shared components" vertex="1">
+                    <mxGeometry height="30" width="156" x="40" y="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="teehr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="&lt;b&gt;teehr&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;TEEHR-Python package&lt;br&gt;(PyPI / GitHub)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="80" width="240" x="50" y="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="core" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;b&gt;teehr-cloud-core&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Shared platform services: Keycloak, JupyterHub, Prefect server, Spark, Trino, Polaris, APIs, local S3, monitoring&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="140" width="240" x="50" y="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-clients" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=2;dashPattern=8 8;strokeColor=#363636;" value="" vertex="1">
+                    <mxGeometry height="330" width="640" x="420" y="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-clients-label" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=14;fontStyle=1;fontColor=#363636;" value="Client deployments" vertex="1">
+                    <mxGeometry height="30" width="164" x="440" y="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="hub" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;b&gt;teehr-hub (TEEHR Hub)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;CIROH National Water Model evaluation&lt;br&gt;&lt;br&gt;React dashboards&lt;br&gt;Prefect workflows&lt;br&gt;Warehouse migrations&lt;br&gt;JupyterHub profiles&lt;br&gt;Garden project (local and remote environments)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="260" width="280" x="450" y="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="fved" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;b&gt;teehr-fved (FVED)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;U.S. Bureau of Reclamation forecast evaluation; adds gridded ingests and RiverWare workflows&lt;br&gt;&lt;br&gt;React dashboards&lt;br&gt;Prefect workflows&lt;br&gt;Warehouse migrations&lt;br&gt;JupyterHub profiles&lt;br&gt;Garden project (local and remote environments)&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="260" width="280" x="750" y="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="local" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="&lt;b&gt;Local environment&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;kind cluster, local S3, self-signed certificates&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="80" width="280" x="450" y="450" as="geometry"/>
+                </mxCell>
+                <mxCell id="remote" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="&lt;b&gt;Remote environment&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;AWS EKS cluster&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="80" width="280" x="750" y="450" as="geometry"/>
+                </mxCell>
+                <mxCell id="iac" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="&lt;b&gt;Infrastructure as code&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;teehr-cloud-platform (Terraform): TEEHR Hub&lt;br&gt;aws-project-amzifved-infrastructure (OpenTofu): FVED&lt;br&gt;Plan/apply via GitHub Actions&lt;/font&gt;" vertex="1">
+                    <mxGeometry height="110" width="280" x="750" y="610" as="geometry"/>
+                </mxCell>
+                <mxCell id="note" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontStyle=2;fontColor=#555555;" value="Client deployments pick up teehr changes by bumping the pinned git SHA, and core changes by updating the submodule pointer" vertex="1">
+                    <mxGeometry height="60" width="300" x="20" y="400" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-teehr" edge="1" parent="1" source="teehr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=1;exitY=0.5;entryX=0;entryY=0.17;" target="grp-clients" value="pip install&lt;br&gt;(pinned git SHA)">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-core" edge="1" parent="1" source="core" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=1;exitY=0.5;entryX=0;entryY=0.82;" target="grp-clients" value="git submodule">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-local" edge="1" parent="1" source="grp-clients" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" target="local" value="garden deploy">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-remote" edge="1" parent="1" source="grp-clients" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.72;exitY=1;entryX=0.5;entryY=0;" target="remote" value="garden deploy">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-iac" edge="1" parent="1" source="iac" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" target="remote" value="provisions">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#bbbbbb;" value="" vertex="1">
+                    <mxGeometry height="152" width="260" x="20" y="560" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;" value="&lt;b&gt;Legend&lt;/b&gt;" vertex="1">
+                    <mxGeometry height="20" width="100" x="30" y="565" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw0" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="32" y="592" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx0" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="Shared core (teehr-cloud-core)" vertex="1">
+                    <mxGeometry height="24" width="208" x="68" y="589" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="32" y="620" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx1" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="Client deployment" vertex="1">
+                    <mxGeometry height="24" width="208" x="68" y="617" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="32" y="648" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx2" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="TEEHR-Python" vertex="1">
+                    <mxGeometry height="24" width="208" x="68" y="645" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="" vertex="1">
+                    <mxGeometry height="18" width="28" x="32" y="676" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx3" parent="1" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" value="Infrastructure" vertex="1">
+                    <mxGeometry height="24" width="208" x="68" y="673" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="page-2" name="End-to-end data flow">
+        <mxGraphModel dx="1440" dy="620" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="620" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="prefect" value="Scheduled and orchestrated by Prefect; processing runs on Spark executors in Kubernetes" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontStyle=2;fontColor=#555555;dashed=1;strokeColor=#888888;dashPattern=4 4;" vertex="1" parent="1">
+                    <mxGeometry x="195" y="60" width="1025" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="sources" value="&lt;b&gt;External data sources&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;USGS, NWM, NWPS/RFC, NRCS, gridded datasets&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="20" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="ingest" value="&lt;b&gt;Ingest&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Fetch, validate against the data model, load (append / upsert)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="195" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="sources" target="ingest">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="core-tables" value="&lt;b&gt;Core tables&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Locations, attributes, crosswalks; primary and secondary timeseries&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="370" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="ingest" target="core-tables">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="join" value="&lt;b&gt;Join and enrich&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Pair primary and secondary timeseries by location and time; add calculated fields&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="545" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="core-tables" target="join">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="joined" value="&lt;b&gt;Joined timeseries&lt;/b&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="720" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="join" target="joined">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="metrics" value="&lt;b&gt;Compute metrics&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Deterministic, probabilistic and signature metrics; grouping, filtering, bootstrapping&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="895" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="joined" target="metrics">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="outputs" value="&lt;b&gt;Metrics and summary tables&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Metrics; location, configuration and completeness summaries; vector tiles&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="1070" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="metrics" target="outputs">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="serve" value="&lt;b&gt;Access&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;REST / Download API (Trino), dashboards, gridded data and vector tile API&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="1245" y="140" width="150" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;" edge="1" parent="1" source="outputs" target="serve">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="jupyter" value="&lt;b&gt;Interactive analysis (JupyterHub + TEEHR-Python)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Query any table, compute ad hoc metrics, visualize&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="370" y="400" width="680" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-jh-core" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.03;exitY=0;entryX=0.5;entryY=1;startArrow=block;startFill=1;dashed=1;" edge="1" parent="1" source="jupyter" target="core-tables">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-jh-joined" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=0;entryX=0.5;entryY=1;startArrow=block;startFill=1;dashed=1;" edge="1" parent="1" source="jupyter" target="joined">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-jh-out" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.97;exitY=0;entryX=0.5;entryY=1;startArrow=block;startFill=1;dashed=1;" edge="1" parent="1" source="jupyter" target="outputs">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="note" value="The same steps run on a laptop with TEEHR-Python and a local Iceberg warehouse" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontStyle=2;fontColor=#555555;" vertex="1" parent="1">
+                    <mxGeometry x="370" y="490" width="680" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#bbbbbb;" vertex="1" parent="1">
+                    <mxGeometry x="1190" y="400" width="230" height="152" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+                    <mxGeometry x="1200" y="405" width="100" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw0" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="1202" y="432" width="28" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx0" value="Workflow step (client deployment)" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+                    <mxGeometry x="1238" y="429" width="178" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw1" value="" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="1202" y="460" width="28" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx1" value="Warehouse table (Iceberg)" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+                    <mxGeometry x="1238" y="457" width="178" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw2" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="1202" y="488" width="28" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx2" value="Shared core service" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+                    <mxGeometry x="1238" y="485" width="178" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-sw3" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="1202" y="516" width="28" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-tx3" value="External" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+                    <mxGeometry x="1238" y="513" width="178" height="24" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="page-3" name="TEEHR-Python overview">
+        <mxGraphModel dx="1300" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="700" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="sources" value="&lt;b&gt;Data sources&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;USGS observations; NWM point and gridded, retrospective and forecasts&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="20" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="files" value="&lt;b&gt;User data&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;CSV, Parquet, NetCDF, GeoJSON, ...&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="400" y="20" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-ev" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=2;dashPattern=8 8;strokeColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="20" y="120" width="1000" height="560" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-ev-label" value="Evaluation (local or remote; read-only or read-write)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=14;fontStyle=1;fontColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="40" y="106" width="444" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="fetch" value="&lt;b&gt;ev.fetch&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;USGS and NWM (point and gridded, retrospective and forecasts)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="160" width="300" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="load" value="&lt;b&gt;ev.load&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Locations, timeseries, crosswalks, attributes; validated against the data model&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="380" y="160" width="300" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="generate" value="&lt;b&gt;ev.generate&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Benchmark and signature timeseries: persistence, reference forecasts, normals&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="700" y="160" width="300" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-tables" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=1;dashPattern=4 4;strokeColor=#888888;" vertex="1" parent="1">
+                    <mxGeometry x="40" y="280" width="960" height="170" as="geometry"/>
+                </mxCell>
+                <mxCell id="grp-tables-label" value="Tables and views" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fillColor=default;fontSize=12;fontStyle=3;fontColor=#555555;spacingLeft=4;" vertex="1" parent="1">
+                    <mxGeometry x="50" y="270" width="124" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="domains" value="&lt;b&gt;Domain tables&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Units, variables, attributes, configurations, configuration pairs&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="300" width="220" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="locs" value="&lt;b&gt;Location tables&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Locations, location attributes, crosswalks, ID aliases&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="300" y="300" width="220" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="ts" value="&lt;b&gt;Timeseries tables&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Primary (observed) and secondary (simulated / forecast)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="540" y="300" width="200" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="views" value="&lt;b&gt;Views&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Joined timeseries, primary / secondary timeseries, location attributes&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="760" y="300" width="220" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="query" value="&lt;b&gt;Query&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Filtering, method chaining, SQL&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="480" width="220" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="calc" value="&lt;b&gt;Calculated fields&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Row-level and timeseries-aware&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="300" y="480" width="220" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="metrics" value="&lt;b&gt;ev.metrics&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Deterministic, probabilistic (ensemble) and signature metrics; group by, filter, bootstrap&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="540" y="480" width="200" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="write" value="&lt;b&gt;I/O&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Write (append, upsert, overwrite, ...), download, extract&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="760" y="480" width="220" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="spark" value="&lt;b&gt;Apache Spark&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Local session or Kubernetes cluster&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="600" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="catalog" value="&lt;b&gt;Apache Iceberg catalog&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Local (JDBC / SQLite) or remote (REST)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="380" y="600" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="storage" value="&lt;b&gt;Storage&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Local disk or S3 object storage&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="700" y="600" width="300" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="outputs" value="&lt;b&gt;Outputs&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Spark, pandas and GeoPandas DataFrames; visualization (e.g., hvPlot)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fontSize=12;fillColor=#ffffff;strokeColor=#363636;" vertex="1" parent="1">
+                    <mxGeometry x="1080" y="400" width="190" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-src" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="sources" target="fetch">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-files" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="files" target="load">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-out" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#363636;fontSize=11;labelBackgroundColor=default;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="grp-ev" target="outputs">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="page-4" name="Local warehouse directory">
+        <mxGraphModel dx="760" dy="440" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="760" pageHeight="440" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="tree" value="my_evaluation/&lt;br&gt;├──&amp;nbsp;teehr.log&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;log&amp;nbsp;file&amp;nbsp;(when&amp;nbsp;logging&amp;nbsp;is&amp;nbsp;enabled)&lt;br&gt;└──&amp;nbsp;local/&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;Iceberg&amp;nbsp;warehouse&amp;nbsp;(catalog&amp;nbsp;&quot;local&quot;)&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;local_catalog.db&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;JDBC&amp;nbsp;catalog&amp;nbsp;(SQLite)&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;version&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;evaluation&amp;nbsp;version&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;cache/&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;temporary&amp;nbsp;fetching&amp;nbsp;and&amp;nbsp;loading&amp;nbsp;files&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;schema_evolution/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;│&amp;nbsp;&amp;nbsp;&amp;nbsp;└──&amp;nbsp;schema_version_history/&amp;nbsp;#&amp;nbsp;applied&amp;nbsp;schema&amp;nbsp;migrations&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;└──&amp;nbsp;teehr/&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;namespace:&amp;nbsp;one&amp;nbsp;directory&amp;nbsp;per&amp;nbsp;table&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;units/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;variables/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;attributes/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;configurations/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;configuration_pairs/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;locations/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;location_attributes/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;location_crosswalks/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;location_id_aliases/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;primary_timeseries/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;│&amp;nbsp;&amp;nbsp;&amp;nbsp;├──&amp;nbsp;data/&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;Parquet&amp;nbsp;data&amp;nbsp;files&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;│&amp;nbsp;&amp;nbsp;&amp;nbsp;└──&amp;nbsp;metadata/&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;#&amp;nbsp;Iceberg&amp;nbsp;metadata&amp;nbsp;(JSON,&amp;nbsp;Avro)&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;└──&amp;nbsp;secondary_timeseries/" style="text;html=1;whiteSpace=nowrap;align=left;verticalAlign=top;fontFamily=Courier New;fontSize=13;spacing=12;rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="20" y="20" width="720" height="400" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
