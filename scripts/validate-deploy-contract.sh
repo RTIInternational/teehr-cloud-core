@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Validates the deployment contract file consumed by the remote deploy workflow.
+# Validates a deploy target file: the Garden varfile that supplies a remote
+# cluster's values (see docs/platform-app-deployment-contract.md).
 # Fails fast when required keys are missing or empty.
+#
+# Usage: validate-deploy-contract.sh [deploy-targets/<target>.yml]
+# Defaults to deploy-targets/$DEPLOY_TARGET.yml.
 
-CONFIG_PATH="${1:-configs/deploy.remote-aws-srvs.yaml}"
+CONFIG_PATH="${1:-deploy-targets/${DEPLOY_TARGET:-}.yml}"
 
 if ! command -v yq >/dev/null 2>&1; then
   echo "ERROR: yq is required for contract validation."
@@ -12,16 +16,26 @@ if ! command -v yq >/dev/null 2>&1; then
 fi
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
-  echo "ERROR: Deployment contract file not found: $CONFIG_PATH"
+  echo "ERROR: Deploy target file not found: $CONFIG_PATH"
   exit 1
 fi
 
 required_keys=(
-  "clusterArn"
-  "clusterRoleArn"
-  "actionRoleArn"
-  "awsRegion"
-  "clusterName"
+  "aws.region"
+  "remoteCluster.contextArn"
+  "remoteCluster.ecrRegistry"
+  "hostname"
+  "nfsServerDns"
+  "irsa.polarisRoleArn"
+  "irsa.prefectJobRoleArn"
+  "irsa.xpublishRoleArn"
+  "polaris.catalogWarehouse"
+  "polaris.catalogRoleArn"
+  "icechunk.bucket"
+  "pmtiles.bucket"
+  "deploy.clusterName"
+  "deploy.clusterRoleArn"
+  "deploy.actionRoleArn"
 )
 
 failures=0
@@ -36,11 +50,20 @@ for key in "${required_keys[@]}"; do
   fi
 done
 
+# The context ARN names the cluster and region too; they must agree.
+region="$(yq eval '.aws.region' "$CONFIG_PATH")"
+cluster_name="$(yq eval '.deploy.clusterName' "$CONFIG_PATH")"
+context_arn="$(yq eval '.remoteCluster.contextArn' "$CONFIG_PATH")"
+if [[ "$context_arn" != arn:aws:eks:${region}:*:cluster/${cluster_name} ]]; then
+  echo "FAIL: remoteCluster.contextArn (${context_arn}) doesn't match aws.region/deploy.clusterName"
+  failures=$((failures + 1))
+fi
+
 if [[ "$failures" -gt 0 ]]; then
   echo ""
-  echo "Deployment contract validation failed with ${failures} issue(s)."
+  echo "Deploy target validation failed with ${failures} issue(s)."
   exit 1
 fi
 
 echo ""
-echo "Deployment contract validation passed."
+echo "Deploy target validation passed."

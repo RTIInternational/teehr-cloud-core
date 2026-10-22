@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased (deploy targets)
+
+### Summary
+- Cluster-specific deployment values now come from a per-cluster deploy target file, so one deployment can target
+  more than one cluster (RTIInternational/teehr-hub#462).
+
+### What Changed
+- `docs/platform-app-deployment-contract.md`: deploy target files (`deploy-targets/<target>.yml`, a Garden varfile
+  chosen by `DEPLOY_TARGET`) replace `configs/deploy.remote-aws-srvs.yaml`; lists required and optional keys.
+- `scripts/validate-deploy-contract.sh` validates a target file and checks the context ARN against the region
+  and cluster name. Deployment workflows calling it need updating.
+- Polaris `AWS_REGION` comes from `var.aws.region` instead of a hardcoded `us-east-2`.
+- us-east-2 defaults in the project template and Spark tests changed to us-east-1.
+
+### Why
+- Adding a Garden environment per cluster would mean editing every `environment.name == "remote"` check here,
+  which affects all deployments.
+
 ## 2026-07-07
 
 ### Summary

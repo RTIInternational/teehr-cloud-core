@@ -29,7 +29,6 @@ logger = logging.getLogger("teehr-api")
 app = FastAPI(
     title="TEEHR Dashboard API",
     version="0.1.0",
-    timeout=config.REQUEST_TIMEOUT,
     swagger_ui_init_oauth={
         "clientId": config.KEYCLOAK_SWAGGER_CLIENT_ID,
         "usePkceWithAuthorizationCodeGrant": True,
