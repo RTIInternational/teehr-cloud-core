@@ -12,6 +12,7 @@ keys are used, and repos you may not read are refused here.
 """
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import icechunk as ic
@@ -80,13 +81,20 @@ def _request_credentials() -> dict:
 
 
 class IcechunkCredentials:
-    """Icechunk's credential callback: fetches new read-only S3 credentials each time it's called.
+    """Icechunk's credential callback: fetches new read-only S3 credentials when the current ones expire.
 
+    Starts from the response the repo was opened with, so each open makes one STS call.
     Plain attributes only, because Icechunk pickles it.
     """
 
+    def __init__(self, initial: dict):
+        self.initial = initial
+
     def __call__(self) -> ic.S3StaticCredentials:
-        body = _request_credentials()
+        body = self.initial
+        expires_at = body["expires_at_epoch_seconds"]
+        if expires_at is None or expires_at - time.time() <= EXPIRY_MARGIN.total_seconds():
+            body = _request_credentials()
         credentials = body["credentials"]
         if credentials is None:
             raise PermissionError("xpublish-api issued no credentials: you may not read any Icechunk repo")
@@ -116,10 +124,11 @@ def _anonymous_credentials(url_prefix: str):
     return None
 
 
-def _storage(bucket: str, prefix: str) -> ic.storage.Storage:
+def _storage(body: dict, prefix: str) -> ic.storage.Storage:
+    bucket = body["bucket"]
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
     if USE_STS:
-        return ic.s3_storage(bucket=bucket, prefix=prefix, region=region, get_credentials=IcechunkCredentials())
+        return ic.s3_storage(bucket=bucket, prefix=prefix, region=region, get_credentials=IcechunkCredentials(body))
     # Local S3: the notebook's own keys, and the in-cluster endpoint, as the ingest flows do
     kwargs = {"from_env": True, "region": region}
     endpoint = os.getenv("REMOTE_CATALOG_S3_ENDPOINT")
@@ -137,7 +146,7 @@ def open_icechunk_repo(name: str) -> ic.Repository:
     body = _request_credentials()
     if name not in body["repos"]:
         raise PermissionError(f"You may not read Icechunk repo '{name}'")
-    storage = _storage(body["bucket"], f"{body['prefix']}/{name}")
+    storage = _storage(body, f"{body['prefix']}/{name}")
     config = ic.Repository.fetch_config(storage)
     containers = (config.virtual_chunk_containers if config else None) or {}
     return ic.Repository.open(
