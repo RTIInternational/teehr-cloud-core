@@ -54,7 +54,7 @@ RUN ARCH=$(uname -m) && \
         mamba clean -afy; \
     fi
 
-# Install Python packages
+# Install Python packages (icechunk on the same minor version as xpublish-api, which reads the same repos)
 RUN pip install --no-cache-dir \
     selenium \
     'dask[distributed]' \
@@ -66,7 +66,7 @@ RUN pip install --no-cache-dir \
     nbconvert \
     trino \
     plotly \
-    icechunk
+    "icechunk~=2.2.2"
 
 # Install TEEHR (set GDAL config for ARM64 builds)
 RUN ARCH=$(uname -m) && \
@@ -74,6 +74,11 @@ RUN ARCH=$(uname -m) && \
     export GDAL_CONFIG=/usr/bin/gdal-config; \
     fi && \
     GIT_LFS_SKIP_SMUDGE=1 pip install --no-cache-dir "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}"
+
+# Notebook client for Icechunk repos (icechunk_access). --no-deps keeps the pinned teehr and
+# icechunk above; the source is removed so only the root-owned installed copy remains.
+COPY icechunk_access /tmp/icechunk_access
+RUN pip install --no-cache-dir --no-deps /tmp/icechunk_access && rm -rf /tmp/icechunk_access
 
 RUN mkdir -p /opt/teehr && chown -R ${NB_USER}:${NB_USER} /opt/teehr
 

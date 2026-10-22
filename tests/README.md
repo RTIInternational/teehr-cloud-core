@@ -1,6 +1,9 @@
-# Polaris Integration Tests
+# Platform Integration Tests
 
-This directory contains **Python-based integration tests** for the Polaris + Keycloak + Spark ecosystem running in KinD.
+This directory contains **Python-based integration tests** running in KinD for:
+
+- the Polaris + Keycloak + Spark ecosystem (Iceberg access);
+- xpublish-api's Icechunk access rules.
 
 ## Test Files
 
@@ -9,6 +12,7 @@ This directory contains **Python-based integration tests** for the Polaris + Key
 - `polaris_namespace_test.py` — Validates namespace provisioning
 - `polaris_roles_test.py` — Validates role-based access control setup
 - `spark_session_auth_test.py` — Validates Spark session creation and write permissions
+- `xpublish_access_test.py` — Validates Icechunk access rules enforced by xpublish-api
 
 ## What These Tests Do
 
@@ -42,6 +46,16 @@ These are **end-to-end integration tests** that validate:
    - Poweruser **can create tables** in `iceberg.teehr` namespace
    - Read-only user **cannot create tables** (write denied)
 
+6. **Icechunk Access Rules** (`xpublish-access-enforcement`)
+   - Creates two throwaway repos, `authz_test_open` and `authz_test_restricted`, and deletes them afterwards
+   - For `admin`, `poweruser`, `user` and `noaccess`: dataset listings, dataset routes (and `_raw_data` ids),
+     the notebook credentials route and vector-tile listings match the deployed rules (xpublish-api's
+     `TEEHR_ACCESS_RULES`)
+   - `noaccess` has no data roles; no token or a malformed token is 401; `/health` lists no datasets;
+     `GET /api/datasets` and unrecognised dataset routes are 403; anonymous S3 reads fail
+   - To exercise a restriction, the deployment's local rules should restrict `authz_test_restricted`
+     (e.g. to `["admin"]`); otherwise those checks are skipped
+
 ## Running the Tests
 
 ### Run all tests through Garden:
@@ -54,6 +68,7 @@ garden test
 garden test polaris-keycloak-users
 garden test polaris-oidc-token-validation
 garden test spark-session-auth
+garden test xpublish-access-enforcement
 ```
 
 ### Run tests locally (for development):
@@ -65,6 +80,8 @@ python3 tests/polaris_namespace_test.py
 python3 tests/polaris_roles_test.py
 python3 tests/spark_session_auth_test.py
 ```
+
+`xpublish_access_test.py` needs in-cluster service names and xpublish-api's ConfigMap values, so run it through Garden.
 
 ### Run tests with verbose output:
 ```bash
@@ -80,6 +97,8 @@ Garden automatically resolves dependencies. The test order is:
 3. `polaris-namespace-list` (runs after `deploy.polaris-bootstrap`)
 4. `polaris-role-acl-validation` (runs after `deploy.polaris-bootstrap`)
 5. `spark-session-auth` (runs after `deploy.polaris-bootstrap` and `deploy.spark`)
+
+`xpublish-access-enforcement` is independent of the Polaris tests; it runs after `deploy.xpublish-api` and `deploy.keycloak-local-users-bootstrap`.
 
 ## Future Tests
 

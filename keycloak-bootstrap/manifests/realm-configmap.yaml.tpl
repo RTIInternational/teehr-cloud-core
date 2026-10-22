@@ -37,6 +37,7 @@ data:
           { "name": "teehr-read-only" },
           { "name": "teehr-read-write" },
           { "name": "iceberg-catalog-admin" },
+          { "name": "icechunk-read-only" },
         ]
       },
       "groups": [
@@ -84,11 +85,16 @@ data:
         {
           "name": "iceberg-catalog-admins",
           "realmRoles": ["iceberg-catalog-admin"]
+        },
+        {
+          "name": "icechunk-read-only",
+          "realmRoles": ["icechunk-read-only"]
         }
       ],
       "defaultGroups": [
         "/basic-user",
-        "/teehr-read-only"
+        "/teehr-read-only",
+        "/icechunk-read-only"
       ],
       "clients": [
         {
