@@ -147,44 +147,61 @@ spec:
               name: broker-secrets
               key: refresh-token-encryption-secret
         - name: API_KEYS_DB_HOST
-          value: keycloak-pg
+          value: app-pg
         - name: API_KEYS_DB_PORT
           value: "5432"
         - name: API_KEYS_DB_NAME
           valueFrom:
             secretKeyRef:
-              name: keycloak-db-secrets
+              name: app-db-secrets
               key: database
         - name: API_KEYS_DB_USER
           valueFrom:
             secretKeyRef:
-              name: keycloak-db-secrets
+              name: app-db-secrets
               key: username
         - name: API_KEYS_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: keycloak-db-secrets
+              name: app-db-secrets
               key: password
         - name: API_KEYS_DB_DSN
           value: "postgresql://$(API_KEYS_DB_USER):$(API_KEYS_DB_PASSWORD)@$(API_KEYS_DB_HOST):$(API_KEYS_DB_PORT)/$(API_KEYS_DB_NAME)"
+        - name: LEGACY_API_KEYS_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-secrets
+              key: database
+        - name: LEGACY_API_KEYS_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-secrets
+              key: username
+        - name: LEGACY_API_KEYS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-secrets
+              key: password
+        - name: LEGACY_API_KEYS_DB_DSN
+          value: "postgresql://$(LEGACY_API_KEYS_DB_USER):$(LEGACY_API_KEYS_DB_PASSWORD)@keycloak-pg:5432/$(LEGACY_API_KEYS_DB_NAME)"
         - name: DELEGATED_SESSIONS_DB_HOST
-          value: keycloak-pg
+          value: app-pg
         - name: DELEGATED_SESSIONS_DB_PORT
           value: "5432"
         - name: DELEGATED_SESSIONS_DB_NAME
           valueFrom:
             secretKeyRef:
-              name: teehr-api-db-secrets
+              name: app-db-secrets
               key: database
         - name: DELEGATED_SESSIONS_DB_USER
           valueFrom:
             secretKeyRef:
-              name: teehr-api-db-secrets
+              name: app-db-secrets
               key: username
         - name: DELEGATED_SESSIONS_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: teehr-api-db-secrets
+              name: app-db-secrets
               key: password
         - name: DELEGATED_SESSIONS_DB_DSN
           value: "postgresql://$(DELEGATED_SESSIONS_DB_USER):$(DELEGATED_SESSIONS_DB_PASSWORD)@$(DELEGATED_SESSIONS_DB_HOST):$(DELEGATED_SESSIONS_DB_PORT)/$(DELEGATED_SESSIONS_DB_NAME)"
