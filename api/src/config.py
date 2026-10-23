@@ -64,7 +64,7 @@ class Config:
     # API key storage settings
     API_KEYS_DB_DSN = os.environ.get(
         "API_KEYS_DB_DSN",
-        "postgresql://keycloak:keycloak123@keycloak-pg:5432/teehr_api",
+        "postgresql://teehr_app:teehr_app123@app-pg:5432/teehr_app",
     )
     # Keycloak's database, where API keys used to be stored; copied on startup.
     LEGACY_API_KEYS_DB_DSN = os.environ.get("LEGACY_API_KEYS_DB_DSN", "")
