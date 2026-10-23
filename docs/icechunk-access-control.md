@@ -187,7 +187,12 @@ To let admins in while keeping everyone else out, use `["admin"]` instead of `[]
 
 ## Adding the default role to existing users
 
-`defaultGroups` only applies when a user is **created**. When a deployment first sets `default: ["icechunk-read-only"]`, add its existing users to `/icechunk-read-only` in the Keycloak console **before** deploying the rules. Otherwise they lose access to every repo. Then check that a backfilled user's token has `icechunk-read-only` in `realm_access.roles`.
+`defaultGroups` only applies when a user is **created**. When a deployment first sets `default: ["icechunk-read-only"]`, add its existing users to `/icechunk-read-only` **before** deploying the rules. Otherwise they lose access to every repo.
+
+1. Deploy the realm config first, so the group exists: `garden deploy keycloak-realm-config --env remote` (with `DEPLOY_TARGET` set on multi-cluster deployments like teehr-hub).
+2. Add every existing user to the group: `CONTEXT=<kube-context> ./scripts/add-users-to-group.sh`. Run it with `DRY_RUN=1` first to list who will be added. For a few users, the Keycloak console works too.
+3. Check that a backfilled user's token has `icechunk-read-only` in `realm_access.roles`.
+4. Deploy the rules.
 
 ---
 

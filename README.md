@@ -103,6 +103,18 @@ CONTEXT=<kube-context> INCLUDE_GROUPS=true ./scripts/export-keycloak-users.sh > 
 
 By default it lists only enabled users with an email; set `ALL_USERS=true` for everyone. To list only members of certain groups, set `GROUP_FILTER` to a comma-separated list, e.g. `GROUP_FILTER=jupyter-user,jupyter-admin`. Other settings: `NAMESPACE` (default `teehr-hub`) and `REALM` (default `teehr`). The CSV contains personal data, so don't commit it.
 
+### Add Existing Users to a Group
+The realm's `defaultGroups` only apply to new users. `scripts/add-users-to-group.sh` adds every existing user to a group, e.g. `/icechunk-read-only` before deploying icechunk access rules with a `default` (`docs/icechunk-access-control.md`). It works like the export script and skips users already in the group, so it's safe to re-run. `CONTEXT` is required. Don't run it on local kind: it adds the `noaccess` test user and breaks the access tests.
+
+```bash
+CONTEXT=<kube-context> DRY_RUN=1 ./scripts/add-users-to-group.sh
+CONTEXT=<kube-context> ./scripts/add-users-to-group.sh
+```
+
+`GROUP` sets the group (default `icechunk-read-only`). Other settings: `NAMESPACE` (default `teehr-hub`) and `REALM` (default `teehr`).
+
+To give existing users Iceberg (Polaris) read-only access, run it with `GROUP=teehr-read-only`. Users created before `/teehr-read-only` was added to `defaultGroups` (2026-07-29) don't have it.
+
 
 ### Load Test Data to Warehouse
 Loading data is a little fractured depending on what data you are loading.  For the purpose of developing there are 2 different types of data that can be loaded. Regardless, you first need to create an Iceberg warehouse in the KinD cluster, then load some data.
