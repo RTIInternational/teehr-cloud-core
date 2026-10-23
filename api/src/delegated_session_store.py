@@ -25,28 +25,34 @@ class DelegatedSessionStore:
     async def startup(self):
         self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=1, max_size=5)
         async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS delegated_sessions (
-                    sid TEXT PRIMARY KEY,
-                    subject TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    realm TEXT NOT NULL,
-                    catalog TEXT NOT NULL,
-                    audience TEXT NOT NULL,
-                    refresh_token TEXT NOT NULL,
-                    expires_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                """
-            )
-            await conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS delegated_sessions_expires_at_idx
-                ON delegated_sessions (expires_at);
-                """
-            )
+            # Gunicorn workers start concurrently, and CREATE ... IF NOT EXISTS
+            # races on an empty database.
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('teehr-api-schema'))"
+                )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS delegated_sessions (
+                        sid TEXT PRIMARY KEY,
+                        subject TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        realm TEXT NOT NULL,
+                        catalog TEXT NOT NULL,
+                        audience TEXT NOT NULL,
+                        refresh_token TEXT NOT NULL,
+                        expires_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    """
+                )
+                await conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS delegated_sessions_expires_at_idx
+                    ON delegated_sessions (expires_at);
+                    """
+                )
 
     async def shutdown(self):
         if self._pool:

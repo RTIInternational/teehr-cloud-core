@@ -22,19 +22,25 @@ class ApiKeyStore:
     async def startup(self):
         self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=1, max_size=5)
         async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS api_keys (
-                    id TEXT PRIMARY KEY,
-                    owner_sub TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    key_hash TEXT NOT NULL UNIQUE,
-                    scopes TEXT[] DEFAULT '{}',
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    revoked_at TIMESTAMPTZ
-                );
-                """
-            )
+            # Gunicorn workers start concurrently, and CREATE ... IF NOT EXISTS
+            # races on an empty database.
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('teehr-api-schema'))"
+                )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id TEXT PRIMARY KEY,
+                        owner_sub TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        key_hash TEXT NOT NULL UNIQUE,
+                        scopes TEXT[] DEFAULT '{}',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        revoked_at TIMESTAMPTZ
+                    );
+                    """
+                )
         if self._legacy_dsn:
             await self._copy_legacy_keys()
 
@@ -56,7 +62,12 @@ class ApiKeyStore:
         finally:
             await legacy.close()
 
-        async with self._pool.acquire() as conn:
+        async with self._pool.acquire() as conn, conn.transaction():
+            # Same lock as startup, so concurrent workers don't insert the
+            # same key at once and trip the key_hash unique constraint.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('teehr-api-schema'))"
+            )
             await conn.executemany(
                 """
                 INSERT INTO api_keys
