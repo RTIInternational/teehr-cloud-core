@@ -46,7 +46,7 @@ class Config:
     KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "teehr-api")
     KEYCLOAK_ALLOWED_AUDIENCES = os.environ.get(
         "KEYCLOAK_ALLOWED_AUDIENCES",
-        "teehr-api,teehr-frontend,jupyterhub",
+        "teehr-api,teehr-frontend,teehr-frontend-local-dev,jupyterhub",
     )
     KEYCLOAK_AUTH_URL = os.environ.get(
         "KEYCLOAK_AUTH_URL",
