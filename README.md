@@ -146,4 +146,10 @@ When working on the API or the frontend it is convenient to have code syncing.  
 garden deploy --sync
 ```
 
-test commit.
+### Local Standalone Frontend Access
+Some deployments allow running a local frontend against a deployed API. This is controlled per environment by the Garden variable `enableLocalDevFrontendClient` and matching localhost CORS origins.
+
+- Deployment variable contract: `docs/platform-app-deployment-contract.md`
+- Security context and access model: `docs/access-control-matrix.md`
+
+Keep `enableLocalDevFrontendClient` disabled by default and only enable it in environments where local standalone frontend access is explicitly required.
