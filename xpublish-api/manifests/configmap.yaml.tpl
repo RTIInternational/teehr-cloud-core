@@ -20,7 +20,7 @@ data:
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"
   # Internal cluster URL avoids routing JWKS fetches through the ingress
   KEYCLOAK_JWKS_URL: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/certs"
-  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend"
+  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,teehr-frontend-local-dev"
   # Read access by Keycloak realm role, from var.xpublish.accessRules (a YAML map), as JSON.
   # A deployment without the var gets {}: every repo and layer open to logged-in users.
   # See docs/icechunk-access-control.md.

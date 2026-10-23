@@ -16,7 +16,7 @@ data:
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"
   KEYCLOAK_JWKS_URL: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/certs"
   KEYCLOAK_AUDIENCE: "teehr-api"
-  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,jupyterhub"
+  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,teehr-frontend-local-dev,jupyterhub"
   BROKER_TOKEN_EXCHANGE_ENABLED: "true"
   BROKER_TOKEN_ENDPOINT: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/token"
   BROKER_OAUTH_CLIENT_ID: "teehr-api"
