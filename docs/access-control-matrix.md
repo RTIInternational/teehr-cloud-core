@@ -2,7 +2,7 @@
 
 This document summarizes how access is currently enforced across services in this repository.
 
-Last updated: 2026-10-16
+Last updated: 2026-10-23
 
 ## Identity Model
 
@@ -55,6 +55,8 @@ Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-boot
 3. JupyterHub authorization is also group-based, not based on the admin realm role.
 4. Polaris access is now centered on a single `iceberg.teehr` namespace with default read-only access for all users.
 5. Icechunk access is separate from Polaris: `icechunk-read-only` and `teehr-read-only` are both in the realm's `defaultGroups`, so new users get both, but either can be removed on its own.
+6. A dedicated Keycloak client, `teehr-frontend-local-dev`, exists for local standalone frontend development. It is intended to be gated per environment via `enableLocalDevFrontendClient` and left disabled by default.
+7. Enabling local standalone frontend access requires both the Keycloak client gate and explicit localhost CORS origins for the target environment; enabling either one alone is insufficient.
 
 ## Local Test Users
 

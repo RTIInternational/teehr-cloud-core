@@ -46,6 +46,7 @@ environments:
         user: teehr
         catalog: iceberg
         schema: teehr
+      enableLocalDevFrontendClient: false
       icechunk:
         bucket: "warehouse"
         prefix: "icechunk-ingests"

@@ -115,6 +115,23 @@ data:
           }
         },
         {
+          "clientId": "teehr-frontend-local-dev",
+          "enabled": ${var.enableLocalDevFrontendClient ? "true" : "false"},
+          "protocol": "openid-connect",
+          "publicClient": true,
+          "redirectUris": [
+            "http://localhost:8080/*",
+            "http://127.0.0.1:8080/*"
+          ],
+          "webOrigins": [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080"
+          ],
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          }
+        },
+        {
           "clientId": "teehr-api",
           "enabled": true,
           "protocol": "openid-connect",
