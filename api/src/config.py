@@ -66,6 +66,8 @@ class Config:
         "API_KEYS_DB_DSN",
         "postgresql://keycloak:keycloak123@keycloak-pg:5432/teehr_api",
     )
+    # Keycloak's database, where API keys used to be stored; copied on startup.
+    LEGACY_API_KEYS_DB_DSN = os.environ.get("LEGACY_API_KEYS_DB_DSN", "")
     DELEGATED_SESSIONS_DB_DSN = os.environ.get(
         "DELEGATED_SESSIONS_DB_DSN",
         API_KEYS_DB_DSN,

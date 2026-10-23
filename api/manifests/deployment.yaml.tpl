@@ -153,20 +153,37 @@ spec:
         - name: API_KEYS_DB_NAME
           valueFrom:
             secretKeyRef:
-              name: keycloak-db-secrets
+              name: teehr-api-db-secrets
               key: database
         - name: API_KEYS_DB_USER
           valueFrom:
             secretKeyRef:
-              name: keycloak-db-secrets
+              name: teehr-api-db-secrets
               key: username
         - name: API_KEYS_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: keycloak-db-secrets
+              name: teehr-api-db-secrets
               key: password
         - name: API_KEYS_DB_DSN
           value: "postgresql://$(API_KEYS_DB_USER):$(API_KEYS_DB_PASSWORD)@$(API_KEYS_DB_HOST):$(API_KEYS_DB_PORT)/$(API_KEYS_DB_NAME)"
+        - name: LEGACY_API_KEYS_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-secrets
+              key: database
+        - name: LEGACY_API_KEYS_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-secrets
+              key: username
+        - name: LEGACY_API_KEYS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-secrets
+              key: password
+        - name: LEGACY_API_KEYS_DB_DSN
+          value: "postgresql://$(LEGACY_API_KEYS_DB_USER):$(LEGACY_API_KEYS_DB_PASSWORD)@$(API_KEYS_DB_HOST):$(API_KEYS_DB_PORT)/$(LEGACY_API_KEYS_DB_NAME)"
         - name: DELEGATED_SESSIONS_DB_HOST
           value: keycloak-pg
         - name: DELEGATED_SESSIONS_DB_PORT

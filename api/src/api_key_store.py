@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -9,10 +10,13 @@ import asyncpg
 from .auth import AuthIdentity
 from .config import config
 
+logger = logging.getLogger("teehr-api.api_key_store")
+
 
 class ApiKeyStore:
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, legacy_dsn: str = ""):
         self._dsn = dsn
+        self._legacy_dsn = legacy_dsn
         self._pool: asyncpg.Pool | None = None
 
     async def startup(self):
@@ -31,6 +35,39 @@ class ApiKeyStore:
                 );
                 """
             )
+        if self._legacy_dsn:
+            await self._copy_legacy_keys()
+
+    async def _copy_legacy_keys(self):
+        # API keys used to live in Keycloak's database (teehr-cloud-core#102).
+        # Copy them over on every startup until LEGACY_API_KEYS_DB_DSN is
+        # removed, so a key created or revoked by an old pod during a rollout
+        # is picked up by the next restart.
+        legacy = await asyncpg.connect(dsn=self._legacy_dsn)
+        try:
+            if await legacy.fetchval("SELECT to_regclass('public.api_keys')") is None:
+                return
+            rows = await legacy.fetch(
+                """
+                SELECT id, owner_sub, name, key_hash, scopes, created_at, revoked_at
+                FROM api_keys
+                """
+            )
+        finally:
+            await legacy.close()
+
+        async with self._pool.acquire() as conn:
+            await conn.executemany(
+                """
+                INSERT INTO api_keys
+                    (id, owner_sub, name, key_hash, scopes, created_at, revoked_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (id) DO UPDATE
+                SET revoked_at = COALESCE(api_keys.revoked_at, EXCLUDED.revoked_at)
+                """,
+                [tuple(row) for row in rows],
+            )
+        logger.info(f"Copied {len(rows)} API keys from the legacy database")
 
     async def shutdown(self):
         if self._pool:

@@ -187,7 +187,9 @@ app.openapi = custom_openapi
 async def startup_event():
     app.state.jwt_validator = KeycloakJWTValidator()
     app.state.rate_limiter = InMemoryRateLimiter()
-    app.state.api_key_store = ApiKeyStore(config.API_KEYS_DB_DSN)
+    app.state.api_key_store = ApiKeyStore(
+        config.API_KEYS_DB_DSN, config.LEGACY_API_KEYS_DB_DSN
+    )
     await app.state.api_key_store.startup()
     app.state.delegated_session_store = DelegatedSessionStore(
         config.DELEGATED_SESSIONS_DB_DSN,
