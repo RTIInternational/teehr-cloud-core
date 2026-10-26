@@ -21,9 +21,6 @@ from ..database import (
 )
 from .filtering import (
     build_equality_filter_conditions,
-    get_filterable_columns,
-    resolve_column_alias,
-    resolve_filter_aliases,
     verify_filtered_columns,
 )
 from .utils import get_id_column, prepare_for_serialization
@@ -171,6 +168,64 @@ COLLECTION_CONFIGS = {
             },
             "secondary_location_id": {
                 "title": "Secondary Location ID",
+                "type": "string",
+            },
+            "properties": {
+                "title": "Additional Properties",
+                "type": "object",
+            },
+            "created_at": {
+                "title": "Created At",
+                "type": "string",
+                "format": "date-time",
+            },
+            "updated_at": {
+                "title": "Updated At",
+                "type": "string",
+                "format": "date-time",
+            },
+        },
+    },
+    "location_id_aliases": {
+        "table": "location_id_aliases",
+        "type": "feature",
+        "description": "Alternate IDs that map to a location ID",
+        "static_properties": {
+            "location_id": {
+                "title": "Location ID",
+                "type": "string",
+            },
+            "location_id_alias": {
+                "title": "Location ID Alias",
+                "type": "string",
+            },
+            "properties": {
+                "title": "Additional Properties",
+                "type": "object",
+            },
+            "created_at": {
+                "title": "Created At",
+                "type": "string",
+                "format": "date-time",
+            },
+            "updated_at": {
+                "title": "Updated At",
+                "type": "string",
+                "format": "date-time",
+            },
+        },
+    },
+    "configuration_pairs": {
+        "table": "configuration_pairs",
+        "type": "feature",
+        "description": "Primary configurations each secondary configuration is evaluated against",
+        "static_properties": {
+            "primary_configuration_name": {
+                "title": "Primary Configuration Name",
+                "type": "string",
+            },
+            "secondary_configuration_name": {
+                "title": "Secondary Configuration Name",
                 "type": "string",
             },
             "properties": {
@@ -520,12 +575,9 @@ def get_queryable_values(
 
     try:
         schema = _build_collection_schema(collection_id)
-        columns = get_filterable_columns(schema, default_to_properties=True)
-        property_name = resolve_column_alias(property_name, columns)
-        sanitized_property = sanitize_string(property_name)
         _validate_queryable_property(schema, property_name)
 
-        filters = resolve_filter_aliases(dict(request.query_params.items()), columns)
+        filters = dict(request.query_params.items())
         verify_filtered_columns(
             schema,
             list(filters.keys()),
