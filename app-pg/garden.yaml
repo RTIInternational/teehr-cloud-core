@@ -1,0 +1,12 @@
+kind: Deploy
+type: kubernetes
+name: app-database
+description: K8s Deploy TEEHR app database (API keys, delegated sessions)
+dependencies:
+  - deploy.secrets
+environments:
+  - local
+  - remote
+spec:
+  manifestFiles:
+  - ./manifests/app-pg.yaml

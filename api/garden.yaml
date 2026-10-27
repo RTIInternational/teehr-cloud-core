@@ -20,6 +20,7 @@ environments:
 dependencies:
   - build.teehr-api
   - deploy.secrets
+  - deploy.app-database
   - deploy.keycloak-bootstrap
 
 spec:
@@ -54,6 +55,7 @@ environments:
 dependencies:
   - build.teehr-api
   - deploy.secrets
+  - deploy.app-database
 
 spec:
   manifestFiles:

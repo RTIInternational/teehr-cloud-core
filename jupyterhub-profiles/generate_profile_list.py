@@ -16,8 +16,8 @@ from typing import Any
 STABLE_IMAGE = "${actions.build.teehr-jupyter-driver-image-stable.outputs.deploymentImageId}"
 PREVIOUS_IMAGE = "${actions.build.teehr-jupyter-driver-image-previous.outputs.deploymentImageId}"
 EDGE_IMAGE = "${actions.build.teehr-jupyter-driver-image-edge.outputs.deploymentImageId}"
-HEFS_V031_IMAGE = "${var.remoteCluster.ecrRegistry}/hefs-fews-hub:v0.3.1"
-HEFS_DEV_IMAGE = "${var.remoteCluster.ecrRegistry}/hefs-fews-hub:dev"
+HEFS_V031_IMAGE = "935462133478.dkr.ecr.us-east-2.amazonaws.com/hefs-fews-hub:v0.3.1"
+HEFS_DEV_IMAGE = "935462133478.dkr.ecr.us-east-2.amazonaws.com/hefs-fews-hub:dev"
 FRACTIONAL_4XL_MEM_LIMIT = "127G"
 FRACTIONAL_4XL_CPU_LIMIT = 15.5
 

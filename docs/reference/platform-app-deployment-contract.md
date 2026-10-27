@@ -1,6 +1,6 @@
 # Platform-App Deployment Contract
 
-Last updated: 2026-10-15
+Last updated: 2026-10-23
 
 This document defines what a deployment repository (teehr-hub, teehr-fved, ...) must provide to deploy this
 repository's components to a remote cluster, and what the platform must provide first.
@@ -80,6 +80,9 @@ so they have one source.
 | Key | Default behavior when unset |
 |---|---|
 | `irsa.jupyterRoleArn` | Jupyter's service account gets no IRSA role (no direct access to external, non-warehouse data). |
+| `enableLocalDevFrontendClient` | Defaults to `false` in project environment variables. When set to `true`, enables the Keycloak client `teehr-frontend-local-dev` for localhost browser-based frontend development. Keep disabled unless local standalone frontend access is explicitly required for that environment. |
+
+When enabling `enableLocalDevFrontendClient`, pair it with explicit localhost entries in `allowedOrigins` for only the environments that require browser access from a local dev server.
 
 ### Where the Values Come From
 

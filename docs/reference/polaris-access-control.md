@@ -40,6 +40,9 @@ Realm roles not in this table (e.g. `basic-user`, `jupyter-user`) are ignored by
 note the *realm role* names are singular/unprefixed even where the *group* name (e.g.
 `iceberg-catalog-admins`) isn't; don't confuse the two when tracing a permission issue.
 
+New users get `/teehr-read-only` through the realm's `defaultGroups`, which doesn't apply to existing users. To
+backfill them: `CONTEXT=<kube-context> GROUP=teehr-read-only ./scripts/add-users-to-group.sh` (`DRY_RUN=1` first).
+
 ### Polaris configuration
 
 Configured in `polaris/manifests/polaris-config.yaml.tpl`:

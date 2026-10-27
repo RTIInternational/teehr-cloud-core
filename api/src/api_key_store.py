@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -9,28 +10,75 @@ import asyncpg
 from .auth import AuthIdentity
 from .config import config
 
+logger = logging.getLogger("teehr-api.api_key_store")
+
 
 class ApiKeyStore:
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, legacy_dsn: str = ""):
         self._dsn = dsn
+        self._legacy_dsn = legacy_dsn
         self._pool: asyncpg.Pool | None = None
 
     async def startup(self):
         self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=1, max_size=5)
         async with self._pool.acquire() as conn:
-            await conn.execute(
+            # Gunicorn workers start concurrently, and CREATE ... IF NOT EXISTS
+            # races on an empty database.
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('teehr-api-schema'))"
+                )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id TEXT PRIMARY KEY,
+                        owner_sub TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        key_hash TEXT NOT NULL UNIQUE,
+                        scopes TEXT[] DEFAULT '{}',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        revoked_at TIMESTAMPTZ
+                    );
+                    """
+                )
+        if self._legacy_dsn:
+            await self._copy_legacy_keys()
+
+    async def _copy_legacy_keys(self):
+        # API keys used to live in Keycloak's database (teehr-cloud-core#102).
+        # Copy them over on every startup until LEGACY_API_KEYS_DB_DSN is
+        # removed, so a key created or revoked by an old pod during a rollout
+        # is picked up by the next restart.
+        legacy = await asyncpg.connect(dsn=self._legacy_dsn)
+        try:
+            if await legacy.fetchval("SELECT to_regclass('public.api_keys')") is None:
+                return
+            rows = await legacy.fetch(
                 """
-                CREATE TABLE IF NOT EXISTS api_keys (
-                    id TEXT PRIMARY KEY,
-                    owner_sub TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    key_hash TEXT NOT NULL UNIQUE,
-                    scopes TEXT[] DEFAULT '{}',
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    revoked_at TIMESTAMPTZ
-                );
+                SELECT id, owner_sub, name, key_hash, scopes, created_at, revoked_at
+                FROM api_keys
                 """
             )
+        finally:
+            await legacy.close()
+
+        async with self._pool.acquire() as conn, conn.transaction():
+            # Same lock as startup, so concurrent workers don't insert the
+            # same key at once and trip the key_hash unique constraint.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('teehr-api-schema'))"
+            )
+            await conn.executemany(
+                """
+                INSERT INTO api_keys
+                    (id, owner_sub, name, key_hash, scopes, created_at, revoked_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (id) DO UPDATE
+                SET revoked_at = COALESCE(api_keys.revoked_at, EXCLUDED.revoked_at)
+                """,
+                [tuple(row) for row in rows],
+            )
+        logger.info(f"Copied {len(rows)} API keys from the legacy database")
 
     async def shutdown(self):
         if self._pool:

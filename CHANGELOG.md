@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased (backfill users into a group)
+
+### Summary
+- `scripts/add-users-to-group.sh` adds every existing realm user to a Keycloak group (default
+  `icechunk-read-only`), for deployments enabling icechunk access rules with existing users.
+
+### What Changed
+- New `scripts/add-users-to-group.sh`, with `DRY_RUN=1`. It skips users already in the group, so it's safe to
+  re-run.
+- `docs/icechunk-access-control.md` and `README.md` describe the backfill steps. `README.md` and
+  `docs/polaris-access-control.md` note `GROUP=teehr-read-only` for Iceberg read-only access.
+
+### Why
+- `defaultGroups` only applies to new users. teehr-hub's users all predate `/icechunk-read-only`, too many to add
+  in the Keycloak console by hand.
+
 ## Unreleased (deploy targets)
 
 ### Summary
