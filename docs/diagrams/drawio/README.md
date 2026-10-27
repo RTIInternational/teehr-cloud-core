@@ -9,6 +9,7 @@ Schematic diagrams for the TEEHR-Cloud journal article. The diagrams are generat
 | `teehr-framework.drawio` | The diagrams, one per page. Open it in the draw.io desktop app, at [app.diagrams.net](https://app.diagrams.net), or with the VS Code *Draw.io Integration* extension. |
 | `build_diagrams.py` | One function per page, plus the `PAGES` list that sets which pages are built and in what order. |
 | `drawio_helpers.py` | Reusable pieces: shared styles and colors, the `Page` class, and `write_drawio()`. |
+| `svg/` | SVG exports of each page, for viewing on GitHub (see [Exporting SVGs](#exporting-svgs)). |
 
 ## Pages
 
@@ -29,6 +30,18 @@ Schematic diagrams for the TEEHR-Cloud journal article. The diagrams are generat
 5. **Local warehouse directory.** An annotated directory tree of a local evaluation.
 
 The data model schematic already exists at `teehr/docs/drawio/data_model.drawio`. Copy that page into this file in draw.io if you want all the figures in one place.
+
+### Previews
+
+![Overall architecture](svg/teehr-framework-Overall-architecture.svg)
+
+![Core and client deployments](svg/teehr-framework-Core-and-client-deployments.svg)
+
+![End-to-end data flow](svg/teehr-framework-End-to-end-data-flow.svg)
+
+![TEEHR-Python overview](svg/teehr-framework-TEEHR-Python-overview.svg)
+
+![Local warehouse directory](svg/teehr-framework-Local-warehouse-directory.svg)
 
 ### Color legend
 
@@ -52,6 +65,20 @@ python3 build_diagrams.py
 This rewrites `teehr-framework.drawio` with every page in `PAGES`.
 
 > **Rebuilding overwrites the .drawio file**, including any edits made by hand in draw.io. Either keep the script as the source of truth, or switch to editing in draw.io once a layout is final (see below).
+
+## Exporting SVGs
+
+GitHub doesn't render `.drawio` files, so each page is also exported to `svg/`. Re-export whenever the diagrams change, whether you rebuilt them with the script or edited them in draw.io. The export uses draw.io's own renderer through the [drawio-export](https://github.com/rlespinasse/drawio-export) Docker image:
+
+```bash
+cd teehr-cloud-core/docs/diagrams/drawio
+rm -rf svg
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/data -w /data \
+  rlespinasse/drawio-export:v4.60.0 \
+  -f svg -o svg -b 10 --svg-theme light --embed-svg-fonts false teehr-framework.drawio
+```
+
+This writes one `teehr-framework-<page name>.svg` per page. The pages have a white background, so the SVGs stay readable in GitHub's dark mode. Fonts aren't embedded, which keeps each file small; the diagrams only use standard fonts. Without Docker, you can export a page from the VS Code extension or draw.io desktop instead: *File → Export as → SVG*, with the same file name.
 
 ## Editing existing diagrams
 

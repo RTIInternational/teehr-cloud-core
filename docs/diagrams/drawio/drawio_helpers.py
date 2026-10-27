@@ -103,7 +103,7 @@ class Page:
             f'<diagram id="page-{index}" name={quoteattr(self.name)}>'
             f'<mxGraphModel dx="{self.width}" dy="{self.height}" grid="1" gridSize="10" guides="1" tooltips="1" '
             f'connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="{self.width}" '
-            f'pageHeight="{self.height}" math="0" shadow="0">'
+            f'pageHeight="{self.height}" background="#ffffff" math="0" shadow="0">'
             '<root><mxCell id="0"/><mxCell id="1" parent="0"/>'
             + "".join(self.cells)
             + "</root></mxGraphModel></diagram>"
