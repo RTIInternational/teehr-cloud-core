@@ -16,8 +16,6 @@ from ..auth import effective_limit_for_request
 from ..database import execute_query, sanitize_string, trino_catalog, trino_schema
 from .filtering import (
     build_equality_filter_conditions,
-    get_filterable_columns,
-    resolve_filter_aliases,
     verify_filtered_columns,
 )
 from .queryables import get_metrics_table_queryables
@@ -96,13 +94,6 @@ def get_collection_items(
     location_id: str | None = Query(
         None, alias="location_id", description="Filter by location ID"
     ),
-    configuration_name: str | None = Query(
-        None, description="Filter by configuration name"
-    ),
-    variable_name: str | None = Query(
-        None,
-        description="Filter by variable name"
-    ),
     limit: int | None = Query(
         None, ge=1, description="Maximum number of items to return (omit to return all)"
     ),
@@ -142,14 +133,9 @@ def get_collection_items(
         sanitized_table = sanitize_string(collection_id)
         schema = _get_collection_schema(sanitized_table)
 
-        filters = resolve_filter_aliases(
-            {
-                k: v
-                for k, v in request.query_params.items()
-                if k not in RESERVED_PARAMS
-            },
-            get_filterable_columns(schema),
-        )
+        filters = {
+            k: v for k, v in request.query_params.items() if k not in RESERVED_PARAMS
+        }
 
         verify_filtered_columns(schema, list(filters.keys()))
 

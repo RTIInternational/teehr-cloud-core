@@ -180,6 +180,42 @@ def get_collections():
             itemType="record",
         ),
         Collection(
+            id="location_id_aliases",
+            title="Location ID Aliases",
+            description="Alternate IDs that map to a location ID; primary timeseries may be stored under either",
+            links=[
+                Link(
+                    href="/collections/location_id_aliases",
+                    rel="self",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/location_id_aliases/items",
+                    rel="items",
+                    type="application/json",
+                ),
+            ],
+            itemType="record",
+        ),
+        Collection(
+            id="configuration_pairs",
+            title="Configuration Pairs",
+            description="Primary configurations each secondary configuration is evaluated against",
+            links=[
+                Link(
+                    href="/collections/configuration_pairs",
+                    rel="self",
+                    type="application/json",
+                ),
+                Link(
+                    href="/collections/configuration_pairs/items",
+                    rel="items",
+                    type="application/json",
+                ),
+            ],
+            itemType="record",
+        ),
+        Collection(
             id="primary_timeseries",
             title="Primary Timeseries",
             description="Observed timeseries data at monitoring locations",
