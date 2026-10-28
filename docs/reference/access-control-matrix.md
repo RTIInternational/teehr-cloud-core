@@ -15,7 +15,7 @@ Keycloak uses both groups and roles:
 
 ## Group to Role Mapping (Current Bootstrap)
 
-Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../keycloak-bootstrap/manifests/realm-configmap.yaml.tpl#L31)
+Source: [keycloak-bootstrap/manifests/realm-configmap.yaml.tpl](../../keycloak-bootstrap/manifests/realm-configmap.yaml.tpl#L31)
 
 | Group | Realm role(s) granted | Extra client roles |
 |---|---|---|

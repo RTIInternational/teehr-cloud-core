@@ -87,7 +87,7 @@ This should create all the services in the cluster.  To test, open a browser and
 The in-cluster S3 store (RustFS) has a web console at `https://s3.teehr.local.app.garden/rustfs/console/`. Log in with `localadmin` / `localadmin123` (from `secrets/secrets.local.yaml`). It uses its own self-signed cert, so accept it separately.
 
 ### Create Keycloak User
-The deployment process create 2 users as described in `docs/access-control-matrix.md`
+The deployment process create 2 users as described in `docs/reference/access-control-matrix.md`
 
 | User type | Default username | Default password | Group membership |
 |---|---|---|---|
