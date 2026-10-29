@@ -88,6 +88,8 @@ def _open_group(store, group: str) -> xr.Dataset:
     # Lazy without dask (one task per chunk made point queries slow);
     # cache=False so a full read is never pinned in the cached dataset
     ds = xr.open_dataset(store, engine="zarr", group=group, consolidated=False, chunks=None, cache=False)
+    # Scalars such as the grid mapping (crs) are coordinates, not variables to map or query
+    ds = ds.set_coords([v for v in ds.data_vars if ds[v].ndim == 0])
     if "time" in ds.dims and not ds.indexes["time"].is_monotonic_increasing:
         ds = ds.sortby("time")
     return ds

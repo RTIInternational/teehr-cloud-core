@@ -46,7 +46,7 @@ def test_tiles_tree_is_data_group_plus_overviews(tmp_path, monkeypatch):
     repo = ic.Repository.create(ic.local_filesystem_storage(str(tmp_path)))
     session = repo.writable_session("main")
     grid = {"x": np.arange(8.0), "y": np.arange(4.0)}
-    data = xr.Dataset({"v": (("time", "y", "x"), np.ones((5, 4, 8)))}, coords={"time": TIMES, **grid})
+    data = xr.Dataset({"v": (("time", "y", "x"), np.ones((5, 4, 8))), "crs": ((), 0)}, coords={"time": TIMES, **grid})
     data.to_zarr(session.store, group="data", zarr_format=3, consolidated=False)
     session.commit("data only")
     monkeypatch.setattr(
@@ -60,7 +60,7 @@ def test_tiles_tree_is_data_group_plus_overviews(tmp_path, monkeypatch):
 
     session = repo.writable_session("main")
     for factor in (4, 2):
-        level = data.coarsen(x=factor, y=factor).mean()
+        level = data[["v"]].coarsen(x=factor, y=factor).mean()
         level.to_zarr(session.store, group=f"overviews/{factor}", zarr_format=3, consolidated=False)
     session.commit("overviews")
     tree = provider.get_datatree_for_dataset("r")
@@ -69,3 +69,6 @@ def test_tiles_tree_is_data_group_plus_overviews(tmp_path, monkeypatch):
     # EDR reads the data group, never the overviews
     assert provider.dataset_ids() == ["r", "r_data"]
     assert not provider.get_datatree_for_dataset("r_data").children
+    # The grid mapping isn't offered as a variable
+    assert list(provider.get_datatree_for_dataset("r_data").dataset.data_vars) == ["v"]
+    assert "crs" in provider.get_datatree_for_dataset("r_data").dataset.coords
