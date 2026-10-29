@@ -8,63 +8,58 @@ ARG TEEHR_VERSION
 # Use HTTPS apt mirrors so builds work when plain HTTP egress is blocked.
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list
 
-# Add deadsnakes PPA and install Python 3.12
+# Add deadsnakes PPA and install Python 3.12. Only runtime packages: no
+# compilers or -dev headers, which made up most of the image's OS CVEs.
+# software-properties-common is purged before any pip install: it pulls in
+# system Python packages (e.g. python3-six) that pip would otherwise treat as
+# already installed and then lose when they are auto-removed.
 RUN apt-get update && apt-get install -y \
     software-properties-common \
     curl \
+    git \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update \
     && apt-get install -y \
     python3.12 \
-    python3.12-dev \
     python3.12-venv \
+    && apt-get purge -y --auto-remove software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pip for Python 3.12 using ensurepip
 RUN python3.12 -m ensurepip --upgrade
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    build-essential \
-    curl \
-    wget \
+# Install TEEHR. On x86_64 everything installs from wheels. exactextract has no
+# aarch64 wheel (local KinD on Apple Silicon), so there it is compiled: the
+# toolchain and -dev headers are installed and purged in this same layer, keeping
+# gdal-bin so the GDAL/GEOS runtime libraries exactextract links against remain.
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        BUILD_DEPS="build-essential python3.12-dev libgdal-dev libgeos-dev"; \
+        apt-get update && apt-get install -y gdal-bin $BUILD_DEPS; \
+    fi \
+    && GIT_LFS_SKIP_SMUDGE=1 python3.12 -m pip install --no-cache-dir \
+        "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}" \
+    && if [ -n "${BUILD_DEPS:-}" ]; then \
+        apt-get purge -y --auto-remove $BUILD_DEPS && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Executors run Spark from SPARK_HOME (/opt/spark), so the second copy of the
+# jars that the pyspark wheel brings in is unused, as are Spark's examples.
+COPY patch-spark-jars.sh /tmp/patch-spark-jars.sh
+RUN rm -rf "$(python3.12 -c 'import os, pyspark; print(os.path.join(pyspark.__path__[0], "jars"))')" \
+        /opt/spark/examples \
+    && sh /tmp/patch-spark-jars.sh /opt/spark/jars \
+    && rm /tmp/patch-spark-jars.sh
+
+# git was only needed for the pip install above.
+RUN apt-get purge -y --auto-remove git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install GDAL libraries for ARM64 (needed for rasterio compilation)
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then \
-        echo "Installing GDAL libraries for ARM64..." && \
-        apt-get update && apt-get install -y \
-        gdal-bin \
-        libgdal-dev \
-        libgeos-dev \
-        libproj-dev \
-        libspatialindex-dev \
-        && rm -rf /var/lib/apt/lists/* && \
-        echo "GDAL version: $(gdal-config --version)"; \
-    else \
-        echo "Skipping GDAL installation for x86_64 (not needed)"; \
-    fi
+# Point python3 (what Spark launches Python workers with) at 3.12. Done after
+# all apt steps, since installing Ubuntu's python3 package replaces this link.
+RUN ln -sf /usr/bin/python3.12 /usr/bin/python3
 
-# Set Python 3.12 as default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
-
-# Install TEEHR with GDAL compatibility for ARM64
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then \
-        echo "Installing TEEHR with constraints for ARM64..." && \
-        export GDAL_CONFIG=/usr/bin/gdal-config && \
-        export GDAL_VERSION=$(gdal-config --version) && \
-        echo "rasterio==1.3.11" > /tmp/constraints.txt && \
-        python3.12 -m pip install --no-cache-dir --ignore-installed "setuptools<81" "wheel" "cython<3.1" "numpy<2" && \
-        python3.12 -m pip install --no-cache-dir --no-build-isolation "rasterio==1.3.11" && \
-        GIT_LFS_SKIP_SMUDGE=1 python3.12 -m pip install --no-cache-dir "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}" --constraint /tmp/constraints.txt && \
-        rm /tmp/constraints.txt; \
-    else \
-        echo "Installing TEEHR normally for x86_64..." && \
-        GIT_LFS_SKIP_SMUDGE=1 python3.12 -m pip install --no-cache-dir "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}"; \
-    fi
+# Fail the build if the purges above removed anything teehr needs at runtime.
+RUN python3 -c "import teehr, exactextract, rasterio, pyspark"
 
 # change spark UID and GID to 1000
 RUN usermod -u 1000 spark && groupmod -g 1000 spark
