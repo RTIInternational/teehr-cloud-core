@@ -8,6 +8,16 @@ ARG TEEHR_VERSION
 # Use HTTPS apt mirrors so builds work when plain HTTP egress is blocked.
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list
 
+# The base image is not rebuilt for Ubuntu security updates, so apply them here.
+# Its bundled Temurin JDK (/opt/java/openjdk) is not updated either: replace it
+# with Ubuntu's headless JRE 17, linked into the same path so JAVA_HOME and PATH
+# are unchanged.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y openjdk-17-jre-headless \
+    && rm -rf /opt/java/openjdk \
+    && ln -s "/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)" /opt/java/openjdk \
+    && rm -rf /var/lib/apt/lists/*
+
 # Add deadsnakes PPA and install Python 3.12. Only runtime packages: no
 # compilers or -dev headers, which made up most of the image's OS CVEs.
 # software-properties-common is purged before any pip install: it pulls in
