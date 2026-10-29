@@ -16,7 +16,7 @@ spec:
       prefect:
         image:
           repository: prefecthq/prefect
-          prefectTag: 3.4.24-python3.12
+          prefectTag: 3.9.0-python3.12
 
     # server:
     #   nodeSelector:
@@ -105,7 +105,7 @@ spec:
     worker:
       image:
         repository: prefecthq/prefect
-        prefectTag: 3.4.24-python3.12-kubernetes 
+        prefectTag: 3.9.0-python3.12-kubernetes 
       autoscaling:
         enabled: ${environment.name == "remote"}
         maxReplicas: 1
