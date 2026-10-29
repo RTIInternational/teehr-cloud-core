@@ -4,7 +4,7 @@ Integration test: Icechunk access rules enforced by xpublish-api (local KinD).
 
 Creates two throwaway Icechunk repos, authz_test_open and authz_test_restricted, then checks
 what each test persona can see and open through xpublish-api with real Keycloak tokens:
-dataset listings, dataset routes (plus _raw_data ids), the notebook credentials route, 401s,
+dataset listings, dataset routes (plus _data ids), the notebook credentials route, 401s,
 the fail-closed paths and /health.
 
 Expected access is worked out from the deployed rules (TEEHR_ACCESS_RULES, read from
@@ -155,7 +155,7 @@ def check_persona(persona: str, token: str) -> None:
     for repo in TEST_REPOS:
         if repo == RESTRICTED_REPO and RESTRICTED_REPO not in RULES.get("repos", {}):
             continue
-        for dataset_id in (repo, f"{repo}_raw_data"):
+        for dataset_id in (repo, f"{repo}_data"):
             for path in (
                 f"/api/datasets/{dataset_id}/variable-attrs",
                 f"/api/datasets/{dataset_id}/coords/time",

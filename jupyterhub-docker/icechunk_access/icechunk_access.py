@@ -36,7 +36,7 @@ USE_STS = os.getenv("ICECHUNK_USE_STS", "false").strip().lower() == "true"
 EXPIRY_MARGIN = timedelta(seconds=60)
 # Root-group attribute naming the repo's data group; must match xpublish-api's provider
 DATA_GROUP_ATTR = "data_group"
-DEFAULT_DATA_GROUP = "/raw_data"
+DEFAULT_DATA_GROUP = "/data"
 SESSION_EXPIRED = (
     "Your Keycloak session has expired; restart your server from the hub control panel "
     "(File > Hub Control Panel > Stop My Server, then Start My Server)"
@@ -156,7 +156,7 @@ def open_icechunk_repo(name: str) -> ic.Repository:
 
 
 def open_icechunk_dataset(name: str, branch: str = "main", **open_zarr_kwargs) -> xr.Dataset:
-    """Open a repo's data (its raw_data or references group) as an xarray Dataset."""
+    """Open a repo's data (its data or references group) as an xarray Dataset."""
     session = open_icechunk_repo(name).readonly_session(branch)
     group = zarr.open_group(session.store, mode="r", zarr_format=3).attrs.get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
     return xr.open_zarr(session.store, group=group, consolidated=False, **open_zarr_kwargs)

@@ -48,7 +48,7 @@ These are **end-to-end integration tests** that validate:
 
 6. **Icechunk Access Rules** (`xpublish-access-enforcement`)
    - Creates two throwaway repos, `authz_test_open` and `authz_test_restricted`, and deletes them afterwards
-   - For `admin`, `poweruser`, `user` and `noaccess`: dataset listings, dataset routes (and `_raw_data` ids),
+   - For `admin`, `poweruser`, `user` and `noaccess`: dataset listings, dataset routes (and `_data` ids),
      the notebook credentials route and vector-tile listings match the deployed rules (xpublish-api's
      `TEEHR_ACCESS_RULES`)
    - `noaccess` has no data roles; no token or a malformed token is 401; `/health` lists no datasets;
