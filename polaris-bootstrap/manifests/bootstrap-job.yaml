@@ -14,7 +14,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: polaris-bootstrap
-          image: prefecthq/prefect:3.2.0-python3.10
+          image: prefecthq/prefect:3.9.0-python3.12
           env:
             - name: POLARIS_MANAGEMENT_URL
               value: "http://polaris:8181"
