@@ -7,22 +7,9 @@ WORKDIR /app
 # Use HTTPS apt mirrors so builds work when plain HTTP egress is blocked.
 RUN sed -i 's|http://deb.debian.org/debian|https://deb.debian.org/debian|g; s|http://deb.debian.org/debian-security|https://deb.debian.org/debian-security|g' /etc/apt/sources.list.d/debian.sources
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install geospatial dependencies for ARM64
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then \
-        echo "Installing ARM64 geospatial packages..." && \
-        apt-get update && \
-        apt-get install -y gdal-bin libgdal-dev proj-bin libproj-dev libspatialindex-dev && \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
+# Apply Debian security updates; the base image lags behind them. No compilers:
+# every dependency installs from a wheel, and a toolchain only adds CVEs.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Copy pyproject.toml first for dependency installation
 COPY pyproject.toml ./
@@ -31,12 +18,10 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 
 # Install dependencies from pyproject.toml
-# Set GDAL config for ARM64 geospatial builds
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then \
-        export GDAL_CONFIG=/usr/bin/gdal-config; \
-    fi && \
-    pip install --no-cache-dir .
+RUN pip install --no-cache-dir .
+
+# Fail the build if a runtime library a wheel needs is missing.
+RUN python -c "import src.main"
 
 # Expose port
 EXPOSE 8000
@@ -47,7 +32,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
 # Run the application (production by default)
 # Increase timeout to 300 seconds (5 minutes) for long-running queries

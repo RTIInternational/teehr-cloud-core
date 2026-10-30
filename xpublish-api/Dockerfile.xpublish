@@ -5,12 +5,11 @@ WORKDIR /app
 # Use HTTPS apt mirrors so builds work when plain HTTP egress is blocked.
 RUN sed -i 's|http://deb.debian.org/debian|https://deb.debian.org/debian|g; s|http://deb.debian.org/debian-security|https://deb.debian.org/debian-security|g' /etc/apt/sources.list.d/debian.sources
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    build-essential \
-    libexpat1 \
-    curl \
+# Apply Debian security updates; the base image lags behind them. No compilers:
+# every dependency installs from a wheel, and a toolchain only adds CVEs.
+# libexpat1 is a runtime library the rasterio wheel needs.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
@@ -18,12 +17,15 @@ COPY src/ ./src/
 
 RUN pip install --no-cache-dir .
 
+# Fail the build if a runtime library a wheel needs is missing.
+RUN python -c "import rasterio, rioxarray, icechunk, xpublish_edr, xpublish_tiles, src.auth"
+
 EXPOSE 8000
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
