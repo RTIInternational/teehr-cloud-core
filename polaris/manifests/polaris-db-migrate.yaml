@@ -1,0 +1,60 @@
+# Schema migrations for Polaris's relational-jdbc (Postgres) metastore, run by
+# the db-migrate init container before the admin tool's bootstrap.
+#
+# Polaris has no automated schema migrations: a fresh bootstrap creates the
+# latest schema version, while an existing database stays on the version it was
+# created with until migrated by hand. This brings an existing database up to
+# the version the current image bootstraps, so fresh and existing clusters match.
+#
+# When a Polaris upgrade adds a schema version, add an `IF v < N` step below
+# (from the release's upgrade notes and the diff of
+# persistence/relational-jdbc/src/main/resources/postgres/schema-v*.sql).
+# The script runs in one transaction on every pod start and is a no-op once the
+# database is current.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-db-migrate
+data:
+  migrate.sql: |
+    -- Since Polaris 1.8 bootstrap no longer creates the schema itself.
+    CREATE SCHEMA IF NOT EXISTS polaris_schema;
+
+    DO $$
+    DECLARE
+      v integer;
+    BEGIN
+      -- Not bootstrapped yet: bootstrap creates the latest version.
+      IF to_regclass('polaris_schema.version') IS NULL THEN
+        RAISE NOTICE 'Polaris schema not bootstrapped yet; nothing to migrate.';
+        RETURN;
+      END IF;
+
+      SELECT version_value INTO v FROM polaris_schema.version WHERE version_key = 'version';
+      RAISE NOTICE 'Polaris schema version: %', v;
+
+      IF v < 4 THEN
+        RAISE EXCEPTION 'Polaris schema version % is older than this script supports (4)', v;
+      END IF;
+
+      -- v5 (Polaris 1.7): non-catalog events store NULL, unused idempotency table removed.
+      IF v < 5 THEN
+        ALTER TABLE polaris_schema.events ALTER COLUMN catalog_id DROP NOT NULL;
+        UPDATE polaris_schema.events SET catalog_id = NULL WHERE catalog_id = '__realm__';
+        DROP TABLE IF EXISTS polaris_schema.idempotency_records;
+        v := 5;
+      END IF;
+
+      -- v6 (Polaris 1.8): idx_locations leads with catalog_id.
+      IF v < 6 THEN
+        DROP INDEX IF EXISTS polaris_schema.idx_locations;
+        CREATE INDEX idx_locations ON polaris_schema.entities
+          USING btree (realm_id, catalog_id, location_without_scheme)
+          WHERE location_without_scheme IS NOT NULL;
+        v := 6;
+      END IF;
+
+      UPDATE polaris_schema.version SET version_value = v WHERE version_key = 'version';
+      RAISE NOTICE 'Polaris schema now at version %', v;
+    END
+    $$;
