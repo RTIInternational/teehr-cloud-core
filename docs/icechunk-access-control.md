@@ -227,7 +227,7 @@ repo = open_icechunk_repo("isnobal_boise")     # PermissionError if not permitte
 
 - **Write access.** Notebook credentials are read-only; repos are written only by Prefect flows.
 - **Vector tiles in notebooks.** PMTiles archives sit outside the Icechunk prefix, so `layers` rules only affect the dashboard.
-- **Virtual references in notebooks that need source credentials.** iSnobal's virtual chunks are in a bucket that needs M3Works keys, so notebooks can read iSnobal only from `/raw_data`.
+- **Virtual references in notebooks that need source credentials.** iSnobal's virtual chunks are in a bucket that needs M3Works keys, so notebooks can read iSnobal only from `/data`.
 - **Hide repo names in S3 listings.** A default-role user's notebook credentials can list the Icechunk prefix and see restricted repo names, though not read them.
 - **Govern other credentials.** Anyone with their own IAM access to the bucket (keys from `aws configure` in `~/.aws/credentials`, `AWS_*` env vars, admin roles) bypasses the rules map.
 - **Derived Iceberg data.** Mean areal values and other tables written to Iceberg are governed by Polaris, not by these rules.

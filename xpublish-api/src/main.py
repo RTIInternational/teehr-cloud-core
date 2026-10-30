@@ -1,8 +1,8 @@
 """
 xpublish REST service for icechunk gridded data.
 
-Serves raster tiles via TilesPlugin (reads from /pyramids group) and
-point queries via CfEdrPlugin (reads from each repo's data group: /raw_data, or /references
+Serves raster tiles via TilesPlugin (each repo's data group plus its /overviews levels) and
+point queries via CfEdrPlugin (reads from each repo's data group: /data, or /references
 when the repo isn't materialized).
 
 Environment variables:
@@ -205,7 +205,7 @@ def build_app() -> FastAPI:
 
     @api_app.get("/dataset-keys")
     def list_dataset_keys(request: Request):
-        # Only the tiles-capable dataset names (not the _raw_data variants) the user may read.
+        # Only the tiles-capable dataset names (not the _data variants) the user may read.
         # Read through the provider rather than a startup snapshot so repos
         # created after the pod started show up on the next page load.
         identity = request.state.identity
@@ -218,27 +218,21 @@ def build_app() -> FastAPI:
 
     @api_app.get("/dataset-variables/{dataset_id}")
     def dataset_variables(dataset_id: str):
-        pyramid_dt = provider.get_datatree_for_dataset(dataset_id)
-        if pyramid_dt is None:
+        # The overviews hold the same variables as the data group
+        data_dt = provider.get_datatree_for_dataset(f"{dataset_id}_data")
+        if data_dt is None:
             raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
-        children = list(pyramid_dt.children.keys())
-        if children:
-            variables = list(pyramid_dt[children[0]].data_vars.keys())
-            logger.info("Variables for dataset '%s': %s", dataset_id, variables)
-            return {"dataset_id": dataset_id, "variables": variables}
-        # Pyramid has no children yet (empty repo) — fall back to the data group's variables.
-        raw_dt = provider.get_datatree_for_dataset(f"{dataset_id}_raw_data")
-        if raw_dt is None:
-            raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
-        return {"dataset_id": dataset_id, "variables": list(raw_dt.dataset.data_vars.keys())}
+        variables = list(data_dt.dataset.data_vars.keys())
+        logger.info("Variables for dataset '%s': %s", dataset_id, variables)
+        return {"dataset_id": dataset_id, "variables": variables}
 
     @api_app.get("/datasets/{dataset_id}/coords/{coord_name}")
     def dataset_coord_values(dataset_id: str, coord_name: str):
-        # Coords (including time) live in the repo's data group, not /pyramids.
-        raw_dt = provider.get_datatree_for_dataset(f"{dataset_id}_raw_data")
-        if raw_dt is None:
+        # Coords (including time) come from the repo's data group.
+        data_dt = provider.get_datatree_for_dataset(f"{dataset_id}_data")
+        if data_dt is None:
             raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
-        ds = raw_dt.dataset
+        ds = data_dt.dataset
         if coord_name not in ds.coords:
             raise HTTPException(status_code=404, detail=f"Coordinate '{coord_name}' not found")
         # Time-grid slots not yet written have no data to show
@@ -254,10 +248,10 @@ def build_app() -> FastAPI:
 
     @api_app.get("/datasets/{dataset_id}/variable-attrs")
     def dataset_variable_attrs(dataset_id: str):
-        raw_dt = provider.get_datatree_for_dataset(f"{dataset_id}_raw_data")
-        if raw_dt is None:
+        data_dt = provider.get_datatree_for_dataset(f"{dataset_id}_data")
+        if data_dt is None:
             raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
-        ds = raw_dt.dataset
+        ds = data_dt.dataset
         result = {}
         for var_name in ds.data_vars:
             attrs = {}

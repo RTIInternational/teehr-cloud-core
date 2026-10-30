@@ -2,10 +2,12 @@
 Xpublish data provider plugin for icechunk repos.
 
 Each discovered repo is exposed as two dataset IDs:
-  - ``<name>``           -> /pyramids group (DataTree for TilesPlugin)
-  - ``<name>_raw_data``  -> the repo's data group (Dataset for CfEdrPlugin): the group named by
-    the root ``data_group`` attribute the ingest flow records, ``/raw_data`` or ``/references``.
-    Repos without it use ``/raw_data``. ``/references`` chunks are read from the source bucket,
+  - ``<name>``       -> DataTree for TilesPlugin: the data group as full resolution (level ``1``) and
+    ``/overviews/<factor>`` as coarser levels on the same native grid. xpublish-tiles picks a level by
+    each one's ``spatial:transform`` and reprojects tiles on request.
+  - ``<name>_data``  -> the repo's data group (Dataset for CfEdrPlugin): the group named by
+    the root ``data_group`` attribute the ingest flow records, ``/data`` or ``/references``.
+    Repos without it use ``/data``. ``/references`` chunks are read from the source bucket,
     so repos are opened with anonymous read access to their virtual chunk containers.
 
 Nothing touches S3 at import time.  Repos are discovered by listing the
@@ -37,7 +39,8 @@ logger = logging.getLogger(__name__)
 
 # Root-group attribute the ingest flow writes; must match the flow's DATA_GROUP_ATTR
 DATA_GROUP_ATTR = "data_group"
-DEFAULT_DATA_GROUP = "/raw_data"
+DEFAULT_DATA_GROUP = "/data"
+OVERVIEW_GROUP = "/overviews"
 # Per-step status the ingest flow writes along its time grid; -1 marks a slot not yet written
 STATUS_COORD = "status"
 UNWRITTEN = -1
@@ -81,6 +84,26 @@ def _data_group(store) -> str:
     return attrs.get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
 
 
+def _open_group(store, group: str) -> xr.Dataset:
+    # Lazy without dask (one task per chunk made point queries slow);
+    # cache=False so a full read is never pinned in the cached dataset
+    ds = xr.open_dataset(store, engine="zarr", group=group, consolidated=False, chunks=None, cache=False)
+    # Scalars such as the grid mapping (crs) are coordinates, not variables to map or query
+    ds = ds.set_coords([v for v in ds.data_vars if ds[v].ndim == 0])
+    if "time" in ds.dims and not ds.indexes["time"].is_monotonic_increasing:
+        ds = ds.sortby("time")
+    return ds
+
+
+def _overview_levels(store) -> dict[str, xr.Dataset]:
+    """The repo's overview levels by factor, e.g. {"2": ..., "4": ...}; empty if none are built yet."""
+    try:
+        group = zarr.open_group(store, path=OVERVIEW_GROUP.strip("/"), mode="r", zarr_format=3)
+    except (zarr.errors.GroupNotFoundError, FileNotFoundError):
+        return {}
+    return {name: _open_group(store, f"{OVERVIEW_GROUP}/{name}") for name, _ in sorted(group.groups(), key=lambda g: int(g[0]))}
+
+
 @dataclass
 class RepoConfig:
     name: str
@@ -109,7 +132,7 @@ def _ensure_repo_initialized(storage, branch: str) -> None:
     On first deployment the repo may not yet exist, which would cause
     ``ic.Repository.open()`` to raise ``icechunk.IcechunkError``.  This
     function guards against that by creating the repo and writing empty
-    placeholder zarr groups for ``/pyramids`` and ``/raw_data`` so that
+    placeholder zarr groups for ``/overviews`` and ``/data`` so that
     ``xr.open_datatree`` and ``xr.open_zarr`` succeed at startup.  The
     Prefect ingest workflow will subsequently overwrite both groups with
     real data using ``mode="w"``.
@@ -122,8 +145,8 @@ def _ensure_repo_initialized(storage, branch: str) -> None:
     repo = ic.Repository.create(storage)
     session = repo.writable_session(branch)
     empty_ds = xr.Dataset()
-    empty_ds.to_zarr(session.store, group="/pyramids", mode="w", zarr_format=3, consolidated=False)
-    empty_ds.to_zarr(session.store, group="/raw_data", mode="w", zarr_format=3, consolidated=False)
+    empty_ds.to_zarr(session.store, group=OVERVIEW_GROUP, mode="w", zarr_format=3, consolidated=False)
+    empty_ds.to_zarr(session.store, group=DEFAULT_DATA_GROUP, mode="w", zarr_format=3, consolidated=False)
     session.commit("Initialize empty repo placeholder")
     logger.info("Empty icechunk repo initialized on branch '%s'", branch)
 
@@ -207,7 +230,7 @@ class IcechunkDatasetProvider(Plugin):
                 self._repos.pop(name, None)
         with self._cache_lock:
             for name in names:
-                for dataset_id in (name, f"{name}_raw_data"):
+                for dataset_id in (name, f"{name}_data"):
                     self._cache.pop(dataset_id, None)
                     self._dataset_locks.pop(dataset_id, None)
 
@@ -273,22 +296,22 @@ class IcechunkDatasetProvider(Plugin):
         return self._repo_configs
 
     def repo_names(self) -> list[str]:
-        """Return the tiles-capable dataset names (no ``_raw_data`` variants)."""
+        """Return the tiles-capable dataset names (no ``_data`` variants)."""
         return [cfg.name for cfg in self._refresh_repo_configs()]
 
     def dataset_ids(self) -> list[str]:
-        """Return all dataset IDs served by this provider (pyramid + raw_data pairs)."""
+        """Return all dataset IDs served by this provider (tiles + data pairs)."""
         ids = []
         for cfg in self._refresh_repo_configs():
             ids.append(cfg.name)
-            ids.append(f"{cfg.name}_raw_data")
+            ids.append(f"{cfg.name}_data")
         return ids
 
     def _cfg_for_dataset_id(self, dataset_id: str) -> tuple[RepoConfig | None, str]:
         for cfg in self._refresh_repo_configs():
             if dataset_id == cfg.name:
-                return cfg, "/pyramids"
-            if dataset_id == f"{cfg.name}_raw_data":
+                return cfg, "tiles"
+            if dataset_id == f"{cfg.name}_data":
                 return cfg, "data"  # resolved to the repo's data group on load
         return None, ""
 
@@ -303,31 +326,16 @@ class IcechunkDatasetProvider(Plugin):
                     self._repos[cfg.name] = _open_with_virtual_access(storage)
         return self._repos[cfg.name]
 
-    def _load_datatree(self, dataset_id: str, repo: ic.Repository, zarr_group: str, snapshot_id: str) -> _CacheEntry:
+    def _load_datatree(self, dataset_id: str, repo: ic.Repository, kind: str, snapshot_id: str) -> _CacheEntry:
         session = repo.readonly_session(snapshot_id=snapshot_id)
-        if zarr_group == "/pyramids":
-            dt = xr.open_datatree(
-                session.store,
-                group="/pyramids",
-                engine="zarr",
-                decode_coords="all",
-                consolidated=False,
-            )
+        ds = _open_group(session.store, _data_group(session.store))
+        overviews = _overview_levels(session.store) if kind == "tiles" else {}
+        if overviews:
+            dt = xr.DataTree.from_dict({"1": ds, **overviews})
             dt.attrs["_xpublish_id"] = dataset_id
             assign_leaf_xpublish_ids(dt)
         else:
-            # Lazy without dask (one task per chunk made point queries slow);
-            # cache=False so a full read is never pinned in the cached dataset
-            ds = xr.open_dataset(
-                session.store,
-                engine="zarr",
-                group=_data_group(session.store),
-                consolidated=False,
-                chunks=None,
-                cache=False,
-            )
-            if "time" in ds.dims and not ds.indexes["time"].is_monotonic_increasing:
-                ds = ds.sortby("time")
+            # EDR, or tiles before any overviews are built: the data group alone
             dt = xr.DataTree(dataset=ds)
             dt.attrs["_xpublish_id"] = dataset_id
         dt._icechunk_session = session  # Anchors session to dt so it outlives the _CacheEntry on cache refresh
@@ -344,7 +352,7 @@ class IcechunkDatasetProvider(Plugin):
         ``get_datatree`` hookimpl so that endpoints can reuse the same
         cached object without going through the pluggy hook machinery.
         """
-        cfg, zarr_group = self._cfg_for_dataset_id(dataset_id)
+        cfg, kind = self._cfg_for_dataset_id(dataset_id)
         if cfg is None:
             return None
         entry = self._cache.get(dataset_id)
@@ -368,7 +376,7 @@ class IcechunkDatasetProvider(Plugin):
                 entry.checked_at = time.monotonic()
                 return entry.datatree
             logger.info("Loading dataset '%s' at snapshot %s", dataset_id, tip)
-            entry = self._load_datatree(dataset_id, repo, zarr_group, tip)
+            entry = self._load_datatree(dataset_id, repo, kind, tip)
             self._cache[dataset_id] = entry
             return entry.datatree
 

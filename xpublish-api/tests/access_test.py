@@ -107,7 +107,7 @@ DATASET_PATHS = [
 
 
 @pytest.mark.parametrize("path", DATASET_PATHS)
-@pytest.mark.parametrize("dataset_id", ["isnobal_boise", "isnobal_boise_raw_data"])
+@pytest.mark.parametrize("dataset_id", ["isnobal_boise", "isnobal_boise_data"])
 def test_restricted_repo_is_403_on_every_route(client, path, dataset_id):
     url = path.format(id=dataset_id)
     assert get(client, url, *USER).status_code == 403

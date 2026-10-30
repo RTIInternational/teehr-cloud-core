@@ -103,14 +103,14 @@ def unmatched(rules: AccessRules, kind: Kind, existing: list[str]) -> list[str]:
 # upgrade can't skip the check: when upgrading, list the new routes here and in the tests.
 DATASET_ROUTES = ("coords/", "variable-attrs", "edr/", "tiles/")
 DENY = "deny"
-RAW_DATA_SUFFIX = "_raw_data"
+DATA_SUFFIX = "_data"
 
 
 def _repo_candidates(dataset_id: str) -> list[str]:
-    """Repos a dataset id can refer to; the provider matches the exact name, then strips ``_raw_data``."""
+    """Repos a dataset id can refer to; the provider matches the exact name, then strips ``_data``."""
     candidates = [dataset_id]
-    if dataset_id.endswith(RAW_DATA_SUFFIX) and dataset_id != RAW_DATA_SUFFIX:
-        candidates.append(dataset_id[: -len(RAW_DATA_SUFFIX)])
+    if dataset_id.endswith(DATA_SUFFIX) and dataset_id != DATA_SUFFIX:
+        candidates.append(dataset_id[: -len(DATA_SUFFIX)])
     return candidates
 
 
@@ -118,7 +118,7 @@ def request_target(path: str) -> tuple[Kind, list[str]] | str | None:
     """What a request reads: ``(kind, names)``, None for no repo or layer, or DENY for an unrecognised path.
 
     A request is allowed only if the user may read every name, so an ambiguous dataset id (a repo
-    itself named ``*_raw_data``) is checked against both repos it could mean.
+    itself named ``*_data``) is checked against both repos it could mean.
     """
     if path in ("/api/datasets", "/api/datasets/"):
         return DENY  # xpublish's built-in list of every dataset; the frontend uses /api/dataset-keys
