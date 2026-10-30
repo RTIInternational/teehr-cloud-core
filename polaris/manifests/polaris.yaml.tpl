@@ -26,8 +26,39 @@ spec:
     spec:
       serviceAccountName: polaris
       initContainers:
+        # Creates the database schema and migrates it to the current version
+        # (see polaris-db-migrate.yaml).
+        - name: db-migrate
+          image: postgres:15
+          imagePullPolicy: IfNotPresent
+          command:
+            - psql
+            - -h
+            - polaris-pg
+            - -d
+            - polaris
+            - -v
+            - ON_ERROR_STOP=1
+            - --single-transaction
+            - -f
+            - /migrate/migrate.sql
+          volumeMounts:
+            - name: polaris-db-migrate
+              mountPath: /migrate
+              readOnly: true
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-db-secrets
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-db-secrets
+                  key: password
         - name: schema-bootstrap
-          image: apache/polaris-admin-tool:1.5.0
+          image: apache/polaris-admin-tool:1.8.0
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -94,7 +125,7 @@ spec:
 
       containers:
         - name: polaris
-          image: apache/polaris:1.5.0
+          image: apache/polaris:1.8.0
           imagePullPolicy: IfNotPresent
           env:
             - name: POLARIS_REALM_CONTEXT_REALMS
@@ -182,6 +213,9 @@ spec:
         - name: polaris-config
           configMap:
             name: polaris-config
+        - name: polaris-db-migrate
+          configMap:
+            name: polaris-db-migrate
 
 ---
 apiVersion: v1
