@@ -7,41 +7,47 @@ type: exec
 name: prometheus-crds
 description: Install Prometheus Operator CRDs
 environments:
+  - local
   - remote
+# Opt-in on KinD, where it would add ~1.5GB to every deploy:
+#   garden deploy kube-prometheus-stack --var localMonitoring=true
+disabled: ${environment.name == "local" && !(var.localMonitoring || false)}
 spec:
   deployCommand:
     - kubectl
-    - --context
-    - ${var.remoteCluster.contextArn}
+    - '--context=${environment.name == "local" ? "kind-kind" : var.remoteCluster.contextArn}'
     - apply
     - --server-side
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagerconfigs.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagerconfigs.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagers.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagers.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_probes.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_probes.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheusagents.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheusagents.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_scrapeconfigs.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_scrapeconfigs.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
     - -f
-    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.73.2/example/prometheus-operator-crd/monitoring.coreos.com_thanosrulers.yaml
+    - https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.94.2/example/prometheus-operator-crd/monitoring.coreos.com_thanosrulers.yaml
 ---
 kind: Deploy
 type: helm
 name: kube-prometheus-stack
 description: Prometheus and Grafana monitoring stack for cluster observability
 environments:
+  - local
   - remote
+# Opt-in on KinD; see prometheus-crds above.
+disabled: ${environment.name == "local" && !(var.localMonitoring || false)}
 dependencies:
   - deploy.secrets
   - deploy.prometheus-crds
@@ -49,7 +55,7 @@ spec:
   chart:
     repo: https://prometheus-community.github.io/helm-charts
     name: kube-prometheus-stack
-    version: 58.2.2
+    version: 92.16.1
   namespace: teehr-hub
   values:
     # Skip CRDs - installed separately above
