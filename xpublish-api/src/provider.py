@@ -48,8 +48,9 @@ OVERVIEW_GROUP = "/overviews"
 STATUS_COORD = "status"
 REFERENCE_TIME = "reference_time"
 VALUE_TIME = "value_time"
-# Newest on-disk layout this provider serves: 1 is the analysis time grid, 2 adds forecast axes
-SUPPORTED_LAYOUT_VERSION = 2
+# On-disk layouts this provider serves: 1 is the analysis time grid (also when the attribute is
+# missing), 2 adds forecast axes. Any other value is refused rather than guessed at.
+KNOWN_LAYOUT_VERSIONS = (1, 2)
 
 
 def written_coord_values(ds: xr.Dataset, coord_name: str) -> np.ndarray:
@@ -75,9 +76,9 @@ def _root_attrs(store) -> dict:
 def grid_spec(store) -> dict:
     """The repo's shape from its root attributes: append axis, forecast axes and layout version."""
     attrs = _root_attrs(store)
-    version = int(attrs.get(LAYOUT_VERSION_ATTR, 1))
-    if version > SUPPORTED_LAYOUT_VERSION:
-        raise ValueError(f"layout_version {version} is newer than this provider serves ({SUPPORTED_LAYOUT_VERSION})")
+    version = attrs.get(LAYOUT_VERSION_ATTR, 1)
+    if version not in KNOWN_LAYOUT_VERSIONS:
+        raise ValueError(f"Unknown layout_version {version!r}; this provider serves {list(KNOWN_LAYOUT_VERSIONS)}.")
     return {
         "append_dim": attrs.get(APPEND_DIM_ATTR, "time"),
         "fixed_dims": list(attrs.get(FIXED_DIMS_ATTR, [])),

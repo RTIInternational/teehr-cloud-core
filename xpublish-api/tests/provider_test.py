@@ -144,9 +144,10 @@ def test_forecast_grid_spec_and_edr_time_axis(tmp_path, monkeypatch):
     assert ds.lead_time.dtype == np.int32
 
 
-def test_newer_layout_is_refused(tmp_path, monkeypatch):
-    repo = _repo_with(tmp_path, _forecast_dataset(), {"append_dim": "reference_time", "layout_version": 3})
-    with pytest.raises(ValueError, match="layout_version"):
+@pytest.mark.parametrize("version", [3, 0, -1, "two"])
+def test_unknown_layout_is_refused(tmp_path, monkeypatch, version):
+    repo = _repo_with(tmp_path, _forecast_dataset(), {"append_dim": "reference_time", "layout_version": version})
+    with pytest.raises(ValueError, match="Unknown layout_version"):
         _provider_for(monkeypatch, repo).get_datatree_for_dataset("r_data")
 
 
