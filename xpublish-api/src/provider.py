@@ -37,7 +37,7 @@ from .storage import build_s3_client, list_storage_prefixes
 
 logger = logging.getLogger(__name__)
 
-# Names the ingest flow writes into repos; must match the flows' repo_const
+# Names the ingest flow writes into repos; must match the flows' repo_const. See docs/gridded-repo-contract.md
 DATA_GROUP_ATTR = "data_group"
 APPEND_DIM_ATTR = "append_dim"
 FIXED_DIMS_ATTR = "fixed_dims"
