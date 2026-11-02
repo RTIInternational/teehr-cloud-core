@@ -152,7 +152,6 @@ class _CacheEntry:
     # Rust session could be dropped, causing a dangling pointer on next access.
     session: Any
     snapshot_id: str
-    grid_spec: dict
     checked_at: float = field(default_factory=time.monotonic)
 
     def is_checked(self, ttl: float) -> bool:
@@ -373,7 +372,8 @@ class IcechunkDatasetProvider(Plugin):
             dt = xr.DataTree(dataset=ds)
             dt.attrs["_xpublish_id"] = dataset_id
         dt._icechunk_session = session  # Anchors session to dt so it outlives the _CacheEntry on cache refresh
-        return _CacheEntry(datatree=dt, session=session, snapshot_id=snapshot_id, grid_spec=spec)
+        dt._grid_spec = spec  # Read with the tree, so a concurrent cache refresh can't separate them
+        return _CacheEntry(datatree=dt, session=session, snapshot_id=snapshot_id)
 
     def _dataset_lock(self, dataset_id: str) -> threading.Lock:
         with self._cache_lock:
@@ -414,11 +414,11 @@ class IcechunkDatasetProvider(Plugin):
             self._cache[dataset_id] = entry
             return entry.datatree
 
-    def grid_spec_for_dataset(self, dataset_id: str) -> dict | None:
-        """The repo's grid spec (see ``grid_spec``), loaded with its data group; None for an unknown dataset."""
-        if self.get_datatree_for_dataset(f"{dataset_id}_data") is None:
-            return None
-        return self._cache[f"{dataset_id}_data"].grid_spec
+    def dataset_metadata(self, dataset_id: str) -> dict | None:
+        """What the dashboard needs to know about a dataset besides its data: for now its grid spec
+        (see ``grid_spec``), loaded with its data group. None for an unknown dataset."""
+        dt = self.get_datatree_for_dataset(f"{dataset_id}_data")
+        return None if dt is None else dt._grid_spec
 
     @hookimpl
     def get_datasets(self) -> list[str]:

@@ -134,10 +134,10 @@ def test_forecast_grid_spec_and_edr_time_axis(tmp_path, monkeypatch):
     repo = _repo_with(tmp_path, _forecast_dataset(),
                       {"append_dim": "reference_time", "fixed_dims": ["lead_time"], "layout_version": 2})
     provider = _provider_for(monkeypatch, repo)
-    assert provider.grid_spec_for_dataset("r") == {
+    assert provider.dataset_metadata("r") == {
         "append_dim": "reference_time", "fixed_dims": ["lead_time"], "layout_version": 2,
     }
-    assert provider.grid_spec_for_dataset("missing") is None
+    assert provider.dataset_metadata("missing") is None
     ds = provider.get_datatree_for_dataset("r_data").dataset
     # EDR's datetime selects cycles: the reference time is the only CF T axis when serving
     assert ds.cf.axes["T"] == ["reference_time"]
@@ -159,7 +159,7 @@ def test_analysis_repo_served_as_before(tmp_path, monkeypatch):
                 "status": ("time", np.array([2, -1, 1, -1, 0], "int8"))},
     )
     provider = _provider_for(monkeypatch, _repo_with(tmp_path, data, {"append_dim": "time"}))
-    assert provider.grid_spec_for_dataset("r") == {"append_dim": "time", "fixed_dims": [], "layout_version": 1}
+    assert provider.dataset_metadata("r") == {"append_dim": "time", "fixed_dims": [], "layout_version": 1}
     ds = provider.get_datatree_for_dataset("r_data").dataset
     assert ds.cf.axes["T"] == ["time"] and ds.time.attrs == {"standard_name": "time", "axis": "T"}
     assert list(written_coord_values(ds, "time")) == list(TIMES[[0, 2, 4]].values)
