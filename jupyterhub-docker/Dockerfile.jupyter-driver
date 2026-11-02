@@ -21,38 +21,66 @@ RUN apt-get update -qq --yes > /dev/null && \
     apt-get install --yes -qq gnupg2 > /dev/null && \
     rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update \
+# Firefox comes from Mozilla's APT repo: Ubuntu 24.04's own firefox package is a
+# stub for the snap, which can't run in a container. The pin lets Mozilla's
+# version replace that stub, whose epoch sorts higher.
+RUN apt-get update && apt-get install -y curl ca-certificates \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSL https://packages.mozilla.org/apt/repo-signing-key.gpg -o /etc/apt/keyrings/packages.mozilla.org.asc \
+    && echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" > /etc/apt/sources.list.d/mozilla.list \
+    && printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' > /etc/apt/preferences.d/mozilla
+
+# The base image is not rebuilt for Ubuntu security updates, so apply them here.
+# Firefox and its GTK/X libraries are for HoloViz PNG export (selenium +
+# geckodriver). The Spark driver only needs a headless JRE. No compilers: users
+# install from wheels, and build-essential brought in linux-libc-dev, whose
+# kernel CVEs (no fix, and never run in a container) were most of the image's
+# findings.
+RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y wget curl bzip2 libgtk2.0-0t64 \
-    libgtk-3-0t64 libgbm-dev libnotify-dev libnss3 libxss1 \
-    libasound2t64 libxtst6 firefox openjdk-17-jdk git vim \
-    git-lfs build-essential
+    libgtk-3-0t64 libgbm1 libnotify4 libnss3 libxss1 \
+    libasound2t64 libxtst6 firefox openjdk-17-jre-headless git vim \
+    git-lfs \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install geospatial dependencies for ARM64
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then \
-        echo "Installing ARM64 geospatial packages..." && \
-        apt-get update && \
-        apt-get install -y gdal-bin libgdal-dev proj-bin libproj-dev libspatialindex-dev && \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
-
-# Install mamba packages
-RUN mamba install -y nodejs awscli htop && \
-    mamba clean -afy
+# Tools in the base conda env (/srv/conda), with that env's own packages
+# upgraded past the CVEs in the versions the base image ships. npm is upgraded
+# past the one bundled with nodejs, whose own dependencies carry CVEs.
+# setuptools 81 vendors fixed wheel/jaraco.context and is the last release with
+# pkg_resources, which 82 removed.
+RUN mamba install -n base -y nodejs awscli htop \
+        "gitpython>=3.1.58" "certifi>=2026.10.18" "cryptography>=50" \
+        "dulwich>=1.2.9" "msgpack-python>=1.2.3" "urllib3>=2.8" \
+        "virtualenv>=21.14" "wheel>=0.46.2" "jaraco.context>=6.1" \
+        "setuptools>=81,<82" && \
+    mamba clean -afy && \
+    npm install -g npm@12 && npm cache clean --force
 
 # Install geckodriver for ARM64 or use mamba for x86_64
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then \
         echo "Installing geckodriver for ARM64..." && \
-        wget -q https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-linux-aarch64.tar.gz && \
-        tar -xzf geckodriver-v0.35.0-linux-aarch64.tar.gz && \
+        wget -q https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-linux-aarch64.tar.gz && \
+        tar -xzf geckodriver-v0.37.1-linux-aarch64.tar.gz && \
         chmod +x geckodriver && \
         mv geckodriver /usr/local/bin/ && \
-        rm geckodriver-v0.35.0-linux-aarch64.tar.gz; \
+        rm geckodriver-v0.37.1-linux-aarch64.tar.gz; \
     else \
-        mamba install -y geckodriver && \
+        mamba install -n base -y "geckodriver>=0.37.1" && \
         mamba clean -afy; \
     fi
+
+# Upgrade the notebook env's packages past the CVEs in the versions the base
+# image ships. JupyterLab stays on 4.x, so extensions remain compatible;
+# setuptools as in the base env above.
+RUN mamba install -n notebook -y \
+        "pillow>=13" "jupyter_server>=2.21" "jupyterlab>=4.6.2,<5" \
+        "notebook>=7.6.3,<8" "tornado>=6.5.9" "anyio>=4.14.2" \
+        "brotli-python>=1.2.1" "pyjwt>=2.14" "cryptography>=50" \
+        "mistune>=3.3" "nbconvert>=7.17.2" "msgpack-python>=1.2.3" \
+        "oauthlib>=4" "soupsieve>=2.8.4" "mako>=1.3.12" "fsspec>=2026.6" \
+        "wheel>=0.46.2" "setuptools>=81,<82" && \
+    mamba clean -afy
 
 # Install Python packages (icechunk on the same minor version as xpublish-api, which reads the same repos)
 RUN pip install --no-cache-dir \
@@ -68,17 +96,46 @@ RUN pip install --no-cache-dir \
     plotly \
     "icechunk~=2.2.2"
 
-# Install TEEHR (set GDAL config for ARM64 builds)
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then \
-    export GDAL_CONFIG=/usr/bin/gdal-config; \
-    fi && \
-    GIT_LFS_SKIP_SMUDGE=1 pip install --no-cache-dir "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}"
+# Install TEEHR. On x86_64 everything installs from wheels. exactextract has no
+# aarch64 wheel (local KinD on Apple Silicon), so there it is compiled: the
+# toolchain and -dev headers are installed and purged in this same layer, keeping
+# gdal-bin so the GDAL/GEOS runtime libraries exactextract links against remain.
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        BUILD_DEPS="build-essential libgdal-dev libproj-dev libspatialindex-dev"; \
+        apt-get update && apt-get install -y gdal-bin proj-bin $BUILD_DEPS; \
+        export GDAL_CONFIG=/usr/bin/gdal-config; \
+    fi \
+    && GIT_LFS_SKIP_SMUDGE=1 pip install --no-cache-dir "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}" \
+    && if [ -n "${BUILD_DEPS:-}" ]; then \
+        apt-get purge -y --auto-remove $BUILD_DEPS && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Patch the jars bundled in the pyspark wheel, which carry most of the image's
+# fixable Java CVEs (see patch-spark-jars.sh, a copy of
+# spark/docker/patch-spark-jars.sh). The notebook's Spark driver runs from the
+# pyspark wheel, so that is the copy that gets patched.
+COPY patch-spark-jars.sh /tmp/patch-spark-jars.sh
+RUN sh /tmp/patch-spark-jars.sh \
+        "$(python -c 'import os, pyspark; print(os.path.join(pyspark.__path__[0], "jars"))')" \
+    && rm /tmp/patch-spark-jars.sh
 
 # Notebook client for Icechunk repos (icechunk_access). --no-deps keeps the pinned teehr and
 # icechunk above; the source is removed so only the root-owned installed copy remains.
 COPY icechunk_access /tmp/icechunk_access
 RUN pip install --no-cache-dir --no-deps /tmp/icechunk_access && rm -rf /tmp/icechunk_access
+
+# Fail the build if anything above left a notebook dependency broken. HOME is
+# a throwaway so the imports' config dirs (e.g. ~/.config/matplotlib) aren't
+# left root-owned in jovyan's home.
+RUN export HOME="$(mktemp -d)" \
+    && python -c "import teehr, pyspark, selenium, icechunk, icechunk_access, holoviews, hvplot, PIL" \
+    && java -version && geckodriver --version && firefox --version \
+    && rm -rf "$HOME"
+
+# Panel 1.10 builds its server-extension URL without JupyterHub's /user/<name>/
+# prefix, so the request 404s and it warns before falling back to the CDN.
+# Go straight to the CDN instead.
+ENV PANEL_NOTEBOOK_RESOURCES=cdn
 
 RUN mkdir -p /opt/teehr && chown -R ${NB_USER}:${NB_USER} /opt/teehr
 
