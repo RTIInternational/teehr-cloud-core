@@ -126,9 +126,12 @@ RUN pip install --no-cache-dir --no-deps /tmp/icechunk_access && rm -rf /tmp/ice
 
 # Fail the build if anything above left a notebook dependency broken. HOME is
 # a throwaway so the imports' config dirs (e.g. ~/.config/matplotlib) aren't
-# left root-owned in jovyan's home.
+# left root-owned in jovyan's home. icechunk_access refuses to import with a
+# teehr that lacks teehr.utils.keycloak_auth (stable/previous), so it is only
+# checked where that module exists.
 RUN export HOME="$(mktemp -d)" \
-    && python -c "import teehr, pyspark, selenium, icechunk, icechunk_access, holoviews, hvplot, PIL" \
+    && python -c "import teehr, pyspark, selenium, icechunk, holoviews, hvplot, PIL" \
+    && python -c "import importlib.util as u; u.find_spec('teehr.utils.keycloak_auth') and __import__('icechunk_access')" \
     && java -version && geckodriver --version && firefox --version \
     && rm -rf "$HOME"
 
