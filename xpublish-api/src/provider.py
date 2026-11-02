@@ -37,22 +37,52 @@ from .storage import build_s3_client, list_storage_prefixes
 
 logger = logging.getLogger(__name__)
 
-# Root-group attribute the ingest flow writes; must match the flow's DATA_GROUP_ATTR
+# Names the ingest flow writes into repos; must match the flows' repo_const
 DATA_GROUP_ATTR = "data_group"
+APPEND_DIM_ATTR = "append_dim"
+FIXED_DIMS_ATTR = "fixed_dims"
+LAYOUT_VERSION_ATTR = "layout_version"
 DEFAULT_DATA_GROUP = "/data"
 OVERVIEW_GROUP = "/overviews"
-# Per-step status the ingest flow writes along its time grid; -1 marks a slot not yet written
+# Per-step status along the time grid: 0 and up hold data; -1 is not yet written, -2 never published
 STATUS_COORD = "status"
-UNWRITTEN = -1
+REFERENCE_TIME = "reference_time"
+VALUE_TIME = "value_time"
+# Newest on-disk layout this provider serves: 1 is the analysis time grid, 2 adds forecast axes
+SUPPORTED_LAYOUT_VERSION = 2
 
 
 def written_coord_values(ds: xr.Dataset, coord_name: str) -> np.ndarray:
-    """A coordinate's values, without time-grid slots not yet written; unchanged for repos without status."""
+    """A coordinate's values, without time-grid slots not yet written; unchanged for repos without status.
+
+    For forecasts, whose status is per (cycle, [member], lead), a value is kept if any step along it holds data.
+    """
     values = ds.coords[coord_name].values
     status = ds.coords.get(STATUS_COORD)
-    if status is not None and status.dims == (coord_name,):
-        values = values[status.values != UNWRITTEN]
+    if status is not None and coord_name in status.dims:
+        written = status >= 0
+        values = values[written.any([d for d in status.dims if d != coord_name]).values]
     return values
+
+
+def _root_attrs(store) -> dict:
+    try:
+        return dict(zarr.open_group(store, mode="r", zarr_format=3).attrs)
+    except (zarr.errors.GroupNotFoundError, FileNotFoundError):
+        return {}
+
+
+def grid_spec(store) -> dict:
+    """The repo's shape from its root attributes: append axis, forecast axes and layout version."""
+    attrs = _root_attrs(store)
+    version = int(attrs.get(LAYOUT_VERSION_ATTR, 1))
+    if version > SUPPORTED_LAYOUT_VERSION:
+        raise ValueError(f"layout_version {version} is newer than this provider serves ({SUPPORTED_LAYOUT_VERSION})")
+    return {
+        "append_dim": attrs.get(APPEND_DIM_ATTR, "time"),
+        "fixed_dims": list(attrs.get(FIXED_DIMS_ATTR, [])),
+        "layout_version": version,
+    }
 
 
 def _anonymous_credentials(url_prefix: str):
@@ -77,11 +107,7 @@ def _open_with_virtual_access(storage) -> ic.Repository:
 
 
 def _data_group(store) -> str:
-    try:
-        attrs = zarr.open_group(store, mode="r", zarr_format=3).attrs
-    except (zarr.errors.GroupNotFoundError, FileNotFoundError):
-        return DEFAULT_DATA_GROUP
-    return attrs.get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
+    return _root_attrs(store).get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
 
 
 def _open_group(store, group: str) -> xr.Dataset:
@@ -92,6 +118,12 @@ def _open_group(store, group: str) -> xr.Dataset:
     ds = ds.set_coords([v for v in ds.data_vars if ds[v].ndim == 0])
     if "time" in ds.dims and not ds.indexes["time"].is_monotonic_increasing:
         ds = ds.sortby("time")
+    if REFERENCE_TIME in ds.dims:
+        # xpublish-edr selects datetime on cf_xarray's T axis, which must be indexed: here the cycles.
+        # The repo keeps CF's meaning (the T axis is the 2-D valid time), so this is set only when serving.
+        ds[REFERENCE_TIME].attrs["axis"] = "T"
+        if VALUE_TIME in ds.coords:
+            ds[VALUE_TIME].attrs.pop("standard_name", None)
     return ds
 
 
@@ -120,6 +152,7 @@ class _CacheEntry:
     # Rust session could be dropped, causing a dangling pointer on next access.
     session: Any
     snapshot_id: str
+    grid_spec: dict
     checked_at: float = field(default_factory=time.monotonic)
 
     def is_checked(self, ttl: float) -> bool:
@@ -328,6 +361,7 @@ class IcechunkDatasetProvider(Plugin):
 
     def _load_datatree(self, dataset_id: str, repo: ic.Repository, kind: str, snapshot_id: str) -> _CacheEntry:
         session = repo.readonly_session(snapshot_id=snapshot_id)
+        spec = grid_spec(session.store)
         ds = _open_group(session.store, _data_group(session.store))
         overviews = _overview_levels(session.store) if kind == "tiles" else {}
         if overviews:
@@ -339,7 +373,7 @@ class IcechunkDatasetProvider(Plugin):
             dt = xr.DataTree(dataset=ds)
             dt.attrs["_xpublish_id"] = dataset_id
         dt._icechunk_session = session  # Anchors session to dt so it outlives the _CacheEntry on cache refresh
-        return _CacheEntry(datatree=dt, session=session, snapshot_id=snapshot_id)
+        return _CacheEntry(datatree=dt, session=session, snapshot_id=snapshot_id, grid_spec=spec)
 
     def _dataset_lock(self, dataset_id: str) -> threading.Lock:
         with self._cache_lock:
@@ -379,6 +413,12 @@ class IcechunkDatasetProvider(Plugin):
             entry = self._load_datatree(dataset_id, repo, kind, tip)
             self._cache[dataset_id] = entry
             return entry.datatree
+
+    def grid_spec_for_dataset(self, dataset_id: str) -> dict | None:
+        """The repo's grid spec (see ``grid_spec``), loaded with its data group; None for an unknown dataset."""
+        if self.get_datatree_for_dataset(f"{dataset_id}_data") is None:
+            return None
+        return self._cache[f"{dataset_id}_data"].grid_spec
 
     @hookimpl
     def get_datasets(self) -> list[str]:

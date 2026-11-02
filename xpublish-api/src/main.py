@@ -246,6 +246,14 @@ def build_app() -> FastAPI:
         logger.debug("Coordinate values for dataset '%s', coord '%s': %s", dataset_id, coord_name, serialized)
         return {"dataset_id": dataset_id, "coord_name": coord_name, "values": serialized}
 
+    @api_app.get("/datasets/{dataset_id}/grid-spec")
+    def dataset_grid_spec(dataset_id: str):
+        # The repo's shape, so the frontend shows forecast controls (cycle, lead, member) where it has them
+        spec = provider.grid_spec_for_dataset(dataset_id)
+        if spec is None:
+            raise HTTPException(status_code=404, detail=f"Unknown dataset '{dataset_id}'")
+        return {"dataset_id": dataset_id, **spec}
+
     @api_app.get("/datasets/{dataset_id}/variable-attrs")
     def dataset_variable_attrs(dataset_id: str):
         data_dt = provider.get_datatree_for_dataset(f"{dataset_id}_data")

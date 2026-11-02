@@ -101,7 +101,7 @@ def unmatched(rules: AccessRules, kind: Kind, existing: list[str]) -> list[str]:
 # Every route under /api/datasets/{id}/ that xpublish-api serves (custom routes, the tiles and EDR
 # plugins). Anything else under that prefix is denied, so a route added by an xpublish or plugin
 # upgrade can't skip the check: when upgrading, list the new routes here and in the tests.
-DATASET_ROUTES = ("coords/", "variable-attrs", "edr/", "tiles/")
+DATASET_ROUTES = ("coords/", "variable-attrs", "grid-spec", "edr/", "tiles/")
 DENY = "deny"
 DATA_SUFFIX = "_data"
 
@@ -124,7 +124,7 @@ def request_target(path: str) -> tuple[Kind, list[str]] | str | None:
         return DENY  # xpublish's built-in list of every dataset; the frontend uses /api/dataset-keys
     if path.startswith("/api/datasets/"):
         dataset_id, _, rest = path[len("/api/datasets/"):].partition("/")
-        if not dataset_id or not (rest == "variable-attrs" or rest.startswith(DATASET_ROUTES)):
+        if not dataset_id or not (rest in ("variable-attrs", "grid-spec") or rest.startswith(DATASET_ROUTES)):
             return DENY
         return "repos", _repo_candidates(dataset_id)
     if path.startswith("/api/dataset-variables/"):
