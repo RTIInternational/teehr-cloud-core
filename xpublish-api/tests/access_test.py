@@ -99,6 +99,7 @@ def test_vector_tiles_lists_only_permitted_layers(client):
 DATASET_PATHS = [
     "/api/datasets/{id}/coords/time",
     "/api/datasets/{id}/variable-attrs",
+    "/api/datasets/{id}/metadata",
     "/api/datasets/{id}/tiles/WebMercatorQuad/3/2/1",
     "/api/datasets/{id}/tiles/legend",
     "/api/datasets/{id}/edr/position",
