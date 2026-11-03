@@ -119,6 +119,20 @@ RUN sh /tmp/patch-spark-jars.sh \
         "$(python -c 'import os, pyspark; print(os.path.join(pyspark.__path__[0], "jars"))')" \
     && rm /tmp/patch-spark-jars.sh
 
+# Download teehr's Spark packages, plus the Polaris AuthManager package the
+# notebooks use, into the image so sessions never fetch them from Maven Central,
+# which rate-limits per IP. teehr reads SPARK_JARS_IVY. Ivy keeps a copy of each
+# jar in cache/ and jars/; hardlink stores them once. Owned by the notebook user
+# because Ivy writes to it at runtime. HOME is a throwaway, as in the build
+# check below.
+ENV SPARK_JARS_IVY=/opt/ivy
+COPY warm-spark-ivy-cache.py /tmp/warm-spark-ivy-cache.py
+RUN export HOME="$(mktemp -d)" \
+    && python /tmp/warm-spark-ivy-cache.py --authmanager \
+    && rm -rf "$HOME" /tmp/warm-spark-ivy-cache.py \
+    && hardlink /opt/ivy \
+    && chown -R ${NB_USER}:${NB_USER} /opt/ivy
+
 # Notebook client for Icechunk repos (icechunk_access). --no-deps keeps the pinned teehr and
 # icechunk above; the source is removed so only the root-owned installed copy remains.
 COPY icechunk_access /tmp/icechunk_access
