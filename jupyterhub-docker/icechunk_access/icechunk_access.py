@@ -3,7 +3,7 @@
     from icechunk_access import list_icechunk_repos, open_icechunk_dataset
 
     list_icechunk_repos()                       # repos you may read
-    ds = open_icechunk_dataset("ua_swann_4km")  # its data as an xarray Dataset
+    ds = open_icechunk_dataset("ua_swann_4km")  # its data as an xarray Dataset (written steps only)
 
 xpublish-api decides which repos you may read (see teehr-cloud-core/docs/icechunk-access-control.md).
 On the remote platform it also issues short-lived, read-only S3 credentials limited to those repos,
@@ -34,9 +34,12 @@ XPUBLISH_API_URL = os.getenv("XPUBLISH_API_URL", "http://xpublish-api:8000").rst
 USE_STS = os.getenv("ICECHUNK_USE_STS", "false").strip().lower() == "true"
 # Renew a minute early, so a read never starts with credentials about to expire
 EXPIRY_MARGIN = timedelta(seconds=60)
-# Root-group attribute naming the repo's data group; must match xpublish-api's provider
+# Names the ingest flows write into repos; see docs/gridded-repo-contract.md
 DATA_GROUP_ATTR = "data_group"
 DEFAULT_DATA_GROUP = "/data"
+APPEND_DIM_ATTR = "append_dim"
+# Per-step status: 0 and up hold data; -1 is not yet written, -2 never published
+STATUS_COORD = "status"
 SESSION_EXPIRED = (
     "Your Keycloak session has expired; restart your server from the hub control panel "
     "(File > Hub Control Panel > Stop My Server, then Start My Server)"
@@ -155,8 +158,24 @@ def open_icechunk_repo(name: str) -> ic.Repository:
     )
 
 
-def open_icechunk_dataset(name: str, branch: str = "main", **open_zarr_kwargs) -> xr.Dataset:
-    """Open a repo's data (its data or references group) as an xarray Dataset."""
+def open_icechunk_dataset(
+    name: str, branch: str = "main", written_only: bool = True, **open_zarr_kwargs
+) -> xr.Dataset:
+    """Open a repo's data (its data or references group) as an xarray Dataset.
+
+    A repo's time grid has a slot for every step from its first, written or not. By default only the
+    slots along its time axis (time steps, or a forecast's cycles) with data are kept: a forecast
+    cycle stays if any of its leads is written. ``written_only=False`` returns the full grid.
+    """
     session = open_icechunk_repo(name).readonly_session(branch)
-    group = zarr.open_group(session.store, mode="r", zarr_format=3).attrs.get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
-    return xr.open_zarr(session.store, group=group, consolidated=False, **open_zarr_kwargs)
+    attrs = zarr.open_group(session.store, mode="r", zarr_format=3).attrs
+    group = attrs.get(DATA_GROUP_ATTR, DEFAULT_DATA_GROUP)
+    ds = xr.open_zarr(session.store, group=group, consolidated=False, **open_zarr_kwargs)
+    if written_only and STATUS_COORD in ds.coords:
+        dim = attrs.get(APPEND_DIM_ATTR, "time")
+        written = ds[STATUS_COORD] >= 0
+        other_dims = [d for d in written.dims if d != dim]
+        if other_dims:
+            written = written.any(other_dims)
+        ds = ds.isel({dim: written.values})
+    return ds
