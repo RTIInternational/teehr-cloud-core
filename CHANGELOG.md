@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (Icechunk on Spark executors)
+
+### Summary
+- The Spark executor image can read Icechunk repos and Zarr stores, so client repos can run gridded mean areal
+  tasks on executors (RTIInternational/teehr-hub#521).
+
+### What Changed
+- `spark/docker/Dockerfile.spark-executor` installs `icechunk~=2.1.2`, `xarray<2026.9` and `rioxarray~=0.23.0`
+  with teehr, matching the client repos' `Dockerfile.prefect-teehr`, and checks the imports at build time.
+
+### Why
+- Large mean areal backfills (AORC, GEFS) run as Spark `mapInArrow` tasks that read the source grids directly.
+
 ## Unreleased (backfill users into a group)
 
 ### Summary
