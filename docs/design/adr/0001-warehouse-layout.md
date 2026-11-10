@@ -28,6 +28,11 @@ than a shared table per type. The public TEEHR data becomes the `core` project (
 other project is a tenant namespace that can reference `core`, stand alone, or publish datasets
 back to everyone.
 
+A `timeseries` dataset is **homogeneous** in `configuration`, `variable`, and `statistic` — any
+variation is a separate table — so those (and the canonical unit) are dataset-level metadata, not
+fact-row columns. `interval` is the exception: per-series (in the `series` catalog), nullable for
+instantaneous data. See `../warehouse-data-model.md` and ADR-0010.
+
 ## Consequences
 
 - **Positive:** isolation matches how Iceberg and Polaris already partition (namespace grants +

@@ -31,6 +31,8 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0007](0007-package-decomposition.md) | Decompose `teehr` by dependency weight | Proposed |
 | [0008](0008-repo-topology.md) | Repo & packaging topology | Proposed |
 | [0009](0009-branching-and-deployment.md) | Branching & deployment strategy during the refactor | Accepted |
+| [0010](0010-series-identity.md) | Series identity — `series_key`, locations as a linked layer | Proposed |
+| [0011](0011-interface-parity-verirace.md) | Interface parity with VeriRace; deviate on substrate | Proposed |
 
 ## Phase 0 exit checklist
 
@@ -48,6 +50,6 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 
 - Analytics spec schema v0 (`../spec-schema-v0.md`).
 - Target canonical warehouse data model (`../warehouse-data-model.md`) — normalized
-  vocabularies; separate variable / interval / statistic fields; canonical units.
+  domains; separate variable / interval / statistic fields; canonical units.
 
 See [`template.md`](template.md) for the ADR format.

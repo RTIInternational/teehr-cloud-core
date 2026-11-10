@@ -44,4 +44,4 @@ metric's unit is not a simple scalar conversion of its inputs' units.
 
 - The metric kernels (ADR-0002) are where each metric's unit semantics are declared, next to the
   calculation.
-- Canonical units and the unit reference vocabulary are part of the warehouse data model artifact.
+- Canonical units and the unit domain table are part of the warehouse data model artifact.
