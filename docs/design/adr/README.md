@@ -6,6 +6,7 @@ platform refactor tracked in [#133](https://github.com/RTIInternational/teehr-cl
 Each ADR captures one decision: its context, the call, and the consequences. They are the
 **Phase 0 deliverable** of the [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE) —
 the phase gate is "ADRs ratified by the team; all four spikes pass or have a documented fallback."
+See [`../roadmap.md`](../roadmap.md) for the phase index (which ADR lands in which phase).
 
 ADRs are cross-cutting architecture and live in `teehr-cloud-core` because it is the shared
 core across deployments (`teehr-hub`, `teehr-fved`). An accepted ADR is not re-litigated; a
