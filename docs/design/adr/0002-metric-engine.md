@@ -27,8 +27,11 @@ still needed at the top of the size range.
   offline-importable.
 - Kernels **compose from additive sufficient statistics** where the metric allows (counts, sums,
   squared sums, cross-products) so the same per-chunk state serves incremental runs and block
-  bootstrapping; **order-statistic** metrics use mergeable sketches (histograms, t-digest)
-  instead; anything fitting neither falls back to raw resampling.
+  bootstrapping. This is the **core state path** — the moment-based metrics (mean, bias, RMSE,
+  variance, correlation, NSE, KGE). **Order-statistic** metrics (median, percentiles) **default to
+  raw resampling** (correct, just less compact) and **may optionally** use mergeable sketches
+  (histogram / t-digest) as an efficiency enhancement where bootstrap cost over quantiles warrants
+  it — a sketch is not a prerequisite for the state design.
 - **This per-chunk state is persisted, not just computed in memory.** The sufficient statistics and
   sketches are written to a durable, per-evaluation artifact — the `<eval>__state` table in the
   warehouse data model — so an incremental run recomputes only new chunks and a block bootstrap
@@ -56,7 +59,12 @@ still needed at the top of the size range.
 
 ## Notes
 
-- De-risked by spike-3 (spec compiles and runs with vectorized/Spark parity on a real spec).
+- De-risked by spike-3 (#145): the moment-based additive-state path — paired data, several metrics,
+  and a **seeded block bootstrap over per-chunk state** — showed **exact parity** across the
+  vectorized-Python and Spark backends (the same kernels run in both via `applyInPandas`; Spark only
+  distributes). Finding: stats-reconstructed metrics need **tolerance** vs direct computation
+  (variance cancellation), so the parity contract uses a tolerance for that path. The
+  order-statistic / sketch path is optional and not yet exercised.
 - Kernels are extracted in Phase 4; the light-core packaging lands in Phase 9 (ADR-0007).
 - The additive-statistics / sketch contract is the "per-chunk metric state" design constraint in
   the plan, persisted as the `<eval>__state` table (warehouse data model) — it must not be blocked by
