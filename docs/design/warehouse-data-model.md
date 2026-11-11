@@ -219,8 +219,9 @@ of each source — so any result is reproducible.
   `interval`, FK to a `period` domain that resolves a code (`0407`) to an explicit start/end;
   (c) explicit `window_start` / `window_end` fact columns — most general, but adds columns to every
   row for an edge case. **Proposed: (b)** — `variable`=volume, `statistic`=sum, `period`=`0407`
-  decomposes with no overloading, `value_time` distinguishes the water year, `interval` stays
-  duration-only, and pairing then also matches on `period`. Decide generality at ratification
+  decomposes with no overloading (the period is the explicit Apr 1 – Jul 31 window, not the legacy
+  `0407` code), `value_time` distinguishes the water year, `interval` stays duration-only, and
+  pairing then also matches on `period`. Decide generality at ratification
   (one-off FVED need vs a core concept) — the field is null for every non-period series, so it costs
   the common case nothing. **Written up as ADR-0012**, which goes further: it treats coverage as an
   *anchored window* (anchored to `value_time`, to issuance/`reference_time`, to the calendar, or

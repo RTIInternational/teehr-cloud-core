@@ -70,12 +70,12 @@ model general — a coverage window can be defined relative to a reference *or* 
   common case (instant or simple duration) carries nothing extra.
 - **Pairing** matches on the resolved coverage: two series pair only when their windows are
   comparable (subsumes the `interval`-match rule for non-`inst` statistics).
-- **FVED's `0407` becomes a named period, not a parsed code.** Today `0407` is an opaque string
-  meaning "April through July." Under this model the period is defined by its real window — start
-  Apr 1, end Jul 31 — and that resolved window is what the system stores and computes on (grouping,
-  pairing, metrics). `0407` is kept only as the period's **display name / alias**, so FVED users and
-  exports still see the familiar code, but nothing has to decode the digits to know what span it
-  means.
+- **The legacy `0407` code is not preserved.** FVED's April–July volume becomes a period defined by
+  its real window — start Apr 1, end Jul 31 — and that resolved window is what the system stores and
+  computes on (grouping, pairing, metrics). The opaque `0407` encoding is dropped on port, consistent
+  with the greenfield principle of not inheriting compound string codes; the team adopts the explicit
+  period. A period may carry a plain human-readable name (e.g. `apr_jul_volume`) for reference in
+  specs, but that is a name, not a code to be parsed.
 
 ## Consequences
 
