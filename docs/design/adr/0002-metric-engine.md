@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
-- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0003 (submission), ADR-0005 (units), ADR-0007 (package decomposition), spike-3 (parity)
+- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0003 (submission), ADR-0005 (units), ADR-0006 (regenerate not migrate), ADR-0007 (package decomposition), `../warehouse-data-model.md` (`<eval>__state`), spike-3 (parity)
 
 ## Context
 
@@ -29,6 +29,11 @@ still needed at the top of the size range.
   squared sums, cross-products) so the same per-chunk state serves incremental runs and block
   bootstrapping; **order-statistic** metrics use mergeable sketches (histograms, t-digest)
   instead; anything fitting neither falls back to raw resampling.
+- **This per-chunk state is persisted, not just computed in memory.** The sufficient statistics and
+  sketches are written to a durable, per-evaluation artifact — the `<eval>__state` table in the
+  warehouse data model — so an incremental run recomputes only new chunks and a block bootstrap
+  resamples stored state rather than raw data. A run must therefore **emit this state**, not only
+  final metric values. The state is regenerated, not migrated, on a schema change (ADR-0006).
 - Each metric **declares its unit semantics** next to its calculation (ADR-0005).
 - **Parity tests** assert the two backends produce identical results on the same data.
 
@@ -37,7 +42,8 @@ still needed at the top of the size range.
 - **Positive:** one science definition, no fork between inline and distributed; lighter package;
   inline-ready for Phase 8; per-chunk state reused for both incremental recompute and bootstrap.
 - **Negative / cost:** two execution backends to keep in parity; kernels must be written against
-  the array / sufficient-statistics contract, which is stricter than "take a timeseries slice."
+  the array / sufficient-statistics contract, which is stricter than "take a timeseries slice"; the
+  persisted `<eval>__state` is additional data to store and keep in step with the evaluation.
 - **Tradeoff accepted:** maintaining parity tests and a stricter kernel contract, in exchange for
   a single definition that runs everywhere.
 
@@ -53,4 +59,5 @@ still needed at the top of the size range.
 - De-risked by spike-3 (spec compiles and runs with vectorized/Spark parity on a real spec).
 - Kernels are extracted in Phase 4; the light-core packaging lands in Phase 9 (ADR-0007).
 - The additive-statistics / sketch contract is the "per-chunk metric state" design constraint in
-  the plan — it must not be blocked by run outputs that are only final metric values.
+  the plan, persisted as the `<eval>__state` table (warehouse data model) — it must not be blocked by
+  run outputs that are only final metric values.
