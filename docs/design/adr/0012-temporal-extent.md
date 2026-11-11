@@ -1,9 +1,9 @@
 # ADR-0012: Temporal extent of a value — fixed periods and a general window model
 
-- **Status:** Proposed (general direction preferred; ratify at the Phase 0 gate)
+- **Status:** Proposed (general direction preferred; the concrete encoding below is a joint TEEHR / VeriRace proposal; ratify at the Phase 0 gate)
 - **Date:** 2026-11-11
-- **Deciders:** TEEHR team
-- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0010 (series identity & interval), ADR-0002 (metric engine), `../warehouse-data-model.md`, `../spec-schema-v0.md`
+- **Deciders:** TEEHR team (encoding developed jointly with the VeriRace team, 2026-11-11)
+- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0010 (series identity & interval), ADR-0002 (metric engine), ADR-0011 (interface parity — shared encoding), `../warehouse-data-model.md`, `../spec-schema-v0.md`
 
 ## Context
 
@@ -45,20 +45,16 @@ per-series **`period`** — and separate out the dimensions the old `interval` c
   Largely derivable from `value_time` spacing; descriptive metadata, not load-bearing for pairing or
   metrics.
 
-**`period` is a window `[start, end]` whose endpoints are anchored.** The anchor is what makes the
-model general — a coverage window can be defined relative to a reference *or* fixed:
+**`period` describes the coverage window and resolves to a concrete `[start, end]`.** Coverage is
+always anchored to the value's `value_time`; issuance is a separate dimension (`reference_time`), and
+a forecast's lead time is simply `value_time − reference_time` (derived, not a coverage form). There
+are four **forms**:
 
   - **instant** — zero-width at `value_time` (point values).
-  - **duration (anchored to `value_time`)** — the day a daily mean covers, the hour an hourly
-    accumulation covers.
-  - **lead interval (anchored to issuance / `reference_time`)** — a window a lead-time offset from
-    when the forecast was issued; the normal forecast-accumulation case.
-  - **fixed calendar span** — a month–day start/end (e.g. `--04-01` … `--07-31`), the year taken
-    from the occurrence; the FVED `0407` case.
+  - **duration** — a length anchored to `value_time` (a daily mean, an hourly accumulation).
+  - **calendar** — a fixed month–day span (e.g. `--04-01` … `--07-31`); the year is taken from the
+    occurrence of the span that contains `value_time`. The FVED April–July case.
   - **absolute** — explicit `[start, end]` timestamps when none of the above fits.
-
-  So a forecast value's coverage **can be either an interval from issuance time or a fixed period** —
-  both are just anchored windows, expressed uniformly instead of as special cases.
 
 - The **resolved** `[start, end]` of each value is materialized (or trivially derivable) so queries,
   grouping, and metrics read a concrete window — never parse a code or re-derive from an anchor.
@@ -77,18 +73,76 @@ model general — a coverage window can be defined relative to a reference *or* 
   period. A period may carry a plain human-readable name (e.g. `apr_jul_volume`) for reference in
   specs, but that is a name, not a code to be parsed.
 
+### Concrete encoding (joint TEEHR / VeriRace, 2026-11-11)
+
+The VeriRace team is adopting this model; the following encoding is agreed jointly so a spec stores
+and pairs a value's time identically in both systems (the portable-spec goal, ADR-0011).
+
+**Periods are rows in a small definitions table, referenced by name (never parsed):**
+
+| Column | Type | Used by form | Meaning |
+| --- | --- | --- | --- |
+| `name` | text | all | unique key, e.g. `instant`, `hour_starting`, `apr_jul_volume` |
+| `form` | text | all | `instant` / `duration` / `calendar` / `absolute` |
+| `length` | ISO-8601 duration | duration | how long each value covers |
+| `value_time_at` | `start` / `end` | duration | whether `value_time` is the window's start or end |
+| `start`, `end` | `--MM-DD` | calendar | first and last day of the span, both inclusive |
+| `description` | text | all | free text for people |
+
+**Each form resolves to a window:**
+
+- `instant` → `[value_time, value_time]`
+- `duration` → `[value_time, value_time + length)` when `value_time_at = start`, or
+  `[value_time − length, value_time)` when `end`
+- `calendar` → the occurrence of `[start 00:00, day-after-end 00:00)` that contains `value_time`
+- `absolute` → the value's own `period_start` / `period_end`
+
+**Rules:**
+
+1. **One period per series** — a series never mixes coverages; another coverage is another series.
+2. **Calendar occurrence** — a calendar value belongs to the occurrence of its span that contains
+   `value_time`. This fixes the year **without a separate water-year convention**, and spans crossing
+   Jan 1 (e.g. `--10-01` … `--09-30`) work the same way. At ingest, set `value_time` to any instant in
+   the window (the start is the natural choice).
+3. **Inclusive month–day ends, half-open windows** — `--04-01` … `--07-31` covers Apr 1 00:00 up to
+   Aug 1 00:00; resolved windows are `[start, end)`.
+4. **Default + validation** — `instant` is the default for `inst` values; any other `statistic` must
+   name a period. `instant` with a non-`inst` statistic, or a non-`instant` period with `inst`, is an
+   error.
+5. **Row checks** — a period row fills exactly the columns its form uses; durations must parse,
+   month–days must exist.
+6. **Only `absolute` adds per-row columns** (`period_start`, `period_end`); every other form derives
+   its window on read.
+7. **Resolved windows are exposed by name** — wherever values are read or paired, the derived window
+   appears as `period_start` / `period_end`, so filters, grouping, and metrics use a concrete window.
+
+**Shared common rows** ship fixed in both systems so the names mean the same everywhere: `instant`,
+`hour_starting`, `hour_ending`, `day_starting`, `day_ending`. Users add their own beyond these (e.g.
+seasonal volumes).
+
+**Pairing** — two values pair when their series are linked, their `statistic`s are equal, and their
+**resolved windows are equal**. For `instant` this is the familiar "same `value_time`" rule; for
+durations it also stops a window-start mean pairing with a window-end mean. *Optimization:* when both
+series use the same period, equal `value_time`s already imply equal windows, so the join stays on the
+stored `value_time` column (keeping Iceberg partition / file pruning); only cross-period pairs join on
+the derived windows. Comparing different-length windows (a daily mean vs hourly values) needs an
+explicit aggregation first — pairing never does it implicitly. An observation is **complete at
+`period_end`** (e.g. for building a persistence reference).
+
 ## Consequences
 
 - **Positive:** one general concept for "the time a value covers"; the `interval`/`period` overlap
   is eliminated by separating coverage from frequency rather than keeping two fields; extensible to
-  new window shapes (lead intervals, multi-month, water-year) without a schema change; preserves
-  FVED functionality (and its `0407` label) losslessly; metrics / queries read a resolved window,
-  never a parsed code.
-- **Negative / cost:** more than a flat code enum — we must define and validate the small anchor set
-  and its resolution to `[start, end]`; this **refines ADR-0010's `interval`** (coverage → `period`,
-  spacing → `resolution`), so that decision is reframed, not merely extended; `value_time` semantics
-  for an anchored span (it fixes the occurrence / water year, not the instant) must be documented;
-  the common case still needs a trivial default so instant/duration series stay effortless.
+  new window shapes (multi-month, water-year, custom seasonal) without a schema change; preserves
+  FVED functionality (the April–July volume) as an explicit `calendar` period; metrics / queries
+  read a resolved window, never a parsed code; and — because the encoding is **shared with
+  VeriRace** — a spec's temporal fields are portable across both systems (ADR-0011).
+- **Negative / cost:** more than a flat code enum — we must define and validate the period forms
+  and their resolution to `[start, end]`; this **refines ADR-0010's `interval`** (coverage →
+  `period`, spacing → `resolution`), so that decision is reframed, not merely extended; the common
+  case still needs a trivial default (`instant`) so instant/duration series stay effortless; and the
+  encoding is now a **shared contract with VeriRace** — the common-row set and column names must be
+  versioned and kept in sync across both systems.
 - **Tradeoff accepted:** a slightly richer temporal model now, in exchange for not re-opening the
   schema the next time a non-duration window (a forecast lead window, a seasonal period) appears.
 
@@ -107,15 +161,22 @@ model general — a coverage window can be defined relative to a reference *or* 
 
 ## Notes
 
+- **Resolved by the concrete encoding:** anchor endpoints (`--MM-DD`, ISO-8601 `length`,
+  `value_time_at`) and the water-year question (calendar occurrence contains `value_time` — no
+  separate convention); and `period` is **one-per-series** (Rule 1). These were open in the first
+  draft.
+- **VeriRace's two questions — TEEHR's answer:** (a) **accept** the column names and `--MM-DD`;
+  (b) **yes** to a fixed shared common-row set (`instant`, `hour_starting`, `hour_ending`,
+  `day_starting`, `day_ending`), versioned as part of the shared schema.
+- **Open (raised back to VeriRace):** portability of **user-defined** periods. Only the shared
+  common rows are guaranteed cross-system; a spec that references a user-defined period (e.g.
+  `apr_jul_volume`) is portable only if the target system holds that definition. For a self-contained
+  spec, a non-shared period it uses should **travel with the spec** (carry/resolve its definition),
+  not just its name.
 - Open: whether `resolution` (frequency / spacing) is a **stored** attribute or always derived from
-  `value_time` spacing. It is only needed where users filter by sampling density (hourly vs 15-min);
+  `value_time` spacing. Only needed where users filter by sampling density (hourly vs 15-min);
   derive-on-read may be enough. Worked example to preserve: streamflow *hourly instantaneous* =
   coverage `instant`, resolution `hourly` — the two must not collapse back together.
-- Open: exact encoding of the anchor endpoints — relative offsets from `value_time` /
-  `reference_time`, month–day strings for calendar spans, absolute timestamps — and the water-year
-  convention tying `value_time` to the occurrence of a fixed period.
-- Open: is `period` genuinely one-per-series, or can a series carry values of mixed coverage? (v0:
-  one per series, like `interval` was.)
 - Metric semantics (ADR-0002): a period value is typically `statistic = sum` over the window;
   sufficient statistics / sketches still apply per resolved window.
 - Decide generality at ratification — the team may still choose the minimal code domain (enumerated
