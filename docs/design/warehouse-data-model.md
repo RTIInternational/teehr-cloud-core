@@ -63,6 +63,9 @@ Small validated domain tables; every fact-table code column is a foreign key int
 - **`unit`** — canonical unit plus its dimension signature (for the registry, ADR-0005).
 - **`configuration`** — the data source / model configuration (e.g. `usgs_observations`,
   `nwm30_retrospective`, `nwm30_short_range`), with its kind (observed / simulated / forecast).
+- **`quality`** — per-observation quality / qualifier codes (e.g. `approved`, `provisional`,
+  `estimated`, `ice`), mapping the source's native code where it has one. Referenced by the
+  `timeseries` fact `quality` column, not by the `series` catalog.
 
 ### The compound-name split
 
@@ -85,8 +88,13 @@ and `statistic` (the rule above), so those — and the canonical `unit` that fol
 | `reference_time` | timestamp, nullable | forecast issue time; null for observed/retrospective |
 | `member` | string, nullable | ensemble member; null if deterministic |
 | `value` | double | in the dataset's canonical unit |
+| `quality` | string, nullable | per-observation quality / qualifier code (FK to the `quality` domain); e.g. USGS approved / provisional / estimated. Null where the source carries no quality (typically simulated / forecast) |
 | `original_value` | double, nullable | provenance |
 | `original_unit` | string, nullable | provenance (FK to `unit`); dataset-level if the source is uniform |
+
+`quality` is **per-observation**, not per-series — it varies row by row (a gage reading can be
+provisional today, approved later), so it is a fact column, not a `series` catalog attribute. It is
+nullable because simulated / forecast values usually have none.
 
 The engine materializes `configuration` / `variable` / `statistic` / `unit` (dataset-level) and
 `interval` (per-series, from the `series` catalog) as columns when it composes or pairs datasets
@@ -180,3 +188,6 @@ of each source — so any result is reproducible.
   requires matching `interval` per pair for non-`inst` statistics (as VeriRace does) — decided,
   pending ratification (ADR-0010).
 - Is the `series` catalog one table per `timeseries` dataset, or a shared catalog per namespace?
+- Quality codes are source-specific (USGS approval + qualifiers differ from RFC / NWPS). One shared
+  `quality` domain with namespaced codes, or a per-`configuration` quality vocabulary? And can one
+  observation carry **multiple** qualifiers at once — v0 models a single `quality` code per row.
