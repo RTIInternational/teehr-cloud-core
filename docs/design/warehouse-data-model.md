@@ -62,8 +62,9 @@ the catalog or query engine. A reader must not assume the engine rejects a dangl
 
 - **`variable`** — the measured quantity only (e.g. `streamflow`, `precipitation`,
   `air_temperature`). No interval or statistic baked in.
-- **`interval`** — the time step / accumulation window (e.g. `instantaneous`, `hourly`, `daily`,
-  `PT1H`, `P1D`).
+- **`interval`** — the time step / accumulation window as a *duration* (e.g. `instantaneous`,
+  `hourly`, `daily`, `PT1H`, `P1D`). A duration is an unanchored length; it is **not** a fixed
+  calendar span like April–July — see the fixed-period open question below.
 - **`statistic`** — how the value is reduced over the interval (e.g. `instantaneous`, `mean`,
   `sum`, `max`, `min`).
 - **`unit`** — canonical unit plus its dimension signature (for the registry, ADR-0005).
@@ -210,3 +211,15 @@ of each source — so any result is reproducible.
 - Multiple `locations` layers in a namespace: a `series` row names its layer with an explicit
   `location_layer` column — the FK is `(location_layer, location_id)`, not an id-prefix convention —
   decided, pending ratification.
+- **Fixed calendar periods (water-supply seasonal values).** FVED needs values defined over an
+  *anchored* calendar span — e.g. an April–July volume, encoded `0407` — which is not an ISO-8601
+  duration and does not belong in `interval` (a floating length). VeriRace did not model this.
+  Options: (a) overload `interval` to also hold a range — rejected, it re-creates the compound-field
+  parsing this redesign removes; (b) a distinct, nullable **`period`** concept, per-series like
+  `interval`, FK to a `period` domain that resolves a code (`0407`) to an explicit start/end;
+  (c) explicit `window_start` / `window_end` fact columns — most general, but adds columns to every
+  row for an edge case. **Proposed: (b)** — `variable`=volume, `statistic`=sum, `period`=`0407`
+  decomposes with no overloading, `value_time` distinguishes the water year, `interval` stays
+  duration-only, and pairing then also matches on `period`. Decide generality at ratification
+  (one-off FVED need vs a core concept) — the field is null for every non-period series, so it costs
+  the common case nothing.
