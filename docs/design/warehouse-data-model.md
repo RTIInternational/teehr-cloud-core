@@ -67,7 +67,8 @@ the catalog or query engine. A reader must not assume the engine rejects a dangl
   calendar span like April–July — see the fixed-period open question below.
 - **`statistic`** — how the value is reduced over the interval (e.g. `instantaneous`, `mean`,
   `sum`, `max`, `min`).
-- **`unit`** — canonical unit plus its dimension signature (for the registry, ADR-0005).
+- **`unit`** — canonical unit as a **UCUM symbol** (e.g. `m3/s`, `[cft_i]/s`, `Cel`), with `to_si`
+  scale and `offset` for affine conversion plus a dimension signature (the registry, ADR-0005).
 - **`configuration`** — the data source / model configuration (e.g. `usgs_observations`,
   `nwm30_retrospective`, `nwm30_short_range`), with its kind (observed / simulated / forecast).
 - **`quality`** — per-observation quality / qualifier codes (e.g. `approved`, `provisional`,
