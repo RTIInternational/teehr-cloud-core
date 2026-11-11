@@ -128,12 +128,17 @@ Geo layer, keyed by `location_id`:
   `usgsbasin-` polygons).
 - Linked from the `series` catalog (`series.location_id`), not from `timeseries` directly. Can be
   shared (in `core`) and referenced by many datasets' series.
+- **Many layers per namespace.** `locations` is a dataset *type*, so a project can hold several —
+  gage points, basin polygons, reach lines, grid nodes — each its own table, each shareable. A
+  `series` catalog's `location_id` resolves into one of them.
 
 ## Crosswalks — `crosswalks`
 
 - Observed `series_key` ↔ predicted `series_key` (+ optional `weight` for many-to-one aggregation).
   Used to pair observed and predicted series for an evaluation — a series↔series link, not a
   location link.
+- **Many crosswalks per namespace.** One `crosswalk` table per observed↔predicted pairing you need
+  (e.g. `usgs_nwm30`, `usgs_rfc`); a spec's `pair.relation` names which one to use.
 
 ## Derived tables — owned by an evaluation
 
@@ -191,3 +196,6 @@ of each source — so any result is reproducible.
 - Quality codes are source-specific (USGS approval + qualifiers differ from RFC / NWPS). One shared
   `quality` domain with namespaced codes, or a per-`configuration` quality vocabulary? And can one
   observation carry **multiple** qualifiers at once — v0 models a single `quality` code per row.
+- With multiple `locations` layers in a namespace, how does a `series.location_id` declare **which**
+  layer it resolves to — an id-prefix convention (`usgs-` vs `usgsbasin-`), or an explicit layer
+  reference on the `series` catalog?
