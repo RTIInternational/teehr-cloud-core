@@ -14,6 +14,12 @@ adapted to TEEHR naming. It will ship with a machine-readable JSON Schema (as Ve
 `evaluation-spec-v1.schema.json`) to validate specs before running. Expect to iterate — names here
 are v0.
 
+**Keeping the schema common is deliberate (ADR-0011).** If TEEHR, VeriRace, and any other adopting
+system share one spec schema, an evaluation spec becomes **portable across engines** — the same spec
+runs on DuckDB (VeriRace) and Iceberg/Spark (TEEHR) — so specs can be exchanged, published, and
+reproduced between systems. That interoperability is a reason to adapt names carefully rather than
+diverge the schema.
+
 ## Design rules
 
 - **Declarative.** The spec names *what* to compute; the engine chooses *how* (backend, inline vs

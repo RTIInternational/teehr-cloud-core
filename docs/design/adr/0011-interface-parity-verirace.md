@@ -37,6 +37,11 @@ at larger scale.
 - **Positive:** a large head start on the interface (a proven, coherent design); consistency for
   users across spec/API/CLI/MCP; VeriRace serves as an executable reference to test our behavior
   against.
+- **Portable specs (the real prize):** if TEEHR, VeriRace, and other systems share one spec schema,
+  an evaluation spec becomes a portable, engine-independent artifact — the same definition runs on
+  DuckDB (VeriRace), Iceberg/Spark (TEEHR), or another backend, and can be exchanged, published, and
+  reproduced across systems. The spec becomes the interoperability layer, not just our internal
+  format. This is a strong reason to keep the schema common rather than fork it.
 - **Negative / cost:** VeriRace is early-development and may evolve — we track it rather than pin to
   it; naming/adaptation work; some interface assumptions may not fit the Iceberg/Polaris/Spark
   substrate (scale, multi-tenant auth, job vs inline) and must be validated per contract before
