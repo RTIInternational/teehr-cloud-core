@@ -34,6 +34,7 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0010](0010-series-identity.md) | Series identity — `series_key`, locations as a linked layer | Proposed |
 | [0011](0011-interface-parity-verirace.md) | Interface parity with VeriRace; deviate on substrate | Proposed |
 | [0012](0012-temporal-extent.md) | Temporal extent — fixed periods & a general window model | Proposed |
+| [0013](0013-evaluation-system-boundary.md) | Evaluation-system boundary & deployment ancillary services | Proposed |
 
 ## Phase 0 exit checklist
 
