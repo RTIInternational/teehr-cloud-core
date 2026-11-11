@@ -33,10 +33,11 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0009](0009-branching-and-deployment.md) | Branching & deployment strategy during the refactor | Accepted |
 | [0010](0010-series-identity.md) | Series identity — `series_key`, locations as a linked layer | Proposed |
 | [0011](0011-interface-parity-verirace.md) | Interface parity with VeriRace; deviate on substrate | Proposed |
+| [0012](0012-temporal-extent.md) | Temporal extent — fixed periods & a general window model | Proposed |
 
 ## Phase 0 exit checklist
 
-**ADRs ratified** — all eight above moved to Accepted or Deferred by the team.
+**ADRs ratified** — every ADR listed above moved to Accepted or Deferred by the team.
 
 **Four spikes pass or have a documented fallback:**
 

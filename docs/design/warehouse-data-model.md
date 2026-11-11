@@ -2,7 +2,7 @@
 
 - **Status:** Draft v0 — Phase 0 design artifact, input to ratification and spikes
 - **Date:** 2026-11-10
-- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout), ADR-0005 (units), ADR-0002 (metric engine), ADR-0010 (series identity)
+- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout), ADR-0005 (units), ADR-0002 (metric engine), ADR-0010 (series identity), ADR-0012 (temporal extent)
 
 This is the greenfield, canonical schema the platform is built against. Existing data is
 **ported** into it once (validated backfill), not carried forward. It is a draft to react to, not
@@ -222,4 +222,8 @@ of each source — so any result is reproducible.
   decomposes with no overloading, `value_time` distinguishes the water year, `interval` stays
   duration-only, and pairing then also matches on `period`. Decide generality at ratification
   (one-off FVED need vs a core concept) — the field is null for every non-period series, so it costs
-  the common case nothing.
+  the common case nothing. **Written up as ADR-0012**, which goes further: it treats coverage as an
+  *anchored window* (anchored to `value_time`, to issuance/`reference_time`, to the calendar, or
+  absolute), so a forecast window "an interval from issuance" and a "fixed period" are one model, and
+  it decomposes the old `interval` into coverage (`period`) + frequency (`resolution`). See ADR-0012
+  for the full decision and open questions.
