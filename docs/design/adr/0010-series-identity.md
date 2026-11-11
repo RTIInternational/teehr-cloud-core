@@ -21,7 +21,9 @@ kind of series."
 
 - The `timeseries` fact identity is **`series_key`** (not `location_id`).
 - A **`series` catalog** table holds per-series attributes, including an **optional `location_id`**
-  that is an FK into a `locations` layer, plus free-form attributes used for grouping/pairing.
+  paired with an explicit **`location_layer`** that together FK into a specific `locations` layer
+  (explicit, not inferred from an id prefix, so it resolves unambiguously when a namespace has
+  several layers), plus free-form attributes used for grouping/pairing.
 - **`locations`** is a geo layer (`location_id → geometry`), linked **from the series catalog**, not
   referenced by the fact table. It can be shared (in `core`) across datasets.
 - **Pairing is series↔series:** a `crosswalk` relates observed `series_key` ↔ predicted

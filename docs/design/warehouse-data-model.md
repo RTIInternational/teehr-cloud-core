@@ -28,7 +28,7 @@ a settled schema.
 | Type | Holds | Notes |
 | --- | --- | --- |
 | `timeseries` | observed / simulated / forecast values | the fact table; keyed by `series_key` |
-| `series` | per-series attributes (the series catalog) | `series_key` → attributes, incl. an optional `location_id`; one per `timeseries` dataset |
+| `series` | per-series attributes (the series catalog) | `series_key` → attributes, incl. an optional `(location_layer, location_id)`; one per `timeseries` dataset |
 | `locations` | geo layer: points, lines or polygons + inline attributes | `location_id` → `geometry`; shareable, linked from the series catalog |
 | `crosswalks` | series ↔ series links | observed `series_key` ↔ predicted `series_key`, for pairing |
 
@@ -53,6 +53,12 @@ Derived outputs are **owned by an evaluation** and scoped by its id within the n
 ## Domain tables (controlled, in `core`)
 
 Small validated domain tables; every fact-table code column is a foreign key into one of these.
+
+**"Foreign key" here is logical, not enforced by storage.** Iceberg does not support foreign-key
+(or primary-key / uniqueness) constraints, and neither Spark nor Trino enforce them on Iceberg
+tables. Every FK in this document — domain references, `(location_layer, location_id)`, crosswalk
+series links — is validated and enforced by the **write gateway** at write time (ADR-0004), not by
+the catalog or query engine. A reader must not assume the engine rejects a dangling reference.
 
 - **`variable`** — the measured quantity only (e.g. `streamflow`, `precipitation`,
   `air_temperature`). No interval or statistic baked in.
@@ -109,7 +115,12 @@ spike against real query shapes.
 One row per `series_key` in a `timeseries` dataset, holding its attributes:
 
 - `series_key` (string, stable) — the series identity, matching the `timeseries` fact.
-- `location_id` (string, nullable) — FK into a `locations` layer; null for non-geographic series.
+- `location_id` (string, nullable) — the id within a `locations` layer; null for non-geographic
+  series.
+- `location_layer` (string, nullable) — names the `locations` dataset that `location_id` resolves
+  into, so the FK is the pair `(location_layer, location_id)`. This is **explicit**, not inferred
+  from an id prefix, so a series resolves unambiguously when a namespace holds several location
+  layers. Null whenever `location_id` is null.
 - `interval` (string, nullable) — FK into the `interval` domain; the series' reporting interval,
   null for instantaneous data, falling back to the dataset's default interval when set.
 - any free-form attributes used for grouping or pairing (e.g. `zone`, basin id, vendor).
@@ -130,7 +141,7 @@ Geo layer, keyed by `location_id`:
   shared (in `core`) and referenced by many datasets' series.
 - **Many layers per namespace.** `locations` is a dataset *type*, so a project can hold several —
   gage points, basin polygons, reach lines, grid nodes — each its own table, each shareable. A
-  `series` catalog's `location_id` resolves into one of them.
+  `series` catalog resolves into one of them by its explicit `location_layer` reference (below).
 
 ## Crosswalks — `crosswalks`
 
@@ -196,6 +207,6 @@ of each source — so any result is reproducible.
 - Quality codes are source-specific (USGS approval + qualifiers differ from RFC / NWPS). One shared
   `quality` domain with namespaced codes, or a per-`configuration` quality vocabulary? And can one
   observation carry **multiple** qualifiers at once — v0 models a single `quality` code per row.
-- With multiple `locations` layers in a namespace, how does a `series.location_id` declare **which**
-  layer it resolves to — an id-prefix convention (`usgs-` vs `usgsbasin-`), or an explicit layer
-  reference on the `series` catalog?
+- Multiple `locations` layers in a namespace: a `series` row names its layer with an explicit
+  `location_layer` column — the FK is `(location_layer, location_id)`, not an id-prefix convention —
+  decided, pending ratification.
