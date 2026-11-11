@@ -168,11 +168,14 @@ explicit aggregation first — pairing never does it implicitly. An observation 
 - **VeriRace's two questions — TEEHR's answer:** (a) **accept** the column names and `--MM-DD`;
   (b) **yes** to a fixed shared common-row set (`instant`, `hour_starting`, `hour_ending`,
   `day_starting`, `day_ending`), versioned as part of the shared schema.
-- **Open (raised back to VeriRace):** portability of **user-defined** periods. Only the shared
-  common rows are guaranteed cross-system; a spec that references a user-defined period (e.g.
-  `apr_jul_volume`) is portable only if the target system holds that definition. For a self-contained
-  spec, a non-shared period it uses should **travel with the spec** (carry/resolve its definition),
-  not just its name.
+- **Resolved (with VeriRace):** portability of **user-defined** periods. Periods belong to a
+  dataset's series and specs reference datasets, so a user-defined period **travels with the
+  dataset** — an exported / shared dataset carries the definitions of any non-shared periods its
+  series use. If a spec itself names a period (e.g. aggregating to `apr_jul_volume` windows before
+  pairing), it carries the definition **inline in a `periods:` block** (same columns as the
+  definitions table). A name that collides with a differing definition on the receiving side is
+  **rejected, never silently overridden**. (Shared common rows are fixed in both systems; user-defined
+  period definitions are dataset / project-scoped metadata.)
 - Open: whether `resolution` (frequency / spacing) is a **stored** attribute or always derived from
   `value_time` spacing. Only needed where users filter by sampling density (hourly vs 15-min);
   derive-on-read may be enough. Worked example to preserve: streamflow *hourly instantaneous* =
