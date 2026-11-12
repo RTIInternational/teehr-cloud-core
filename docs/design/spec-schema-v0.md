@@ -45,8 +45,8 @@ version: 0
 name: nwm30-vs-usgs-by-lead-time
 
 inputs:
-  observed: {dataset: core.usgs_streamflow}
-  predicted:
+  primary: {dataset: core.usgs_streamflow}
+  secondary:
     - {dataset: core.nwm30_short_range}
     - {dataset: core.nwm30_medium_range_mem1, filter: "hour(reference_time) = 0"}
 
@@ -55,12 +55,12 @@ pair:
 
 fields:
   - {name: lead_time_bin, fn: lead_time_bins, width: 6h}
-  - {name: high_flow, expr: "obs_value > 1000"}
+  - {name: high_flow, expr: "primary_value > 1000"}
 
 filter: "value_time >= '2010-10-01' AND value_time < '2020-10-01'"   # row filter before aggregate
 
 aggregate:
-  - group_by: [obs_series_key, pred_dataset, lead_time_bin]
+  - group_by: [primary_series_key, secondary_dataset, lead_time_bin]
     metrics: [count, relative_bias, rmse, nash_sutcliffe_efficiency, kling_gupta_efficiency]
     skill: {reference: core.nwm30_medium_range_mem1, metrics: [rmse]}
 
@@ -73,15 +73,16 @@ output:
 
 ## Step notes
 
-- **`inputs`** — `observed` is one dataset; `predicted` is one or more. Each input is
-  `{dataset: <ref>, filter: <expr>?}`; the dataset's name becomes the value of the `pred_dataset`
-  column. `filter` is applied **before** pairing, per input — narrow by time, location, member, or
-  quality here; variable and configuration are already fixed by the dataset choice.
-- **`pair`** — `relation: core.<crosswalk>` pairs observed and predicted series by `series_key` via
-  a crosswalk, or `on_attribute: <attr>` when both sides share a series attribute (e.g. `zone`).
-  Observed becomes the `obs_*` side, predicted the `pred_*` side; the paired table carries
-  `obs_series_key`, `pred_series_key`, `value_time`, `reference_time`, `obs_value`, `pred_value`,
-  `pred_dataset`, plus `member`/`quantile` when present.
+- **`inputs`** — `primary` is one dataset (the reference / baseline side); `secondary` is one or
+  more. Each input is `{dataset: <ref>, filter: <expr>?}`; the dataset's name becomes the value of
+  the `secondary_dataset` column. `filter` is applied **before** pairing, per input — narrow by time,
+  location, member, or quality here; variable and configuration are already fixed by the dataset
+  choice.
+- **`pair`** — `relation: core.<crosswalk>` pairs the primary and secondary series by `series_key`
+  via a crosswalk, or `on_attribute: <attr>` when both sides share a series attribute (e.g. `zone`).
+  The primary input becomes the `primary_*` side, the secondary the `secondary_*` side; the paired
+  table carries `primary_series_key`, `secondary_series_key`, `value_time`, `reference_time`,
+  `primary_value`, `secondary_value`, `secondary_dataset`, plus `member`/`quantile` when present.
 - **`fields`** — derived columns, either `expr: <validated expression>` (not raw SQL) or a named
   `fn:` (e.g. `lead_time_bins`, `within` a geospatial layer, `attribute` of a location).
 - **`filter`** — one row filter applied after fields, before aggregation.
@@ -116,10 +117,8 @@ previous versions so saved specs keep running across one migration window.
 
 ## Open questions
 
-- Paired column prefix: VeriRace's `obs_*` / `pred_*` (used here) vs TEEHR's
-  `primary_*` / `secondary_*` — confirm at ratification.
 - Expression grammar for `expr` / `fn` — adopt VeriRace's or define our own small set.
-- Generated predicted inputs (persistence, climatology, blend) — VeriRace has these; do we want
+- Generated secondary inputs (persistence, climatology, blend) — VeriRace has these; do we want
   them in v0 or later?
 - Where ensemble `member` and `reference_time` flow through pairing for forecast verification.
 - Whether `output` geometry/format belongs in the spec or is API content negotiation.

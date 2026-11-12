@@ -30,7 +30,7 @@ a settled schema.
 | `timeseries` | observed / simulated / forecast values | the fact table; keyed by `series_key` |
 | `series` | per-series attributes (the series catalog) | `series_key` → attributes, incl. an optional `(location_layer, location_id)`; one per `timeseries` dataset |
 | `locations` | geo layer: points, lines or polygons + inline attributes | `location_id` → `geometry`; shareable, linked from the series catalog |
-| `crosswalks` | series ↔ series links | observed `series_key` ↔ predicted `series_key`, for pairing |
+| `crosswalks` | series ↔ series links | one `series_key` ↔ another, for pairing (role-neutral; spec assigns primary/secondary) |
 
 **Series are the identity.** A `timeseries` row is keyed by `series_key`, not a location — a gage,
 an energy zone, or a grid node are all just series (ADR-0010). A series's attributes, including an
@@ -106,8 +106,8 @@ nullable because simulated / forecast values usually have none.
 
 The engine materializes `configuration` / `variable` / `statistic` / `unit` (dataset-level) and
 `interval` (per-series, from the `series` catalog) as columns when it composes or pairs datasets
-(VeriRace's `pred_dataset` pattern), so they are available for `group_by` and output without being
-stored per row.
+(VeriRace's `secondary_dataset` pattern), so they are available for `group_by` and output without
+being stored per row.
 
 Partitioning / sort: by time (and `series_key` where it helps) — to be confirmed by the storage
 spike against real query shapes.
@@ -147,11 +147,11 @@ Geo layer, keyed by `location_id`:
 
 ## Crosswalks — `crosswalks`
 
-- Observed `series_key` ↔ predicted `series_key` (+ optional `weight` for many-to-one aggregation).
-  Used to pair observed and predicted series for an evaluation — a series↔series link, not a
-  location link.
-- **Many crosswalks per namespace.** One `crosswalk` table per observed↔predicted pairing you need
-  (e.g. `usgs_nwm30`, `usgs_rfc`); a spec's `pair.relation` names which one to use.
+- One `series_key` ↔ another `series_key` (+ optional `weight` for many-to-one aggregation).
+  Used to pair two series for an evaluation — a series↔series link, not a location link. The link
+  is role-neutral; a spec's `inputs` assign which side is `primary` vs `secondary`.
+- **Many crosswalks per namespace.** One `crosswalk` table per pairing you need (e.g. `usgs_nwm30`,
+  `usgs_rfc`); a spec's `pair.relation` names which one to use.
 
 ## Derived tables — owned by an evaluation
 
@@ -164,7 +164,7 @@ Illustrative set for an evaluation `<eval>` (names and suffixes indicative, not 
 
 | Table | Holds |
 | --- | --- |
-| `<eval>__paired` | observed paired with predicted (via crosswalk), time-aligned, plus derived fields |
+| `<eval>__paired` | primary paired with secondary (via crosswalk), time-aligned, plus derived fields |
 | `<eval>__groups` | the resolved grouping — group keys and membership |
 | `<eval>__state` | per-chunk sufficient statistics / sketches that feed the metrics |
 | `<eval>__metrics` | metric results + bootstrap CIs, keyed by the group-by columns |

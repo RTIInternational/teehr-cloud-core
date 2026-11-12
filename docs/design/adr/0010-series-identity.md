@@ -26,14 +26,15 @@ kind of series."
   several layers), plus free-form attributes used for grouping/pairing.
 - **`locations`** is a geo layer (`location_id → geometry`), linked **from the series catalog**, not
   referenced by the fact table. It can be shared (in `core`) across datasets.
-- **Pairing is series↔series:** a `crosswalk` relates observed `series_key` ↔ predicted
-  `series_key`, or `on_attribute` matches a shared series attribute. Never a location join.
+- **Pairing is series↔series:** a `crosswalk` links one `series_key` to another (the spec assigns
+  which is `primary` vs `secondary`), or `on_attribute` matches a shared series attribute. Never a
+  location join.
 - `location_id` survives as the **catalog FK** where a series is geographic — correct where it is
   actually a location, absent where it is not.
 
 ## Consequences
 
-- **Positive:** general across domains (hydrology, energy, anything observed-vs-predicted); honest
+- **Positive:** general across domains (hydrology, energy, anything compared pairwise); honest
   naming; geometry is shareable and resolved on demand (`series → location → geometry`). Hydrology
   is unaffected — `series_key` = the gage id and `location_id` lives in the catalog, still available
   to `group_by`.
@@ -55,4 +56,9 @@ kind of series."
   typed datasets.
 - `interval` is per-series (in the `series` catalog), nullable for instantaneous data, with a
   dataset default — decided here. Open: whether the `series` catalog is per-dataset or
-  per-namespace; paired column prefix (`obs_*`/`pred_*` vs `primary_*`/`secondary_*`).
+  per-namespace.
+- **Paired column prefix — decided: `primary_*` / `secondary_*`** (shared with VeriRace, 2026-11-12).
+  Chosen over `obs_*`/`pred_*` because either dataset can occupy either slot (any dataset can be the
+  reference), while the roles are **not symmetric** in the math — the primary side is the
+  reference/baseline for bias, skill, and NSE — so the names mark the asymmetric role without
+  implying one side is "observed." The spec's `inputs` keys match: `primary` / `secondary`.
