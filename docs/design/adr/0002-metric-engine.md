@@ -29,9 +29,11 @@ still needed at the top of the size range.
   squared sums, cross-products) so the same per-chunk state serves incremental runs and block
   bootstrapping. This is the **core state path** — the moment-based metrics (mean, bias, RMSE,
   variance, correlation, NSE, KGE). **Order-statistic** metrics (median, percentiles) **default to
-  raw resampling** (correct, just less compact) and **may optionally** use mergeable sketches
-  (histogram / t-digest) as an efficiency enhancement where bootstrap cost over quantiles warrants
-  it — a sketch is not a prerequisite for the state design.
+  raw resampling** (correct, just less compact) and **may optionally** use a mergeable **DDSketch**
+  (log-bucket counts, exactly mergeable; see `../shared-contract-v0.md`) as an efficiency enhancement
+  where bootstrap cost over quantiles warrants it — a sketch is not a prerequisite for the state
+  design. (DDSketch over t-digest: its merge is exact and order-independent, which the state design
+  requires.)
 - **This per-chunk state is persisted, not just computed in memory.** The sufficient statistics and
   sketches are written to a durable, per-evaluation artifact — the `<eval>__state` table in the
   warehouse data model — so an incremental run recomputes only new chunks and a block bootstrap

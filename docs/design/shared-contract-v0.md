@@ -54,28 +54,36 @@ Plain addition. E.g. contingency counts for threshold/categorical metrics
 `+correct_negatives@<threshold>`) and per-case score sums. `int64` for counts, `float64` for score
 sums. Merge = sum.
 
-### 3. `~primary` / `~secondary` — quantile sketches
+### 3. `~primary` / `~secondary` — quantile sketches (DDSketch)
 
-For order-statistic metrics (quantiles, percentile errors). **Bucket-count** encoding: counts per
-fixed bin, merged by adding bin counts. v0 scheme (TEEHR-owned; VeriRace adapts):
+For order-statistic metrics (quantiles, percentile errors). The sketch is a **DDSketch**
+(log-bucket counts with a relative-value-error guarantee) — chosen because it **merges by adding
+bucket counts, exactly and order-independently**, which is exactly what the path-independence
+invariant needs. (t-digest was rejected: its merge is approximate and order-dependent, which would
+break that invariant.) v0 parameters (TEEHR-owned; VeriRace adapts — and already uses DDSketch):
 
-- **Positive values:** log-spaced bins with edge ratio **1.002** (0.2% steps) over a configurable
-  magnitude range `[min, max]`; the reported quantile is the bin's geometric midpoint, bounding the
-  **relative quantile error at ≤0.1%**.
-- **Zero:** a dedicated `zero` bucket.
-- **Signed quantities** (e.g. error-quantile metrics): a sign-mirrored set of the same bins for the
-  negative side.
-- **Out of range:** `underflow` / `overflow` buckets below `min` / above `max`.
-- Stored as a fixed-length `int64` array in bin order; the scheme (`min`, `max`, ratio) is pinned by
-  `contract_version` so counts align across engines.
+- **Relative accuracy** α = **0.001** (0.1%), so γ = (1+α)/(1−α) ≈ **1.002002**. A positive value
+  `x` maps to bucket index `i = ⌈log_γ(x)⌉`; the quantile estimate for a bucket is `2·γ^i/(γ+1)`,
+  guaranteeing the reported value within **0.1% relative error** — matching the family-3 golden
+  tolerance.
+- **Zero / sub-floor:** a dedicated `zero` counter; magnitudes below the configured `min` floor fold
+  into it (a relative-error sketch cannot bound error at zero — relevant for near-zero streamflow).
+- **Signed quantities** (e.g. error-quantile metrics): a sign-mirrored bucket set indexed on `|x|`
+  for the negative side.
+- **Bounded size:** a fixed index range from the configured `[min, max]` magnitudes; counts outside
+  collapse into the boundary buckets. γ, the range, and the collapsing are **pinned by
+  `contract_version`** so both engines produce identical, exactly-mergeable sketches.
+- Stored as a fixed-length `int64` array in index order. **Merge = add counts per index.**
 
 ### Encoding & invariants
 
 - `float64` for moments, `int64` for counts, each sketch a fixed-length `int64` array (or bin→count
   map). `NaN` where a metric is undefined; null = absent component.
-- **Path independence (shared golden tests, both engines run them):**
-  `pairs == merged-state == bootstrap-from-state` — **exact** for families 1–2, **within ≤0.1%** for
-  family 3 (sketches).
+- **Path independence (shared golden tests, both engines run them):** `pairs == merged-state ==
+  bootstrap-from-state` is **exact for all three families** — DDSketch buckets merge exactly, so a
+  sketch metric reads **identically** on every path. A sketch quantile additionally carries its
+  inherent **≤0.1%** error versus the true value; the golden tests assert path-identity exactly and
+  sketch-vs-truth within 0.1%.
 
 ## B. Expression language (`filter` / `expr`)
 
@@ -102,6 +110,7 @@ Used by the spec's `filter` (row filter) and `fields[].expr` (derived column) �
 Both previously-open items are settled; **VeriRace adapts to this definition** (TEEHR owns the
 shared package, ADR-0011):
 
-1. **Sketch bin scheme** — the log-spaced bucket-count scheme in A.3 (edge ratio 1.002, ≤0.1%
-   relative quantile error), pinned by `contract_version`.
+1. **Sketch** — **DDSketch** (A.3): α = 0.1% (γ ≈ 1.002002), exactly mergeable by bucket-count
+   addition; γ/range/collapsing pinned by `contract_version`. Chosen over t-digest for
+   order-independent exact merges (VeriRace already uses DDSketch).
 2. **Expression dialect** — engine-neutral canonical form, transpiled per engine via sqlglot.
