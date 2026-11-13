@@ -13,6 +13,21 @@
 ### Why
 - Large mean areal backfills (AORC, GEFS) run as Spark `mapInArrow` tasks that read the source grids directly.
 
+## Unreleased (prefer IPv6 in images)
+
+### Summary
+- The xpublish-api, Jupyter driver and Spark executor images prefer IPv6 for hosts that offer it, so on a
+  cluster with IPv6 egress (teehr-hub-use1) their GCS and other dual-stack traffic skips the NAT gateway
+  ([#140](https://github.com/RTIInternational/teehr-cloud-core/issues/140)).
+
+### What Changed
+- New `gai.conf` in `xpublish-api/`, `jupyterhub-docker/` and `spark/docker/`, copied to `/etc/gai.conf`. The
+  same file is in the teehr-hub Prefect image.
+
+### Why
+- glibc puts IPv4 first for pods, whose IPv6 address is private (`fd00::`). Clusters without IPv6 (FVED, kind)
+  are unaffected.
+
 ## Unreleased (backfill users into a group)
 
 ### Summary

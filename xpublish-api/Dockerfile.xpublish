@@ -12,6 +12,10 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Prefer IPv6 for sources that offer it, so their traffic skips the NAT gateway
+# (see gai.conf).
+COPY gai.conf /etc/gai.conf
+
 COPY pyproject.toml ./
 COPY src/ ./src/
 

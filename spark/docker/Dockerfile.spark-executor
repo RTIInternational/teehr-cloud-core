@@ -18,6 +18,10 @@ RUN apt-get update && apt-get upgrade -y \
     && ln -s "/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)" /opt/java/openjdk \
     && rm -rf /var/lib/apt/lists/*
 
+# Prefer IPv6 for sources that offer it, so their traffic skips the NAT gateway
+# (see gai.conf).
+COPY gai.conf /etc/gai.conf
+
 # Add deadsnakes PPA and install Python 3.12. Only runtime packages: no
 # compilers or -dev headers, which made up most of the image's OS CVEs.
 # software-properties-common is purged before any pip install: it pulls in
