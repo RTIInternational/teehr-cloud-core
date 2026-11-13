@@ -69,6 +69,8 @@ class Project(Base):
     status: Mapped[ProjectStatus] = mapped_column(
         _enum(ProjectStatus), default=ProjectStatus.PENDING
     )
+    # Why provisioning last failed (None when pending or ready).
+    status_detail: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

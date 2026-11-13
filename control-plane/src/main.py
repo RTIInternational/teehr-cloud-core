@@ -3,6 +3,9 @@
 Owns projects, members, datasets and runs.
 """
 
+import logging
+import threading
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -13,9 +16,33 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.config import Settings, get_settings
 from src.db import get_engine
+from src.provisioning import get_polaris, reconcile
 from src.routes import projects
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
+logger = logging.getLogger("control-plane")
+
 LOGIN_SCHEME = "KeycloakLogin"
+
+
+def _reconcile_on_start() -> None:
+    try:
+        count = reconcile(get_engine(), get_polaris())
+        if count:
+            logger.info(
+                "Startup reconcile: provisioned %d pending/failed project(s)", count
+            )
+    except Exception:  # never take the service down over this
+        logger.exception("Startup reconcile failed")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Background, so a slow or down Polaris never delays startup or readiness.
+    threading.Thread(target=_reconcile_on_start, name="reconcile", daemon=True).start()
+    yield
 
 
 def _swagger_oauth(settings: Settings) -> dict[str, Any] | None:
@@ -37,6 +64,7 @@ app = FastAPI(
         "or paste an access token under BearerAuth."
     ),
     swagger_ui_init_oauth=_swagger_oauth(get_settings()),
+    lifespan=lifespan,
 )
 app.include_router(projects.router)
 

@@ -3,6 +3,9 @@
 Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
+
+Pass ``schema=schema_for(op.get_bind())`` to every op (from ``src.db``): it names
+the control_plane schema on Postgres and drops it on SQLite.
 """
 
 from alembic import op

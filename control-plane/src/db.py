@@ -24,6 +24,15 @@ class Base(DeclarativeBase):
     metadata = MetaData(schema=SCHEMA)
 
 
+def schema_for(bind) -> str | None:
+    """The schema to name in a migration op: ``control_plane``, or None on SQLite.
+
+    ``op.create_table`` honours the engine's schema translation, but ops such as
+    ``op.add_column`` build their own SQL and don't, so migrations pass this.
+    """
+    return None if bind.dialect.name == "sqlite" else SCHEMA
+
+
 def _sqlite_foreign_keys_on(dbapi_conn, _record) -> None:
     # SQLite ignores foreign keys (and ON DELETE CASCADE) unless asked.
     cursor = dbapi_conn.cursor()

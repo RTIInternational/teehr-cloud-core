@@ -22,6 +22,12 @@ class Settings:
     admin_roles: tuple[str, ...] = field(default=("admin",))
     # Public Keycloak client the /docs page signs in with. None = no login button.
     docs_client_id: str | None = None
+    # Polaris management access for provisioning. None = provisioning disabled.
+    polaris_url: str | None = None
+    polaris_realm: str = "teehr"
+    polaris_catalog: str = "teehr"
+    # "client_id:client_secret" (the polaris-secrets/root-credentials format).
+    polaris_credentials: str | None = None
 
     @property
     def oidc_base_url(self) -> str | None:
@@ -68,4 +74,9 @@ def get_settings() -> Settings:
         allowed_audiences=_csv(os.getenv("KEYCLOAK_ALLOWED_AUDIENCES")),
         admin_roles=_csv(os.getenv("CONTROL_PLANE_ADMIN_ROLES")) or ("admin",),
         docs_client_id=os.getenv("KEYCLOAK_DOCS_CLIENT_ID") or None,
+        polaris_url=os.getenv("POLARIS_URL") or None,
+        polaris_realm=os.getenv("POLARIS_REALM", "teehr"),
+        polaris_catalog=os.getenv("POLARIS_CATALOG")
+        or os.getenv("POLARIS_REALM", "teehr"),
+        polaris_credentials=os.getenv("POLARIS_ROOT_CREDENTIALS") or None,
     )

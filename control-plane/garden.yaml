@@ -26,6 +26,7 @@ dependencies:
   - deploy.secrets
   - deploy.app-database
   - deploy.keycloak-bootstrap
+  - deploy.polaris-bootstrap
 
 spec:
   manifestFiles:

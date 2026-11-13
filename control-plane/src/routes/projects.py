@@ -7,8 +7,10 @@ Access rules:
 - A non-member gets 404, not 403, so project names can't be probed.
 - A project always keeps at least one admin.
 
-Creating a project only records it (status ``pending``); provisioning its namespace,
-roles and storage prefix comes in #153-#155.
+Creating a project records it (``pending``) and then provisions its Polaris
+namespace and roles (``ready``, or ``failed`` with the reason). Storage prefixes and
+Keycloak roles come in #154/#155. Deleting a project removes its namespace and
+roles first, and refuses while the namespace still holds tables.
 """
 
 from typing import Annotated
@@ -21,7 +23,9 @@ from sqlalchemy.orm import Session
 from src.auth import Identity, get_identity
 from src.config import Settings, get_settings
 from src.db import get_session
-from src.models import Membership, Project, ProjectKind, Role
+from src.models import Membership, Project, ProjectKind, ProjectStatus, Role
+from src.polaris import NamespaceNotEmpty, PolarisAdmin, PolarisError, deprovision
+from src.provisioning import get_polaris, provision_project
 from src.schemas import (
     RESERVED_PROJECT_NAMES,
     MemberOut,
@@ -36,6 +40,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 SessionDep = Annotated[Session, Depends(get_session)]
 IdentityDep = Annotated[Identity, Depends(get_identity)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+PolarisDep = Annotated[PolarisAdmin | None, Depends(get_polaris)]
 
 
 def _not_found() -> HTTPException:
@@ -91,8 +96,12 @@ def _admin_count(session: Session, project: Project) -> int:
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_project(
-    body: ProjectCreate, session: SessionDep, identity: IdentityDep
+    body: ProjectCreate,
+    session: SessionDep,
+    identity: IdentityDep,
+    polaris: PolarisDep,
 ) -> ProjectOut:
+    """Create a project; the response's ``status`` says whether provisioning worked."""
     if body.name in RESERVED_PROJECT_NAMES:
         raise _conflict(f"'{body.name}' is a reserved project name")
     project = Project(
@@ -116,8 +125,31 @@ def create_project(
     except IntegrityError as exc:
         session.rollback()
         raise _conflict(f"Project '{body.name}' already exists") from exc
+    provision_project(session, project, polaris)
     session.refresh(project)
     return _project_out(project, Role.ADMIN)
+
+
+@router.post("/{name}/provision")
+def reprovision_project(
+    name: str,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    polaris: PolarisDep,
+) -> ProjectOut:
+    """Run provisioning again (idempotent) - e.g. after a ``failed`` status."""
+    project, my_role = _authorize(session, name, identity, settings, Role.ADMIN)
+    if project.kind == ProjectKind.SYSTEM:
+        raise _conflict("System projects are provisioned at bootstrap")
+    if polaris is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Provisioning is not configured",
+        )
+    provision_project(session, project, polaris)
+    session.refresh(project)
+    return _project_out(project, my_role)
 
 
 @router.get("")
@@ -164,11 +196,33 @@ def update_project(
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(
-    name: str, session: SessionDep, identity: IdentityDep, settings: SettingsDep
+    name: str,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    polaris: PolarisDep,
 ) -> Response:
     project, _ = _authorize(session, name, identity, settings, Role.ADMIN)
     if project.kind == ProjectKind.SYSTEM:
         raise _conflict("System projects cannot be deleted")
+    if polaris is not None:
+        try:
+            deprovision(polaris, project.name, str(project.id))
+        except NamespaceNotEmpty as exc:
+            raise _conflict(
+                "The project still has tables; drop them before deleting it"
+            ) from exc
+        except PolarisError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not remove the project's catalog resources",
+            ) from exc
+    elif project.status != ProjectStatus.PENDING:
+        # It may own Polaris resources we can't reach to remove.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Provisioning is not configured",
+        )
     session.delete(project)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
