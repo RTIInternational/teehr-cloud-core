@@ -1,0 +1,47 @@
+# Project control plane (Phase 1, epic #148).
+#
+# Local only until the Phase 1 gate (#157). It is a separate deployable that keeps
+# its tables in its own Postgres schema on app-pg, so it can be paused or removed
+# without touching teehr-api.
+kind: Build
+type: container
+name: teehr-control-plane
+
+spec:
+  dockerfile: Dockerfile
+
+environments:
+  - local
+
+---
+
+kind: Deploy
+type: kubernetes
+name: teehr-control-plane
+environments:
+  - local
+
+dependencies:
+  - build.teehr-control-plane
+  - deploy.secrets
+  - deploy.app-database
+
+spec:
+  manifestFiles:
+    - manifests/service.yaml
+
+  manifestTemplates:
+    - manifests/deployment.yaml.tpl
+
+  defaultTarget:
+    kind: Deployment
+    name: teehr-control-plane
+
+  sync:
+    paths:
+      - containerPath: /app/src
+        sourcePath: ./src
+        mode: one-way
+        exclude: ["__pycache__", "*.pyc"]
+    overrides:
+      - command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
