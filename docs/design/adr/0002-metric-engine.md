@@ -1,6 +1,6 @@
 # ADR-0002: Metric engine — one definition, two backends
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified by the team, 2026-11-13)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0003 (submission), ADR-0005 (units), ADR-0006 (regenerate not migrate), ADR-0007 (package decomposition), `../warehouse-data-model.md` (`<eval>__state`), spike-3 (parity)

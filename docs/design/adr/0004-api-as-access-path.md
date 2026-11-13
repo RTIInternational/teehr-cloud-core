@@ -1,6 +1,6 @@
 # ADR-0004: API as the access path — writes now, reads later
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified by the team, 2026-11-13)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout), spike-1 (identity propagation)

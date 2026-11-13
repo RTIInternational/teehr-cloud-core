@@ -1,6 +1,6 @@
 # ADR-0013: Evaluation-system boundary and deployment ancillary services
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified by the team, 2026-11-13)
 - **Date:** 2026-11-11
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout / isolation), ADR-0004 (API as access path), ADR-0008 (repo topology), ADR-0011 (contracts are the shared surface)

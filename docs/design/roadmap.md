@@ -1,6 +1,6 @@
 # Platform refactor roadmap (phase index)
 
-- **Status:** Phase 0 in progress (ADRs + design artifacts in review; spikes resolved)
+- **Status:** Phase 0 gate met — ADRs ratified 2026-11-13; four spikes resolved; design artifacts drafted. Next: Phase 1.
 - **Date:** 2026-11-11
 - **Issue:** [#133](https://github.com/RTIInternational/teehr-cloud-core/issues/133)
 

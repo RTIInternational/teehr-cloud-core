@@ -1,6 +1,6 @@
 # ADR-0012: Temporal extent of a value — fixed periods and a general window model
 
-- **Status:** Proposed (general direction preferred; the concrete encoding below is a joint TEEHR / VeriRace proposal; ratify at the Phase 0 gate)
+- **Status:** Accepted (ratified by the team, 2026-11-13; the concrete encoding is a joint TEEHR / VeriRace design)
 - **Date:** 2026-11-11
 - **Deciders:** TEEHR team (encoding developed jointly with the VeriRace team, 2026-11-11)
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0010 (series identity & interval), ADR-0002 (metric engine), ADR-0011 (interface parity — shared encoding), `../warehouse-data-model.md`, `../spec-schema-v0.md`

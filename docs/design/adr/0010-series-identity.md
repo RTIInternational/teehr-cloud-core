@@ -1,6 +1,6 @@
 # ADR-0010: Series identity — `series_key`, locations as a linked layer
 
-- **Status:** Proposed (adopted as the design direction; ratify at the Phase 0 gate)
+- **Status:** Accepted (ratified by the team, 2026-11-13)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout), `../warehouse-data-model.md`, `../spec-schema-v0.md`
