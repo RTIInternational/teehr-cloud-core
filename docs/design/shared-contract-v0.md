@@ -1,6 +1,6 @@
 # Shared contract v0 — mergeable metric state + expression language
 
-- **Status:** v0 proposal (jointly agreed with the VeriRace team; two items pending confirmation)
+- **Status:** v0 (jointly agreed with the VeriRace team, 2026-11-13; both open items decided — VeriRace adapts)
 - **Date:** 2026-11-13
 - **contract_version:** 0
 - **Related:** ADR-0011 (interface parity; TEEHR owns/publishes the shared package), ADR-0002
@@ -56,10 +56,18 @@ sums. Merge = sum.
 
 ### 3. `~primary` / `~secondary` — quantile sketches
 
-For order-statistic metrics (quantiles, percentile errors). Adopt VeriRace's **bucket-count**
-encoding: fixed bins, counts per bin, ~0.1% quantile accuracy. Merge = add bin counts.
-**Pending confirmation:** the exact bin scheme (range + edges / relative width) — TEEHR adopts
-VeriRace's as the v0 sketch definition.
+For order-statistic metrics (quantiles, percentile errors). **Bucket-count** encoding: counts per
+fixed bin, merged by adding bin counts. v0 scheme (TEEHR-owned; VeriRace adapts):
+
+- **Positive values:** log-spaced bins with edge ratio **1.002** (0.2% steps) over a configurable
+  magnitude range `[min, max]`; the reported quantile is the bin's geometric midpoint, bounding the
+  **relative quantile error at ≤0.1%**.
+- **Zero:** a dedicated `zero` bucket.
+- **Signed quantities** (e.g. error-quantile metrics): a sign-mirrored set of the same bins for the
+  negative side.
+- **Out of range:** `underflow` / `overflow` buckets below `min` / above `max`.
+- Stored as a fixed-length `int64` array in bin order; the scheme (`min`, `max`, ratio) is pinned by
+  `contract_version` so counts align across engines.
 
 ### Encoding & invariants
 
@@ -76,9 +84,8 @@ Used by the spec's `filter` (row filter) and `fields[].expr` (derived column) �
 - **Form:** a restricted SQL-expression subset, validated against an **allow-list**. No subqueries,
   no non-listed functions, no DDL/DML.
 - **Canonical dialect:** expressions are stored in the spec in an **engine-neutral canonical form**
-  (standard-SQL subset); each engine transpiles with **sqlglot** to its dialect (Trino/Spark for
-  TEEHR, DuckDB for VeriRace). **Pending confirmation:** canonical-neutral vs. transpile-from-DuckDB
-  — proposal is canonical-neutral.
+  (standard-SQL subset) — **decided** over transpile-from-DuckDB; each engine transpiles with
+  **sqlglot** to its dialect (Trino/Spark for TEEHR, DuckDB for VeriRace).
 - **Identifiers available** (the paired-table columns): `primary_value`, `secondary_value`,
   `value_time`, `reference_time`, `primary_series_key`, `secondary_series_key`, `secondary_dataset`,
   `member`, `quantile`, `period_start`, `period_end`, plus any `fields` already defined.
@@ -90,7 +97,11 @@ Used by the spec's `filter` (row filter) and `fields[].expr` (derived column) �
 - Rejected off-list **at submit**, before any run. Versioned with the spec schema; the allow-list
   ships with the shared package.
 
-## Pending confirmation (with VeriRace)
+## Decided (2026-11-13)
 
-1. The sketch bin scheme (TEEHR adopts VeriRace's verbatim as v0).
-2. Canonical-neutral dialect vs. transpile-from-DuckDB for the expression language.
+Both previously-open items are settled; **VeriRace adapts to this definition** (TEEHR owns the
+shared package, ADR-0011):
+
+1. **Sketch bin scheme** — the log-spaced bucket-count scheme in A.3 (edge ratio 1.002, ≤0.1%
+   relative quantile error), pinned by `contract_version`.
+2. **Expression dialect** — engine-neutral canonical form, transpiled per engine via sqlglot.
