@@ -20,6 +20,15 @@ class Settings:
     allowed_audiences: tuple[str, ...] = ()
     # Realm roles that act as platform admins: full rights on every project.
     admin_roles: tuple[str, ...] = field(default=("admin",))
+    # Public Keycloak client the /docs page signs in with. None = no login button.
+    docs_client_id: str | None = None
+
+    @property
+    def oidc_base_url(self) -> str | None:
+        """Keycloak's OpenID Connect endpoints, as the browser reaches them."""
+        if not self.keycloak_issuer_url:
+            return None
+        return f"{self.keycloak_issuer_url}/protocol/openid-connect"
 
 
 def _database_url() -> URL:
@@ -58,4 +67,5 @@ def get_settings() -> Settings:
         keycloak_jwks_url=jwks,
         allowed_audiences=_csv(os.getenv("KEYCLOAK_ALLOWED_AUDIENCES")),
         admin_roles=_csv(os.getenv("CONTROL_PLANE_ADMIN_ROLES")) or ("admin",),
+        docs_client_id=os.getenv("KEYCLOAK_DOCS_CLIENT_ID") or None,
     )

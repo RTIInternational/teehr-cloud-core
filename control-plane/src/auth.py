@@ -106,7 +106,11 @@ def get_verifier() -> TokenVerifier:
     )
 
 
-_bearer = HTTPBearer(auto_error=False)
+_bearer = HTTPBearer(
+    auto_error=False,
+    scheme_name="BearerAuth",
+    description="Paste a Keycloak access token",
+)
 
 
 def get_identity(

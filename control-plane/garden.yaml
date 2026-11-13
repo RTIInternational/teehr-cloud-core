@@ -34,6 +34,7 @@ spec:
   manifestTemplates:
     - manifests/configmap.yaml.tpl
     - manifests/deployment.yaml.tpl
+    - manifests/ingress.yaml.tpl
 
   defaultTarget:
     kind: Deployment

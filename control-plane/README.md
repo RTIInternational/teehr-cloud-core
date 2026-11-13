@@ -16,6 +16,17 @@ prefix. Design: `docs/design/adr/0001-warehouse-layout.md`, `docs/design/system-
 To remove it: delete the Garden actions in this directory, then
 `DROP SCHEMA control_plane CASCADE` on `app-pg`.
 
+## Try it in a browser (KinD)
+
+1. Add `127.0.0.1 control-plane.teehr.local.app.garden` to `/etc/hosts`.
+2. Open <https://control-plane.teehr.local.app.garden/docs> and accept the
+   self-signed certificate.
+3. **Authorize** → `KeycloakLogin` → sign in (e.g. `user` / `user`). Every endpoint
+   then runs as you. You can also paste a raw access token under `BearerAuth`.
+
+The login uses the public `teehr-control-plane-docs` Keycloak client, which is
+enabled only in the local environment.
+
 ## Develop
 
 ```bash
