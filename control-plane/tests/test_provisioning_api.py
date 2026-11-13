@@ -151,3 +151,9 @@ def test_second_reconcile_skips_projects_already_ready(db_url):
     fake = FakePolaris()
     assert reconcile(engine, fake.admin()) == 1
     assert reconcile(engine, fake.admin()) == 0
+
+
+def test_project_reports_its_storage_location(client, polaris):
+    body = create(client).json()
+    assert body["storage_location"] == "s3://warehouse/flood/"
+    assert polaris.namespace_props["flood"]["location"] == "s3://warehouse/flood/"

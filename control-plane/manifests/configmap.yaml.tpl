@@ -18,3 +18,5 @@ data:
   POLARIS_URL: "http://polaris:8181"
   POLARIS_REALM: "${var.polaris.defaultRealm}"
   POLARIS_CATALOG: "${var.polaris.defaultRealm}"
+  # Each project's namespace is pinned to <warehouse>/<project>/.
+  POLARIS_WAREHOUSE: "${var.polaris.catalogWarehouse}"

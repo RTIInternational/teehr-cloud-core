@@ -31,7 +31,7 @@ def fake():
 
 def test_new_namespace_is_tagged_with_its_owner(fake):
     provision(fake.admin(), "flood", OWNER)
-    assert fake.namespace_props["flood"] == {OWNER_PROPERTY: OWNER}
+    assert fake.namespace_props["flood"][OWNER_PROPERTY] == OWNER
 
 
 def test_existing_untagged_namespace_is_not_claimed(fake):
@@ -177,3 +177,16 @@ def test_persistent_concurrency_conflict_fails(fake, monkeypatch):
     _conflict_on_grants(fake, times=10)
     with pytest.raises(PolarisError, match="RetryOnConcurrencyException"):
         provision(fake.admin(), "flood", OWNER)
+
+
+# --- storage location -----------------------------------------------------------
+
+
+def test_namespace_is_pinned_to_the_project_prefix(fake):
+    location = provision(fake.admin(), "flood", OWNER, "s3://warehouse")
+    assert location == "s3://warehouse/flood/"
+    assert fake.namespace_props["flood"]["location"] == "s3://warehouse/flood/"
+
+
+def test_without_warehouse_polaris_default_location_is_reported(fake):
+    assert provision(fake.admin(), "flood", OWNER) == "s3://warehouse/flood/"

@@ -15,6 +15,7 @@ from src.polaris import PolarisAdmin
 REALM = "teehr"
 CATALOG = "teehr"
 TOKEN = "fake-token"
+WAREHOUSE = "s3://warehouse/"
 
 
 class FakePolaris:
@@ -36,6 +37,7 @@ class FakePolaris:
             CATALOG,
             "root",
             "secret",
+            warehouse=WAREHOUSE,
             # Late-bound so a test can swap ``handle`` after building the client.
             transport=httpx.MockTransport(lambda request: self.handle(request)),
         )
@@ -61,7 +63,10 @@ class FakePolaris:
             name = body["namespace"][0]
             resp = self._create(self.namespaces, name, ok=200)
             if resp.status_code == 200:
-                self.namespace_props[name] = dict(body.get("properties") or {})
+                props = dict(body.get("properties") or {})
+                # Like Polaris: default to <catalog default-base-location>/<name>/.
+                props.setdefault("location", f"{WAREHOUSE}{name}/")
+                self.namespace_props[name] = props
             return resp
         if path.startswith(ns_root + "/"):
             return self._namespace(method, path.removeprefix(ns_root + "/"))

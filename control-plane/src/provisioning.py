@@ -33,6 +33,7 @@ def get_polaris() -> PolarisAdmin | None:
         settings.polaris_catalog,
         client_id,
         client_secret,
+        warehouse=settings.polaris_warehouse,
     )
 
 
@@ -63,8 +64,9 @@ def provision_project(
     if only_if_unready and project.status not in UNREADY:
         session.commit()  # release the lock
         return False
+    location = project.storage_location
     try:
-        provision(admin, project.name, str(project.id))
+        location = provision(admin, project.name, str(project.id), admin.warehouse)
     except PolarisError as exc:
         logger.error("Provisioning '%s' failed: %s", project.name, exc)
         status, detail = ProjectStatus.FAILED, str(exc)[:1000]
@@ -72,6 +74,7 @@ def provision_project(
         status, detail = ProjectStatus.READY, None
     project.status = status
     project.status_detail = detail
+    project.storage_location = location
     session.commit()
     return True
 

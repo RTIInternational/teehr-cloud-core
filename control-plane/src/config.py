@@ -28,6 +28,8 @@ class Settings:
     polaris_catalog: str = "teehr"
     # "client_id:client_secret" (the polaris-secrets/root-credentials format).
     polaris_credentials: str | None = None
+    # Catalog warehouse root; each project's namespace is pinned to <root>/<name>/.
+    polaris_warehouse: str | None = None
 
     @property
     def oidc_base_url(self) -> str | None:
@@ -79,4 +81,5 @@ def get_settings() -> Settings:
         polaris_catalog=os.getenv("POLARIS_CATALOG")
         or os.getenv("POLARIS_REALM", "teehr"),
         polaris_credentials=os.getenv("POLARIS_ROOT_CREDENTIALS") or None,
+        polaris_warehouse=os.getenv("POLARIS_WAREHOUSE") or None,
     )
