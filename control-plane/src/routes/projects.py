@@ -369,12 +369,28 @@ def put_member(
 ) -> MemberOut:
     """Add a member, or change a member's role, by Keycloak user id (``sub``)."""
     project, _ = _authorize(session, name, identity, settings, Role.ADMIN)
+    username = body.username
+    if keycloak is not None:
+        # Only real users can become members - access can't be granted otherwise.
+        try:
+            user = keycloak.get_user(subject)
+        except KeycloakError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not look up the user",
+            ) from exc
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No user with id '{subject}'",
+            )
+        username = user["username"]
     return _set_member(
         session,
         project,
         subject,
         body.role,
-        body.username,
+        username,
         identity,
         response,
         polaris,

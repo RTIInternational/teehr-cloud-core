@@ -122,3 +122,24 @@ def test_without_keycloak_membership_is_recorded_only(client, polaris):
 def test_add_by_username_needs_keycloak(client, polaris):
     client.post("/projects", json={"name": "flood"}, headers=ALICE)
     assert add(client, "bob", "read").status_code == 503
+
+
+def test_put_member_rejects_unknown_user_id(client, project, polaris):
+    # e.g. Swagger's placeholder "string"
+    resp = client.put(
+        "/projects/flood/members/string", json={"role": "read"}, headers=ALICE
+    )
+    assert resp.status_code == 404
+    members = client.get("/projects/flood/members", headers=ALICE).json()
+    assert "string" not in {m["subject"] for m in members}
+
+
+def test_put_member_by_id_takes_username_from_keycloak(client, project, polaris):
+    resp = client.put(
+        "/projects/flood/members/bob",
+        json={"role": "read", "username": "wrong"},
+        headers=ALICE,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["username"] == "bob"
+    assert polaris.bindings["bob"] == {READ}
