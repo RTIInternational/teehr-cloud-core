@@ -1,7 +1,6 @@
 """TEEHR project control plane (Phase 1, epic #148).
 
-Owns projects, members, datasets and runs. Skeleton for now: health and readiness
-only; the project API arrives in #152.
+Owns projects, members, datasets and runs.
 """
 
 from typing import Annotated
@@ -12,8 +11,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.db import get_engine
+from src.routes import projects
 
 app = FastAPI(title="TEEHR control plane", version="0.1.0")
+app.include_router(projects.router)
 
 
 @app.get("/health")

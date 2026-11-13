@@ -1,38 +1,61 @@
 """Control-plane settings, read from the environment."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 
 from sqlalchemy.engine import URL, make_url
+
+
+def _csv(value: str | None) -> tuple[str, ...]:
+    return tuple(item.strip() for item in (value or "").split(",") if item.strip())
 
 
 @dataclass(frozen=True)
 class Settings:
     database_url: URL
+    keycloak_issuer_url: str | None = None
+    keycloak_jwks_url: str | None = None
+    # A token is accepted when its `aud` or `azp` is in this list.
+    allowed_audiences: tuple[str, ...] = ()
+    # Realm roles that act as platform admins: full rights on every project.
+    admin_roles: tuple[str, ...] = field(default=("admin",))
 
 
-def get_settings() -> Settings:
-    """Build settings from the environment.
+def _database_url() -> URL:
+    """``CONTROL_PLANE_DB_URL`` wins when set (tests, standalone SQLite).
 
-    ``CONTROL_PLANE_DB_URL`` wins when set (tests, standalone SQLite). Otherwise a
-    deployed service gives the Postgres parts separately so the password never has
-    to be URL-escaped by hand. With neither, fall back to a local SQLite file.
+    Otherwise a deployed service gives the Postgres parts separately so the password
+    never has to be URL-escaped by hand. With neither, fall back to a local SQLite file.
     """
     explicit = os.getenv("CONTROL_PLANE_DB_URL")
     if explicit:
-        return Settings(database_url=make_url(explicit))
+        return make_url(explicit)
 
     host = os.getenv("CONTROL_PLANE_DB_HOST")
     if not host:
-        return Settings(database_url=make_url("sqlite:///./control_plane.db"))
+        return make_url("sqlite:///./control_plane.db")
 
+    return URL.create(
+        "postgresql+psycopg",
+        username=os.environ["CONTROL_PLANE_DB_USER"],
+        password=os.environ["CONTROL_PLANE_DB_PASSWORD"],
+        host=host,
+        port=int(os.getenv("CONTROL_PLANE_DB_PORT", "5432")),
+        database=os.environ["CONTROL_PLANE_DB_NAME"],
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    issuer = os.getenv("KEYCLOAK_ISSUER_URL")
+    jwks = os.getenv("KEYCLOAK_JWKS_URL") or (
+        f"{issuer}/protocol/openid-connect/certs" if issuer else None
+    )
     return Settings(
-        database_url=URL.create(
-            "postgresql+psycopg",
-            username=os.environ["CONTROL_PLANE_DB_USER"],
-            password=os.environ["CONTROL_PLANE_DB_PASSWORD"],
-            host=host,
-            port=int(os.getenv("CONTROL_PLANE_DB_PORT", "5432")),
-            database=os.environ["CONTROL_PLANE_DB_NAME"],
-        )
+        database_url=_database_url(),
+        keycloak_issuer_url=issuer,
+        keycloak_jwks_url=jwks,
+        allowed_audiences=_csv(os.getenv("KEYCLOAK_ALLOWED_AUDIENCES")),
+        admin_roles=_csv(os.getenv("CONTROL_PLANE_ADMIN_ROLES")) or ("admin",),
     )

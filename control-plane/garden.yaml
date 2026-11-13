@@ -25,12 +25,14 @@ dependencies:
   - build.teehr-control-plane
   - deploy.secrets
   - deploy.app-database
+  - deploy.keycloak-bootstrap
 
 spec:
   manifestFiles:
     - manifests/service.yaml
 
   manifestTemplates:
+    - manifests/configmap.yaml.tpl
     - manifests/deployment.yaml.tpl
 
   defaultTarget:
