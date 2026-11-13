@@ -114,13 +114,13 @@ def _openapi() -> dict[str, Any]:
 app.openapi = _openapi
 
 
-@app.get("/health")
+@app.get("/health", operation_id="health")
 def health() -> dict[str, str]:
     """Liveness: the process is up. Does not touch the database."""
     return {"status": "ok"}
 
 
-@app.get("/ready")
+@app.get("/ready", operation_id="ready")
 def ready(engine: Annotated[Engine, Depends(get_engine)]) -> dict[str, str]:
     """Readiness: the database answers."""
     try:
