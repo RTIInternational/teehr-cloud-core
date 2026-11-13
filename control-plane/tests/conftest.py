@@ -14,6 +14,8 @@ from src.auth import TokenVerifier, get_verifier
 from src.config import Settings, get_settings
 from src.db import get_engine, make_engine
 from src.main import app
+from src.provisioning import get_polaris
+from tests.fake_polaris import FakePolaris
 
 ROOT = Path(__file__).resolve().parents[1]
 ISSUER = "https://auth.test/realms/teehr"
@@ -80,5 +82,16 @@ def client(db_url):
     app.dependency_overrides[get_engine] = lambda: engine
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_verifier] = lambda: verifier
+    # Provisioning off unless a test opts in with the `polaris` fixture.
+    app.dependency_overrides[get_polaris] = lambda: None
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def polaris(client) -> FakePolaris:
+    """Turn provisioning on, against a fake Polaris."""
+    fake = FakePolaris()
+    admin = fake.admin()
+    app.dependency_overrides[get_polaris] = lambda: admin
+    return fake

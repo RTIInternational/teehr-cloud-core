@@ -16,6 +16,23 @@ prefix. Design: `docs/design/adr/0001-warehouse-layout.md`, `docs/design/system-
 To remove it: delete the Garden actions in this directory, then
 `DROP SCHEMA control_plane CASCADE` on `app-pg`.
 
+## Provisioning
+
+Creating a project provisions, in Polaris: a namespace named after the project, and
+for each project role (read/write/admin) a principal role
+`teehr-project-<name>-<role>` → catalog role `project_<name>_<role>` → grants on
+that namespace. The response's `status` is `ready`, or `failed` with the reason in
+`status_detail`; `POST /projects/{name}/provision` retries, and pending/failed
+projects are also retried when the service starts.
+
+- Every namespace the control plane creates is tagged with the project's id
+  (`teehr.control-plane.project-id`). An existing namespace is never claimed or
+  dropped unless the tag matches, so a project can't take over `teehr`,
+  `schema_evolution`, or anything else created outside it.
+- Deleting a project drops its namespace only when empty; otherwise 409.
+- It connects with the Polaris **root** credentials, like the `polaris-bootstrap`
+  Job. Replace them with a narrower principal before this runs outside KinD.
+
 ## Try it in a browser (KinD)
 
 1. Add `127.0.0.1 control-plane.teehr.local.app.garden` to `/etc/hosts`.

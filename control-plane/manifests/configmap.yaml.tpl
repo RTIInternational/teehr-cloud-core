@@ -14,3 +14,7 @@ data:
   KEYCLOAK_DOCS_CLIENT_ID: "teehr-control-plane-docs"
   # Realm roles with full rights on every project.
   CONTROL_PLANE_ADMIN_ROLES: "admin"
+  # Polaris management API, for provisioning project namespaces and roles.
+  POLARIS_URL: "http://polaris:8181"
+  POLARIS_REALM: "${var.polaris.defaultRealm}"
+  POLARIS_CATALOG: "${var.polaris.defaultRealm}"

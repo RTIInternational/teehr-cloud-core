@@ -26,7 +26,7 @@ spec:
         image: ${actions.build.teehr-control-plane.outputs.deploymentImageId}
         imagePullPolicy: IfNotPresent
         command: ["alembic", "upgrade", "head"]
-        env: &db-env
+        env:
         - name: CONTROL_PLANE_DB_HOST
           value: app-pg
         - name: CONTROL_PLANE_DB_PORT
@@ -53,7 +53,33 @@ spec:
         ports:
         - containerPort: 8000
           name: http
-        env: *db-env
+        env:
+        - name: CONTROL_PLANE_DB_HOST
+          value: app-pg
+        - name: CONTROL_PLANE_DB_PORT
+          value: "5432"
+        - name: CONTROL_PLANE_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: app-db-secrets
+              key: database
+        - name: CONTROL_PLANE_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-db-secrets
+              key: username
+        - name: CONTROL_PLANE_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-db-secrets
+              key: password
+        # Polaris root credentials, as the polaris-bootstrap Job uses. Replace with a
+        # dedicated, narrower Polaris principal before this runs outside KinD.
+        - name: POLARIS_ROOT_CREDENTIALS
+          valueFrom:
+            secretKeyRef:
+              name: polaris-secrets
+              key: root-credentials
         envFrom:
         - configMapRef:
             name: teehr-control-plane-config
