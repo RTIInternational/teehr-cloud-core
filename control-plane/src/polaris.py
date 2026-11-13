@@ -94,10 +94,13 @@ class PolarisAdmin:
         client_id: str,
         client_secret: str,
         *,
+        warehouse: str | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
     ):
         self.catalog = catalog
+        # Catalog warehouse root; projects are pinned to <warehouse>/<name>/.
+        self.warehouse = warehouse
         self._client_id = client_id
         self._client_secret = client_secret
         self._http = httpx.Client(
@@ -273,14 +276,30 @@ def _owned_by(properties: dict[str, str] | None, owner: str) -> bool:
     return properties is not None and properties.get(OWNER_PROPERTY) == owner
 
 
-def provision(admin: PolarisAdmin, project: str, owner: str) -> None:
+def namespace_location(warehouse: str, project: str) -> str:
+    """The project's storage prefix: ``<warehouse>/<project>/``."""
+    return f"{warehouse.rstrip('/')}/{project}/"
+
+
+def provision(
+    admin: PolarisAdmin, project: str, owner: str, warehouse: str | None = None
+) -> str | None:
     """Create (or complete) a project's namespace, roles and grants. Idempotent.
 
-    ``owner`` is the project's id. Raises :class:`NamespaceTaken` - before any role
-    or grant exists - if a namespace of that name already belongs to something else.
+    ``owner`` is the project's id. With ``warehouse`` the namespace is pinned to
+    ``<warehouse>/<project>/``; Polaris keeps the project's tables under it and
+    scopes the credentials it vends for them to their own paths. Returns the
+    namespace's storage location as Polaris reports it.
+
+    Raises :class:`NamespaceTaken` - before any role or grant exists - if a
+    namespace of that name already belongs to something else.
     """
-    created = admin.create_namespace(project, {OWNER_PROPERTY: owner})
-    if not created and not _owned_by(admin.namespace_properties(project), owner):
+    properties = {OWNER_PROPERTY: owner}
+    if warehouse:
+        properties["location"] = namespace_location(warehouse, project)
+    created = admin.create_namespace(project, properties)
+    current = admin.namespace_properties(project)
+    if not created and not _owned_by(current, owner):
         raise NamespaceTaken(
             f"a namespace named '{project}' already exists and is not this project's"
         )
@@ -294,6 +313,7 @@ def provision(admin: PolarisAdmin, project: str, owner: str) -> None:
         for privilege in ROLE_PRIVILEGES[role]:
             admin.grant_on_namespace(catalog_role, project, privilege)
         admin.assign_catalog_role(principal, catalog_role)
+    return (current or {}).get("location")
 
 
 def deprovision(admin: PolarisAdmin, project: str, owner: str) -> None:

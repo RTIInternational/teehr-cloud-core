@@ -23,6 +23,11 @@ spec:
     metadata:
       labels:
         app: polaris
+      annotations:
+        # Polaris reads polaris-config only at startup, and a ConfigMap change
+        # alone doesn't restart the pod. Carrying the setting here changes the pod
+        # spec when it changes, so the next deploy rolls Polaris onto it.
+        teehr.io/skip-credential-subscoping: "${var.polaris.skipCredentialSubscopingIndirection}"
     spec:
       serviceAccountName: polaris
       initContainers:

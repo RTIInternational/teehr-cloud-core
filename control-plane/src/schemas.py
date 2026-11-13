@@ -35,6 +35,7 @@ class ProjectOut(BaseModel):
     kind: ProjectKind
     status: ProjectStatus
     status_detail: str | None = None
+    storage_location: str | None = None
     created_by: str
     created_at: datetime
     # The caller's role in this project (None for a platform admin who isn't a member).
