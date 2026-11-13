@@ -54,6 +54,9 @@ spec:
         - containerPort: 8000
           name: http
         env: *db-env
+        envFrom:
+        - configMapRef:
+            name: teehr-control-plane-config
         livenessProbe:
           httpGet:
             path: /health

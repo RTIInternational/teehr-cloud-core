@@ -115,6 +115,24 @@ data:
           }
         },
         {
+          "clientId": "teehr-control-plane-docs",
+          "name": "Control plane API docs (Swagger login)",
+          "enabled": ${environment.name == 'local' ? "true" : "false"},
+          "protocol": "openid-connect",
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "redirectUris": [
+            "https://control-plane.${var.hostname}/docs/oauth2-redirect"
+          ],
+          "webOrigins": [
+            "https://control-plane.${var.hostname}"
+          ],
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          }
+        },
+        {
           "clientId": "teehr-frontend-local-dev",
           "enabled": ${var.enableLocalDevFrontendClient ? "true" : "false"},
           "protocol": "openid-connect",
