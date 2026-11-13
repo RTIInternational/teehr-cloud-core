@@ -25,7 +25,7 @@ kind of series."
   (explicit, not inferred from an id prefix, so it resolves unambiguously when a namespace has
   several layers), plus free-form attributes used for grouping/pairing.
 - **`locations`** is a geo layer (`location_id → geometry`), linked **from the series catalog**, not
-  referenced by the fact table. It can be shared (in `core`) across datasets.
+  referenced by the fact table. It can be shared (in `public`) across datasets.
 - **Pairing is series↔series:** a `crosswalk` links one `series_key` to another (the spec assigns
   which is `primary` vs `secondary`), or `on_attribute` matches a shared series attribute. Never a
   location join.
