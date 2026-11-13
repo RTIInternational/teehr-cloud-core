@@ -24,9 +24,16 @@ Two forks, framed in the #133 discussion as jbkolze's "one database with boundar
 
 **A project is a Polaris namespace** (tenant = namespace). **Within a namespace, each dataset is
 its own typed Iceberg table** — type ∈ {timeseries, locations, crosswalks, attributes} — rather
-than a shared table per type. The public TEEHR data becomes the `core` project (namespace); every
-other project is a tenant namespace that can reference `core`, stand alone, or publish datasets
-back to everyone.
+than a shared table per type. Two **system projects** are provisioned at bootstrap (not created
+through the project API):
+
+- **`public`** — the open input data (observations, model outputs) and the shared domain tables.
+  Readable by every authenticated user; written only by the platform (ingest).
+- **`platform`** — platform-owned evaluations and the derived tables that power the official
+  dashboards. Readable by every authenticated user; written only by the platform.
+
+Every other project is a **tenant** namespace (members only) that can reference `public` and
+`platform`, stand alone, or publish datasets back to everyone.
 
 A `timeseries` dataset is **homogeneous** in `configuration`, `variable`, and `statistic` — any
 variation is a separate table — so those (and the canonical unit) are dataset-level metadata, not
@@ -40,8 +47,8 @@ instantaneous data. See `../warehouse-data-model.md` and ADR-0010.
   geospatial datasets can carry arbitrary attribute columns inline instead of a separate
   attributes table; per-project storage prefixes drop cleanly out of per-project namespaces.
 - **Negative / cost:** many more tables; the query/analytics layer must **compose datasets by
-  union/view** rather than reading one table; cross-namespace reads (tenant ⊕ `core`) need
-  explicit grant handling.
+  union/view** rather than reading one table; cross-namespace reads (tenant ⊕ `public` /
+  `platform`) need explicit grant handling.
 - **Tradeoff accepted:** more tables and a composing planner, in exchange for real isolation and
   per-dataset lifecycle — over the simpler single-table-per-type design.
 
@@ -56,5 +63,11 @@ instantaneous data. See `../warehouse-data-model.md` and ADR-0010.
 ## Notes
 
 - The migration story must now span many namespaces once project = namespace — see ADR-0006.
-- S3-level isolation (prefix-scoped `allowed_locations` + STS vending) is proven by spike-2; a
-  nominal catalog grant alone is not sufficient.
+- S3-level isolation needs prefix-scoped `allowed_locations` + STS vending; a nominal catalog grant
+  alone is not sufficient. Spike-2 closed as a documented assumption, not a live test — the real
+  proof (STS credential sub-scoping on remote AWS) is part of Phase 1.
+- **Amended 2026-11-13:** the system project formerly called `core` is renamed **`public`** (it is
+  defined by what it holds — open, world-readable data — and matches VeriRace's name, so portable
+  specs mean the same thing on both systems, ADR-0011). A second system project, **`platform`**,
+  is added for platform-owned evaluations and dashboard data. No data moves; this is naming and
+  structure only.

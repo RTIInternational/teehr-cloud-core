@@ -45,13 +45,13 @@ version: 0
 name: nwm30-vs-usgs-by-lead-time
 
 inputs:
-  primary: {dataset: core.usgs_streamflow}
+  primary: {dataset: public.usgs_streamflow}
   secondary:
-    - {dataset: core.nwm30_short_range}
-    - {dataset: core.nwm30_medium_range_mem1, filter: "hour(reference_time) = 0"}
+    - {dataset: public.nwm30_short_range}
+    - {dataset: public.nwm30_medium_range_mem1, filter: "hour(reference_time) = 0"}
 
 pair:
-  relation: core.usgs_nwm30_crosswalk      # or: on_attribute: <shared series attribute>
+  relation: public.usgs_nwm30_crosswalk      # or: on_attribute: <shared series attribute>
 
 fields:
   - {name: lead_time_bin, fn: lead_time_bins, width: 6h}
@@ -62,7 +62,7 @@ filter: "value_time >= '2010-10-01' AND value_time < '2020-10-01'"   # row filte
 aggregate:
   - group_by: [primary_series_key, secondary_dataset, lead_time_bin]
     metrics: [count, relative_bias, rmse, nash_sutcliffe_efficiency, kling_gupta_efficiency]
-    skill: {reference: core.nwm30_medium_range_mem1, metrics: [rmse]}
+    skill: {reference: public.nwm30_medium_range_mem1, metrics: [rmse]}
 
 bootstrap: {method: block, block: P1M, iterations: 1000, seed: 42, ci_level: 0.90}
 
@@ -98,8 +98,9 @@ output:
 ## Dataset references
 
 A reference is a name: lowercase letters, digits and `_`, starting with a letter, up to 60
-characters, with an optional `core.` prefix. No prefix = the project's own namespace; `core.` =
-the public `core` project. One spec may mix both (your forecast against `core.usgs_streamflow`).
+characters, with an optional system-project prefix: `public.` (open input data) or `platform.`
+(platform-owned evaluations). No prefix = the project's own namespace. One spec may mix them (your
+forecast against `public.usgs_streamflow`).
 This covers `dataset`, `relation`, and any `reference`.
 
 ## Validation (reject at submit, before any run)

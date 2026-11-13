@@ -7,16 +7,16 @@
 
 ## Context
 
-Once a project is a Polaris namespace (ADR-0001), a change to the `core` schema may need to
+Once a project is a Polaris namespace (ADR-0001), a change to the `public` schema may need to
 propagate across many project namespaces. Two options:
 
 1. **Cross-namespace Iceberg migrations** — track an applied-migration version per namespace and
    apply changes programmatically across all of them.
-2. **No warehouse migrations at all** — evolve `core` with Iceberg schema evolution, and
+2. **No warehouse migrations at all** — evolve `public` with Iceberg schema evolution, and
    **regenerate** derived tables rather than migrate them.
 
 The cost of building a cross-namespace migration framework up front is high, and it is unclear how
-often a `core` schema change actually has to reach tenant namespaces.
+often a `public` schema change actually has to reach tenant namespaces.
 
 ## Decision
 
@@ -24,10 +24,10 @@ often a `core` schema change actually has to reach tenant namespaces.
 
 - Automate the migration path we already have — run through CI/CD or a job, never a human logging
   into Jupyter (per the "Schema migrations, automated" cross-cutting rule).
-- Evolve `core` via **Iceberg schema evolution**; **regenerate derived tables** (joined
+- Evolve `public` via **Iceberg schema evolution**; **regenerate derived tables** (joined
   timeseries, metrics, summaries) rather than migrate them.
 
-**Reopen trigger:** the first `core` schema change that must land in tenant namespaces, or
+**Reopen trigger:** the first `public` schema change that must land in tenant namespaces, or
 evidence that such propagation is frequent. At that point, decide between option 1 and a narrower
 mechanism.
 
@@ -43,7 +43,7 @@ mechanism.
 ## Alternatives considered
 
 - **Build per-namespace applied-migration tracking now.** Speculative; may never be needed if
-  tenant schemas rarely track `core`. Rejected for now.
+  tenant schemas rarely track `public`. Rejected for now.
 - **No migration discipline at all.** Rejected — see note; the application/metadata DB still needs
   real migrations regardless.
 

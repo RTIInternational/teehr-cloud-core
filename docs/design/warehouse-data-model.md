@@ -21,8 +21,10 @@ a settled schema.
 
 ## Namespaces and datasets
 
-- `core` namespace holds the public TEEHR data and the **shared domain tables**.
-- Each project is its own namespace; its datasets may reference `core` domains and data.
+- `public` namespace (system project) holds the open input data and the **shared domain tables**.
+- `platform` namespace (system project) holds platform-owned evaluations and the derived tables
+  behind the official dashboards.
+- Each tenant project is its own namespace; its datasets may reference `public` and `platform`.
 - A **dataset** is one typed Iceberg table. Dataset types:
 
 | Type | Holds | Notes |
@@ -50,7 +52,7 @@ the fact rows minimal while letting a dataset hold mixed-interval series.
 Derived outputs are **owned by an evaluation** and scoped by its id within the namespace — see
 "Derived tables — owned by an evaluation" below. They are regenerated, not migrated (ADR-0006).
 
-## Domain tables (controlled, in `core`)
+## Domain tables (controlled, in `public`)
 
 Small validated domain tables; every fact-table code column is a foreign key into one of these.
 
@@ -140,7 +142,7 @@ Geo layer, keyed by `location_id`:
   (ADR-0001). Id conventions carried forward where they encode meaning (e.g. `usgs-` points vs
   `usgsbasin-` polygons).
 - Linked from the `series` catalog (`series.location_id`), not from `timeseries` directly. Can be
-  shared (in `core`) and referenced by many datasets' series.
+  shared (in `public`) and referenced by many datasets' series.
 - **Many layers per namespace.** `locations` is a dataset *type*, so a project can hold several —
   gage points, basin polygons, reach lines, grid nodes — each its own table, each shareable. A
   `series` catalog resolves into one of them by its explicit `location_layer` reference (below).
