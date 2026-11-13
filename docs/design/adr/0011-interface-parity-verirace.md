@@ -31,6 +31,17 @@ at larger scale.
   - identity to the data plane: Keycloak → Polaris-scoped tokens.
 - **Adopt the patterns, not the code.** VeriRace is a separate, personal, early-development
   codebase on a different substrate; we re-implement its contracts, we do not fork or depend on it.
+- **TEEHR owns and publishes the engine-independent core as a shareable package.** The re-implemented
+  engine-free pieces — the metric kernels (ADR-0002), the canonical data model, the evaluation
+  spec / schema, and the mergeable metric-state format — are packaged as a clean, engine-neutral
+  library that **TEEHR owns and publishes** (`teehr-core`, ADR-0007). It is built to the parity
+  contract — **arrays in / arrays out, no Spark/Iceberg coupling, a numpy-only reference path** — so
+  that **VeriRace, or any other engine, can adopt TEEHR's package** in place of its own. The
+  dependency arrow points *at* TEEHR: we publish the shared core, others consume it; we still do not
+  depend on VeriRace. The clean boundary is what makes this possible.
+- **Validate against shared golden values.** We re-implement the metric code, but reuse VeriRace's
+  independently-computed golden reference *values* as one of our test oracles (**data, not code**).
+  This both validates the re-implementation and proves the two packages are interchangeable.
 
 ## Consequences
 
@@ -42,6 +53,11 @@ at larger scale.
   DuckDB (VeriRace), Iceberg/Spark (TEEHR), or another backend, and can be exchanged, published, and
   reproduced across systems. The spec becomes the interoperability layer, not just our internal
   format. This is a strong reason to keep the schema common rather than fork it.
+- **A TEEHR-owned shareable core (clean boundaries are the enabler):** because the engine-free pieces
+  sit behind an arrays-in / arrays-out boundary, they package as a standalone library TEEHR publishes
+  and others adopt — convergence with VeriRace and future engines **without** TEEHR taking a
+  dependency or standing up joint governance. The boundary discipline is what makes the core
+  shareable in the first place.
 - **Negative / cost:** VeriRace is early-development and may evolve — we track it rather than pin to
   it; naming/adaptation work; some interface assumptions may not fit the Iceberg/Polaris/Spark
   substrate (scale, multi-tenant auth, job vs inline) and must be validated per contract before
@@ -61,3 +77,8 @@ at larger scale.
 - Where a VeriRace contract collides with the substrate (e.g. size-based inline-vs-job routing, auth
   token flow), the TEEHR ADRs win (ADR-0002, ADR-0003, ADR-0004) and the interface is adapted.
 - The spec adaptation is tracked in `../spec-schema-v0.md`.
+- **Amended 2026-11-13** (prompted by the VeriRace team's "shared pieces" proposal): the shared-code
+  direction is *TEEHR owns and publishes* the engine-free core (`teehr-core`, ADR-0007); we
+  re-implement (we do **not** adopt VeriRace's package) and build it clean enough that VeriRace can
+  switch to ours. This supersedes any reading of this ADR in which TEEHR would depend on VeriRace's
+  package — the dependency points at TEEHR, not away from it.

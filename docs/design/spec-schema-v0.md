@@ -117,7 +117,10 @@ previous versions so saved specs keep running across one migration window.
 
 ## Open questions
 
-- Expression grammar for `expr` / `fn` — adopt VeriRace's or define our own small set.
+- **Expression grammar — direction set:** a **TEEHR-owned** allow-list — a small, checked SQL
+  subset for `filter` / `expr` — expressed in an engine-neutral canonical form and transpiled per
+  engine (Trino / Spark) via sqlglot. Re-implemented to VeriRace's pattern, not adopted from it
+  (ADR-0011); it ships with the shared spec schema. (Open: canonical dialect vs. transpile-from-one.)
 - Generated secondary inputs (persistence, climatology, blend) — VeriRace has these; do we want
   them in v0 or later?
 - Where ensemble `member` and `reference_time` flow through pairing for forecast verification.
