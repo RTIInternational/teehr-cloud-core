@@ -42,16 +42,22 @@ RUN apt-get update && apt-get install -y \
 # Install pip for Python 3.12 using ensurepip
 RUN python3.12 -m ensurepip --upgrade
 
-# Install TEEHR. On x86_64 everything installs from wheels. exactextract has no
-# aarch64 wheel (local KinD on Apple Silicon), so there it is compiled: the
-# toolchain and -dev headers are installed and purged in this same layer, keeping
-# gdal-bin so the GDAL/GEOS runtime libraries exactextract links against remain.
+# Install TEEHR, plus Icechunk and the xarray/rioxarray pins of the client
+# repos' Prefect images (Dockerfile.prefect-teehr), so executors can read
+# gridded sources for mean areal tasks. On x86_64 everything installs from
+# wheels. exactextract has no aarch64 wheel (local KinD on Apple Silicon), so
+# there it is compiled: the toolchain and -dev headers are installed and purged
+# in this same layer, keeping gdal-bin so the GDAL/GEOS runtime libraries
+# exactextract links against remain.
 RUN if [ "$(uname -m)" = "aarch64" ]; then \
         BUILD_DEPS="build-essential python3.12-dev libgdal-dev libgeos-dev"; \
         apt-get update && apt-get install -y gdal-bin $BUILD_DEPS; \
     fi \
     && GIT_LFS_SKIP_SMUDGE=1 python3.12 -m pip install --no-cache-dir \
         "git+https://github.com/RTIInternational/teehr.git@${TEEHR_VERSION}" \
+        "icechunk~=2.1.2" \
+        "xarray<2026.9" \
+        "rioxarray~=0.23.0" \
     && if [ -n "${BUILD_DEPS:-}" ]; then \
         apt-get purge -y --auto-remove $BUILD_DEPS && rm -rf /var/lib/apt/lists/*; \
     fi
@@ -73,7 +79,7 @@ RUN apt-get purge -y --auto-remove git \
 RUN ln -sf /usr/bin/python3.12 /usr/bin/python3
 
 # Fail the build if the purges above removed anything teehr needs at runtime.
-RUN python3 -c "import teehr, exactextract, rasterio, pyspark"
+RUN python3 -c "import teehr, exactextract, rasterio, pyspark, icechunk, rioxarray"
 
 # change spark UID and GID to 1000
 RUN usermod -u 1000 spark && groupmod -g 1000 spark
