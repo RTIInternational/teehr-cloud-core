@@ -28,7 +28,9 @@ it, never parts of it — even when co-located in the same cluster.**
   private. Nothing outside reaches past the boundary.
 - **Ancillary services are separate components**, owned by a deployment (they live in the deployment
   repo, ADR-0008), with their own identities, namespaces, and lifecycle. They are not built from, or
-  linked against, the evaluation system's internals beyond its published client SDK.
+  linked against, the evaluation system's internals beyond its published client SDK. An ancillary
+  service may be **shared by several deployments** (reused, not forked) — it is still a client, never
+  part of the evaluation system.
 - **They interact only across the boundary.** Data goes *in* through the write gateway / API —
   validated and attributed like any write (ADR-0004); results and timeseries come *out* through the
   API. A model-running service is the canonical case: it produces model output and **submits it as a
@@ -36,6 +38,10 @@ it, never parts of it — even when co-located in the same cluster.**
   knows nor cares that a model made it.
 - **Co-location is operational, not architectural.** Sharing a cluster grants no special access. An
   ancillary service must be movable to another cluster with no change to the evaluation system.
+- **Execution is separated too.** Evaluation flows (upload validation, on-demand analytics) and
+  deployment flows (bespoke ingests, model runners) run on **separate Prefect work pools** on a
+  shared Prefect server — so an ancillary service's jobs cannot run as, or interfere with, the
+  evaluation system's own.
 - **The boundary is enforced, not just documented:** the API as the sole access path (ADR-0004),
   per-service identity and project namespaces / isolation (ADR-0001), and no shared internal
   packages. An ancillary service that cannot do its job across the boundary is a signal to **extend
