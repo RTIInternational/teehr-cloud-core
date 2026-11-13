@@ -30,6 +30,12 @@ class Settings:
     polaris_credentials: str | None = None
     # Catalog warehouse root; each project's namespace is pinned to <root>/<name>/.
     polaris_warehouse: str | None = None
+    # Keycloak admin API, for the realm roles that carry project access.
+    # None = membership isn't turned into data access.
+    keycloak_admin_url: str | None = None
+    keycloak_realm: str = "teehr"
+    keycloak_admin_user: str | None = None
+    keycloak_admin_password: str | None = None
 
     @property
     def oidc_base_url(self) -> str | None:
@@ -82,4 +88,8 @@ def get_settings() -> Settings:
         or os.getenv("POLARIS_REALM", "teehr"),
         polaris_credentials=os.getenv("POLARIS_ROOT_CREDENTIALS") or None,
         polaris_warehouse=os.getenv("POLARIS_WAREHOUSE") or None,
+        keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,
+        keycloak_realm=os.getenv("KEYCLOAK_REALM", "teehr"),
+        keycloak_admin_user=os.getenv("KEYCLOAK_ADMIN_USER") or None,
+        keycloak_admin_password=os.getenv("KEYCLOAK_ADMIN_PASSWORD") or None,
     )

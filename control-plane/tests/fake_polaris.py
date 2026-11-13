@@ -27,6 +27,9 @@ class FakePolaris:
         self.catalog_roles: set[str] = set()
         self.grants: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.assignments: dict[str, set[str]] = defaultdict(set)
+        # Named principals (usernames) and the principal roles bound to each.
+        self.principals: set[str] = set()
+        self.bindings: dict[str, set[str]] = defaultdict(set)
         self.token_requests = 0
         self.fail_paths: set[str] = set()  # path substrings that answer 500
 
@@ -116,6 +119,33 @@ class FakePolaris:
             if rest == "" and method == "DELETE":
                 self.principal_roles.discard(principal)
                 self.assignments.pop(principal, None)
+                # Deleting a principal role drops it from every principal.
+                for bound in self.bindings.values():
+                    bound.discard(principal)
+                return httpx.Response(204)
+
+        # Named principals (one per user) and their principal-role bindings.
+        if path == f"{mgmt}/principals" and method == "POST":
+            return self._create(self.principals, body["principal"]["name"])
+        p_root = f"{mgmt}/principals/"
+        if path.startswith(p_root):
+            name, _, rest = path.removeprefix(p_root).partition("/")
+            if name not in self.principals:
+                return httpx.Response(404)
+            if rest == "principal-roles" and method == "GET":
+                roles = [{"name": r} for r in sorted(self.bindings[name])]
+                return httpx.Response(200, json={"roles": roles})
+            if rest == "principal-roles" and method == "PUT":
+                role = body["principalRole"]["name"]
+                if role not in self.principal_roles:
+                    return httpx.Response(404)
+                self.bindings[name].add(role)
+                return httpx.Response(201)
+            if rest.startswith("principal-roles/") and method == "DELETE":
+                role = rest.removeprefix("principal-roles/")
+                if role not in self.bindings[name]:
+                    return httpx.Response(404)
+                self.bindings[name].discard(role)
                 return httpx.Response(204)
 
         return httpx.Response(405, json={"error": f"unexpected {method} {path}"})

@@ -163,11 +163,45 @@ data:
         resp.raise_for_status()
 
 
+    def list_principal_roles(polaris_token, principal_name):
+        resp = requests.get(
+            f"{MGMT_URL}/api/management/v1/principals/{principal_name}/principal-roles",
+            headers={"X-Polaris-Realm": REALM, "Authorization": f"Bearer {polaris_token}"},
+        )
+        if resp.status_code == 404:
+            return set()
+        resp.raise_for_status()
+        return {role["name"] for role in resp.json().get("roles", [])}
+
+
+    def revoke_principal_role_binding(polaris_token, principal_name, principal_role):
+        resp = requests.delete(
+            f"{MGMT_URL}/api/management/v1/principals/{principal_name}/principal-roles/{principal_role}",
+            headers={"X-Polaris-Realm": REALM, "Authorization": f"Bearer {polaris_token}"},
+        )
+        if resp.status_code in (200, 204, 404):
+            return
+        print(
+            f"ERROR revoking principal role '{principal_role}' from principal '{principal_name}': "
+            f"{resp.status_code} {resp.text}",
+            file=sys.stderr,
+        )
+        resp.raise_for_status()
+
+
+    # Project roles (teehr-project-<name>-<role>) are granted and revoked by the
+    # control plane from its membership records. This sync is the backstop: it
+    # also REVOKES a project binding the user no longer holds in Keycloak, so a
+    # removed member can't keep access if a direct revoke ever failed. Only
+    # project roles are revoked here; other bindings are only ever added.
+    PROJECT_ROLE_PREFIX = "teehr-project-"
+
     polaris_token = get_polaris_token()
     kc_token = get_keycloak_token()
 
     synced = 0
     granted = 0
+    revoked = 0
     for user in iter_keycloak_users(kc_token):
         name = user.get("username")
         user_id = user.get("id")
@@ -181,13 +215,20 @@ data:
                 # Matching that regex here (rather than deriving from Keycloak group
                 # names/paths separately) keeps named-principal bindings from silently
                 # diverging from what group-based JWT mapping would have granted.
+                held = set()
                 for role_name in get_keycloak_realm_roles(kc_token, user_id):
                     if role_name.startswith("teehr-") or role_name == "iceberg-catalog-admin":
                         ensure_principal_role_binding(polaris_token, name, role_name)
+                        held.add(role_name)
                         granted += 1
+                for role_name in list_principal_roles(polaris_token, name):
+                    if role_name.startswith(PROJECT_ROLE_PREFIX) and role_name not in held:
+                        revoke_principal_role_binding(polaris_token, name, role_name)
+                        revoked += 1
             synced += 1
 
     print(
-        f"[polaris-principal-sync] Synced {synced} principals and ensured {granted} "
-        f"principal-role grants from Keycloak realm '{REALM}'"
+        f"[polaris-principal-sync] Synced {synced} principals, ensured {granted} "
+        f"principal-role grants and revoked {revoked} stale project grants from "
+        f"Keycloak realm '{REALM}'"
     )

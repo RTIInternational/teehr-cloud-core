@@ -248,6 +248,39 @@ class PolarisAdmin:
     def delete_principal_role(self, name: str) -> None:
         self._mgmt("DELETE", f"/principal-roles/{name}", (204, 404))
 
+    # --- named principals (one per Keycloak user, by username) ----------------
+
+    def ensure_principal(self, name: str) -> None:
+        """Create the user's named principal if the principal-sync CronJob hasn't yet."""
+        self._mgmt(
+            "POST",
+            "/principals",
+            (201,),
+            allow_duplicate=True,
+            json={"principal": {"name": name}},
+        )
+
+    def principal_roles_of(self, principal: str) -> set[str]:
+        """Principal roles bound to a principal (none if the principal doesn't exist)."""
+        resp = self._mgmt("GET", f"/principals/{principal}/principal-roles", (200, 404))
+        if resp.status_code == 404:
+            return set()
+        return {r["name"] for r in resp.json()["roles"]}
+
+    def grant_principal_role(self, principal: str, role: str) -> None:
+        self._mgmt(
+            "PUT",
+            f"/principals/{principal}/principal-roles",
+            (200, 201),
+            allow_duplicate=True,
+            json={"principalRole": {"name": role}},
+        )
+
+    def revoke_principal_role(self, principal: str, role: str) -> None:
+        self._mgmt(
+            "DELETE", f"/principals/{principal}/principal-roles/{role}", (204, 404)
+        )
+
     # --- read-back (verification and tests) ---------------------------------
 
     def namespace_grants(self, catalog_role: str) -> set[tuple[str, str]]:

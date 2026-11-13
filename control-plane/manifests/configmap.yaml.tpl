@@ -20,3 +20,6 @@ data:
   POLARIS_CATALOG: "${var.polaris.defaultRealm}"
   # Each project's namespace is pinned to <warehouse>/<project>/.
   POLARIS_WAREHOUSE: "${var.polaris.catalogWarehouse}"
+  # Keycloak admin API, for the realm roles that carry project access.
+  KEYCLOAK_ADMIN_URL: "http://keycloak-service:8080"
+  KEYCLOAK_REALM: "teehr"

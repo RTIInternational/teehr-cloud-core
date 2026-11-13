@@ -33,6 +33,25 @@ projects are also retried when the service starts.
 - It connects with the Polaris **root** credentials, like the `polaris-bootstrap`
   Job. Replace them with a narrower principal before this runs outside KinD.
 
+## Membership is data access
+
+Each member gets exactly the role for their membership, in two places, updated as
+soon as membership changes (add, role change, remove, project delete):
+
+- **Keycloak**: realm role `teehr-project-<name>-<role>` - in their tokens.
+- **Polaris**: the same-named principal role, bound to their named principal
+  (their username). Polaris uses a named principal's bindings rather than the
+  token, so this is what grants or removes access immediately.
+
+Add members by username with `POST /projects/{name}/members`. If an update can't
+be applied, the membership is still saved, the project goes `failed`, and
+`POST /projects/{name}/provision` (or the next restart) re-applies every member's
+access. The `polaris-principal-sync` CronJob is the backstop: it also revokes
+project bindings a user no longer holds in Keycloak.
+
+It uses the Keycloak **admin** login (like the bootstrap Job and the CronJob).
+Replace it with a dedicated service account before this runs outside KinD.
+
 ## Try it in a browser (KinD)
 
 1. Add `127.0.0.1 control-plane.teehr.local.app.garden` to `/etc/hosts`.
