@@ -1,4 +1,9 @@
-"""Request and response bodies."""
+"""Request and response bodies - the API contract.
+
+These models generate the published OpenAPI spec (``control-plane/openapi.json``,
+pinned by a snapshot test), which is what a CLI or SDK is built from (ADR-0007,
+ADR-0011). Inputs are strict: an unknown field is an error, never silently dropped.
+"""
 
 from datetime import datetime
 
@@ -15,13 +20,19 @@ PROJECT_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,59}$"
 RESERVED_PROJECT_NAMES = frozenset({"public", "platform", "teehr"})
 
 
-class ProjectCreate(BaseModel):
-    name: str = Field(pattern=PROJECT_NAME_PATTERN)
+class StrictInput(BaseModel):
+    """Base for request bodies: reject fields the API doesn't know."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProjectCreate(StrictInput):
+    name: str = Field(pattern=PROJECT_NAME_PATTERN, description="Unique project name")
     display_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
 
 
-class ProjectUpdate(BaseModel):
+class ProjectUpdate(StrictInput):
     display_name: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
 
@@ -34,29 +45,45 @@ class ProjectOut(BaseModel):
     description: str | None
     kind: ProjectKind
     status: ProjectStatus
-    status_detail: str | None = None
-    storage_location: str | None = None
+    status_detail: str | None = Field(
+        default=None, description="Why provisioning last failed"
+    )
+    storage_location: str | None = Field(
+        default=None, description="The project's storage prefix"
+    )
     created_by: str
     created_at: datetime
-    # The caller's role in this project (None for a platform admin who isn't a member).
-    my_role: Role | None = None
+    my_role: Role | None = Field(
+        default=None,
+        description="The caller's role (null for a platform admin who isn't a member)",
+    )
 
 
-class MemberAdd(BaseModel):
-    username: str = Field(min_length=1, max_length=255)
+class MemberAdd(StrictInput):
+    username: str = Field(min_length=1, max_length=255, description="Keycloak username")
     role: Role
 
 
-class MemberPut(BaseModel):
+class MemberPut(StrictInput):
     role: Role
-    username: str | None = Field(default=None, max_length=255)
+    username: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Ignored when Keycloak is configured (taken from Keycloak)",
+    )
 
 
 class MemberOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    subject: str
+    subject: str = Field(description="Keycloak user id")
     username: str | None
     role: Role
     added_by: str
     added_at: datetime
+
+
+class ErrorOut(BaseModel):
+    """Every error response (4xx/5xx other than 422) has this shape."""
+
+    detail: str

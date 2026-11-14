@@ -22,7 +22,7 @@ Creating a project provisions, in Polaris: a namespace named after the project, 
 for each project role (read/write/admin) a principal role
 `teehr-project-<name>-<role>` → catalog role `project_<name>_<role>` → grants on
 that namespace. The response's `status` is `ready`, or `failed` with the reason in
-`status_detail`; `POST /projects/{name}/provision` retries, and pending/failed
+`status_detail`; `POST /v1/projects/{name}/provision` retries, and pending/failed
 projects are also retried when the service starts.
 
 - Every namespace the control plane creates is tagged with the project's id
@@ -43,9 +43,9 @@ soon as membership changes (add, role change, remove, project delete):
   (their username). Polaris uses a named principal's bindings rather than the
   token, so this is what grants or removes access immediately.
 
-Add members by username with `POST /projects/{name}/members`. If an update can't
+Add members by username with `POST /v1/projects/{name}/members`. If an update can't
 be applied, the membership is still saved, the project goes `failed`, and
-`POST /projects/{name}/provision` (or the next restart) re-applies every member's
+`POST /v1/projects/{name}/provision` (or the next restart) re-applies every member's
 access. The `polaris-principal-sync` CronJob is the backstop: it also revokes
 project bindings a user no longer holds in Keycloak.
 

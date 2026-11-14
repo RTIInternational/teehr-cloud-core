@@ -30,7 +30,7 @@ def test_protected_routes_offer_login_and_public_routes_do_not():
     schema = _schema(
         keycloak_issuer_url=ISSUER, docs_client_id="teehr-control-plane-docs"
     )
-    projects_post = schema["paths"]["/projects"]["post"]
+    projects_post = schema["paths"]["/v1/projects"]["post"]
     assert {LOGIN_SCHEME: ["openid"]} in projects_post["security"]
     assert {"BearerAuth": []} in projects_post["security"]
     assert "security" not in schema["paths"]["/health"]["get"]

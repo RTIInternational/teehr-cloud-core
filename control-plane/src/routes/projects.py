@@ -16,7 +16,7 @@ roles first, and refuses while the namespace still holds tables.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -35,7 +35,9 @@ from src.provisioning import (
     provision_project,
 )
 from src.schemas import (
+    PROJECT_NAME_PATTERN,
     RESERVED_PROJECT_NAMES,
+    ErrorOut,
     MemberAdd,
     MemberOut,
     MemberPut,
@@ -44,13 +46,32 @@ from src.schemas import (
     ProjectUpdate,
 )
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/v1/projects", tags=["projects"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 IdentityDep = Annotated[Identity, Depends(get_identity)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 PolarisDep = Annotated[PolarisAdmin | None, Depends(get_polaris)]
 KeycloakDep = Annotated[KeycloakAdmin | None, Depends(get_keycloak)]
+
+ProjectName = Annotated[
+    str, Path(pattern=PROJECT_NAME_PATTERN, description="Project name")
+]
+Subject = Annotated[str, Path(max_length=255, description="Keycloak user id")]
+
+_ERROR_TEXT = {
+    401: "Missing or invalid access token",
+    403: "Signed in, but without the project role this needs",
+    404: "No such project (or the caller isn't a member), member or user",
+    409: "Conflicts with the project's current state",
+    502: "A Keycloak or Polaris call failed",
+    503: "Provisioning or user lookup isn't configured, or Keycloak is down",
+}
+
+
+def _errors(*codes: int) -> dict:
+    """OpenAPI ``responses`` entry documenting these error codes."""
+    return {c: {"model": ErrorOut, "description": _ERROR_TEXT[c]} for c in codes}
 
 
 def _not_found() -> HTTPException:
@@ -72,7 +93,7 @@ def _access_failed(project: Project, exc: AccessError) -> HTTPException:
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=(
             "Membership saved, but data access could not be updated "
-            f"({exc}). Retry with POST /projects/{project.name}/provision."
+            f"({exc}). Retry with POST /v1/projects/{project.name}/provision."
         ),
     )
 
@@ -118,7 +139,12 @@ def _admin_count(session: Session, project: Project) -> int:
     )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_project",
+    responses=_errors(401, 409, 503),
+)
 def create_project(
     body: ProjectCreate,
     session: SessionDep,
@@ -155,9 +181,13 @@ def create_project(
     return _project_out(project, Role.ADMIN)
 
 
-@router.post("/{name}/provision")
+@router.post(
+    "/{name}/provision",
+    operation_id="provision_project",
+    responses=_errors(401, 403, 404, 409, 503),
+)
 def reprovision_project(
-    name: str,
+    name: ProjectName,
     session: SessionDep,
     identity: IdentityDep,
     settings: SettingsDep,
@@ -178,7 +208,7 @@ def reprovision_project(
     return _project_out(project, my_role)
 
 
-@router.get("")
+@router.get("", operation_id="list_projects", responses=_errors(401, 503))
 def list_projects(
     session: SessionDep, identity: IdentityDep, settings: SettingsDep
 ) -> list[ProjectOut]:
@@ -196,17 +226,19 @@ def list_projects(
     return [_project_out(p, role) for p, role in rows if role is not None or is_admin]
 
 
-@router.get("/{name}")
+@router.get("/{name}", operation_id="get_project", responses=_errors(401, 404, 503))
 def get_project(
-    name: str, session: SessionDep, identity: IdentityDep, settings: SettingsDep
+    name: ProjectName, session: SessionDep, identity: IdentityDep, settings: SettingsDep
 ) -> ProjectOut:
     project, my_role = _authorize(session, name, identity, settings, Role.READ)
     return _project_out(project, my_role)
 
 
-@router.patch("/{name}")
+@router.patch(
+    "/{name}", operation_id="update_project", responses=_errors(401, 403, 404, 503)
+)
 def update_project(
-    name: str,
+    name: ProjectName,
     body: ProjectUpdate,
     session: SessionDep,
     identity: IdentityDep,
@@ -220,9 +252,14 @@ def update_project(
     return _project_out(project, my_role)
 
 
-@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="delete_project",
+    responses=_errors(401, 403, 404, 409, 502, 503),
+)
 def delete_project(
-    name: str,
+    name: ProjectName,
     session: SessionDep,
     identity: IdentityDep,
     settings: SettingsDep,
@@ -256,9 +293,11 @@ def delete_project(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{name}/members")
+@router.get(
+    "/{name}/members", operation_id="list_members", responses=_errors(401, 404, 503)
+)
 def list_members(
-    name: str, session: SessionDep, identity: IdentityDep, settings: SettingsDep
+    name: ProjectName, session: SessionDep, identity: IdentityDep, settings: SettingsDep
 ) -> list[MemberOut]:
     project, _ = _authorize(session, name, identity, settings, Role.READ)
     members = session.scalars(
@@ -316,9 +355,16 @@ def _set_member(
     return MemberOut.model_validate(member)
 
 
-@router.post("/{name}/members")
+@router.post(
+    "/{name}/members",
+    operation_id="add_member",
+    responses={
+        **_errors(401, 403, 404, 409, 502, 503),
+        201: {"model": MemberOut, "description": "Member added"},
+    },
+)
 def add_member_by_username(
-    name: str,
+    name: ProjectName,
     body: MemberAdd,
     response: Response,
     session: SessionDep,
@@ -355,10 +401,17 @@ def add_member_by_username(
     )
 
 
-@router.put("/{name}/members/{subject}")
+@router.put(
+    "/{name}/members/{subject}",
+    operation_id="set_member",
+    responses={
+        **_errors(401, 403, 404, 409, 502, 503),
+        201: {"model": MemberOut, "description": "Member added"},
+    },
+)
 def put_member(
-    name: str,
-    subject: str,
+    name: ProjectName,
+    subject: Subject,
     body: MemberPut,
     response: Response,
     session: SessionDep,
@@ -398,10 +451,15 @@ def put_member(
     )
 
 
-@router.delete("/{name}/members/{subject}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{name}/members/{subject}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="remove_member",
+    responses=_errors(401, 403, 404, 409, 502, 503),
+)
 def remove_member(
-    name: str,
-    subject: str,
+    name: ProjectName,
+    subject: Subject,
     session: SessionDep,
     identity: IdentityDep,
     settings: SettingsDep,
