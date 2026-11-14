@@ -37,6 +37,9 @@ data:
           { "name": "teehr-read-only" },
           { "name": "teehr-read-write" },
           { "name": "iceberg-catalog-admin" },
+          { "name": "teehr-platform-write", "description": "Write the public and platform system projects (ingest)" },
+          { "name": "control-plane-admin", "description": "Edit every project in the control plane. Very few people." },
+          { "name": "control-plane-viewer", "description": "See every project and its members in the control plane; change nothing" },
           { "name": "icechunk-read-only" },
         ]
       },
@@ -85,6 +88,14 @@ data:
         {
           "name": "iceberg-catalog-admins",
           "realmRoles": ["iceberg-catalog-admin"]
+        },
+        {
+          "name": "control-plane-admins",
+          "realmRoles": ["control-plane-admin"]
+        },
+        {
+          "name": "control-plane-viewers",
+          "realmRoles": ["control-plane-viewer"]
         },
         {
           "name": "icechunk-read-only",
@@ -307,7 +318,7 @@ data:
           "username": "service-account-prefect-polaris",
           "enabled": true,
           "serviceAccountClientId": "prefect-polaris",
-          "realmRoles": ["teehr-read-write"]
+          "realmRoles": ["teehr-read-write", "teehr-platform-write"]
         }
       ]
     }

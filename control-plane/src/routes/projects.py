@@ -4,6 +4,8 @@ Access rules:
 - Any signed-in user may create a project and becomes its admin.
 - Reading a project needs membership; changing it needs the admin role.
 - Platform admins (``CONTROL_PLANE_ADMIN_ROLES``) may act on every project.
+- Platform viewers (``CONTROL_PLANE_VIEWER_ROLES``) may see every project and its
+  members, and change none of them. This is project metadata only, not data.
 - A non-member gets 404, not 403, so project names can't be probed.
 - A project always keeps at least one admin.
 - The system projects (``public``, ``platform``) are readable by everyone, managed
@@ -104,6 +106,10 @@ def _membership(session: Session, project: Project, subject: str) -> Membership 
     return session.get(Membership, (project.id, subject))
 
 
+def _is_viewer(identity: Identity, settings: Settings) -> bool:
+    return identity.has_any_role(settings.viewer_roles)
+
+
 def _authorize(
     session: Session,
     name: str,
@@ -119,8 +125,11 @@ def _authorize(
     my_role = member.role if member else None
     if identity.has_any_role(settings.admin_roles):
         return project, my_role
-    if my_role is None and project.kind == ProjectKind.SYSTEM:
-        # Every signed-in user can see and read a system project.
+    if my_role is None and (
+        project.kind == ProjectKind.SYSTEM or _is_viewer(identity, settings)
+    ):
+        # Every signed-in user can read a system project; a platform viewer can
+        # read every project. Neither can change it.
         if min_role == Role.READ:
             return project, None
     elif my_role is None:
@@ -217,7 +226,7 @@ def list_projects(
     session: SessionDep, identity: IdentityDep, settings: SettingsDep
 ) -> list[ProjectOut]:
     """The system projects plus the projects the caller belongs to (every project,
-    for a platform admin)."""
+    for a platform admin or viewer)."""
     rows = session.execute(
         select(Project, Membership.role)
         .outerjoin(
@@ -227,11 +236,13 @@ def list_projects(
         )
         .order_by(Project.name)
     ).all()
-    is_admin = identity.has_any_role(settings.admin_roles)
+    sees_all = identity.has_any_role(settings.admin_roles) or _is_viewer(
+        identity, settings
+    )
     return [
         _project_out(p, role)
         for p, role in rows
-        if role is not None or is_admin or p.kind == ProjectKind.SYSTEM
+        if role is not None or sees_all or p.kind == ProjectKind.SYSTEM
     ]
 
 
