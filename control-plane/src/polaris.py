@@ -241,6 +241,23 @@ class PolarisAdmin:
             json={"catalogRole": {"name": catalog_role}},
         )
 
+    def unassign_catalog_role(self, principal_role: str, catalog_role: str) -> None:
+        self._mgmt(
+            "DELETE",
+            f"/principal-roles/{principal_role}/catalog-roles/{self.catalog}/"
+            f"{catalog_role}",
+            (204, 404),
+        )
+
+    def catalog_role_assignees(self, catalog_role: str) -> set[str]:
+        """Principal roles the catalog role is assigned to."""
+        roles = self._mgmt(
+            "GET",
+            f"/catalogs/{self.catalog}/catalog-roles/{catalog_role}/principal-roles",
+            (200,),
+        ).json()["roles"]
+        return {r["name"] for r in roles}
+
     def delete_catalog_role(self, name: str) -> None:
         self._mgmt(
             "DELETE", f"/catalogs/{self.catalog}/catalog-roles/{name}", (204, 404)
@@ -331,6 +348,8 @@ def provision(
 
     ``also_granted`` gives existing principal roles a project role as well - how
     system projects reach every user (e.g. ``{Role.READ: ["teehr-read-only"]}``).
+    When given, it is exact: any other principal role holding the project role
+    (besides the project's own) loses it.
 
     Raises :class:`NamespaceTaken` - before any role or grant exists - if a
     namespace of that name already belongs to something else.
@@ -354,9 +373,15 @@ def provision(
         for privilege in ROLE_PRIVILEGES[role]:
             admin.grant_on_namespace(catalog_role, project, privilege)
         admin.assign_catalog_role(principal, catalog_role)
-        for other in (also_granted or {}).get(role, ()):
+        if also_granted is None:
+            continue
+        wanted = set(also_granted.get(role, ()))
+        for other in wanted:
             admin.ensure_principal_role(other)
             admin.assign_catalog_role(other, catalog_role)
+        # Converge: a role dropped from the configuration loses the access.
+        for other in admin.catalog_role_assignees(catalog_role) - wanted - {principal}:
+            admin.unassign_catalog_role(other, catalog_role)
     return (current or {}).get("location")
 
 

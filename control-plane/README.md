@@ -42,12 +42,24 @@ legacy `teehr` namespace is untouched, and its data is copied into `public` late
 
 - **Read**: every user, via `SYSTEM_PROJECT_READER_ROLES` (`teehr-read-only`, the
   Keycloak default group).
-- **Write**: `SYSTEM_PROJECT_WRITER_ROLES` (`teehr-read-write`: ingest's
-  `prefect-polaris` service account, and whoever writes `teehr` today).
+- **Write**: `SYSTEM_PROJECT_WRITER_ROLES` (`teehr-platform-write`, held only by
+  ingest's `prefect-polaris` service account).
 - Platform admins manage them (edit, members, re-provision); nobody can delete them.
 
-Changing either setting takes effect on the next restart. Removing a role from a
-setting doesn't revoke what it was already given.
+The grants follow these settings exactly on every restart: a role removed from a
+setting loses the access.
+
+## Platform roles
+
+- `control-plane-admin` (group `control-plane-admins`, `CONTROL_PLANE_ADMIN_ROLES`):
+  edit, re-provision or delete any project and its members. Keep it to very few
+  people.
+- `control-plane-viewer` (group `control-plane-viewers`,
+  `CONTROL_PLANE_VIEWER_ROLES`): see every project and its members, change nothing.
+  Project metadata only: it gives no access to a project's data.
+
+On KinD, `admin` is a control-plane admin and `poweruser` a viewer. The full access
+review is #167.
 
 ## Membership is data access
 

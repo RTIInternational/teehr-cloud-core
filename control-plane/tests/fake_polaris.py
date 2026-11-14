@@ -95,6 +95,11 @@ class FakePolaris:
                     for ns, p in sorted(self.grants[role])
                 ]
                 return httpx.Response(200, json={"grants": grants})
+            if rest == "principal-roles" and method == "GET":
+                holders = [
+                    {"name": p} for p, held in self.assignments.items() if role in held
+                ]
+                return httpx.Response(200, json={"roles": holders})
             if rest == "" and method == "DELETE":
                 self.catalog_roles.discard(role)
                 self.grants.pop(role, None)
@@ -116,6 +121,12 @@ class FakePolaris:
             if rest == f"catalog-roles/{CATALOG}" and method == "GET":
                 roles = [{"name": r} for r in sorted(self.assignments[principal])]
                 return httpx.Response(200, json={"roles": roles})
+            if rest.startswith(f"catalog-roles/{CATALOG}/") and method == "DELETE":
+                role = rest.removeprefix(f"catalog-roles/{CATALOG}/")
+                if role not in self.assignments[principal]:
+                    return httpx.Response(404)
+                self.assignments[principal].discard(role)
+                return httpx.Response(204)
             if rest == "" and method == "DELETE":
                 self.principal_roles.discard(principal)
                 self.assignments.pop(principal, None)
