@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.config import Settings, get_settings
 from src.db import get_engine
-from src.provisioning import get_polaris, reconcile
+from src.provisioning import get_keycloak, get_polaris, reconcile
 from src.routes import projects
 
 logging.basicConfig(
@@ -29,7 +29,7 @@ LOGIN_SCHEME = "KeycloakLogin"
 
 def _reconcile_on_start() -> None:
     try:
-        count = reconcile(get_engine(), get_polaris())
+        count = reconcile(get_engine(), get_polaris(), get_keycloak())
         if count:
             logger.info(
                 "Startup reconcile: provisioned %d pending/failed project(s)", count

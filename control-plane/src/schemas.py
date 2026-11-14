@@ -42,6 +42,11 @@ class ProjectOut(BaseModel):
     my_role: Role | None = None
 
 
+class MemberAdd(BaseModel):
+    username: str = Field(min_length=1, max_length=255)
+    role: Role
+
+
 class MemberPut(BaseModel):
     role: Role
     username: str | None = Field(default=None, max_length=255)

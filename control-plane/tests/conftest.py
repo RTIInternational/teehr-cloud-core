@@ -14,7 +14,8 @@ from src.auth import TokenVerifier, get_verifier
 from src.config import Settings, get_settings
 from src.db import get_engine, make_engine
 from src.main import app
-from src.provisioning import get_polaris
+from src.provisioning import get_keycloak, get_polaris
+from tests.fake_keycloak import FakeKeycloak
 from tests.fake_polaris import FakePolaris
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,7 @@ def client(db_url):
     app.dependency_overrides[get_verifier] = lambda: verifier
     # Provisioning off unless a test opts in with the `polaris` fixture.
     app.dependency_overrides[get_polaris] = lambda: None
+    app.dependency_overrides[get_keycloak] = lambda: None
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -94,4 +96,13 @@ def polaris(client) -> FakePolaris:
     fake = FakePolaris()
     admin = fake.admin()
     app.dependency_overrides[get_polaris] = lambda: admin
+    return fake
+
+
+@pytest.fixture
+def keycloak(client) -> FakeKeycloak:
+    """Turn membership -> access sync on, against a fake Keycloak."""
+    fake = FakeKeycloak()
+    admin = fake.admin()
+    app.dependency_overrides[get_keycloak] = lambda: admin
     return fake

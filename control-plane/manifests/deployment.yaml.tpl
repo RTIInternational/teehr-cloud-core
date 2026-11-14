@@ -80,6 +80,19 @@ spec:
             secretKeyRef:
               name: polaris-secrets
               key: root-credentials
+        # Keycloak admin login, as the bootstrap Job and principal-sync CronJob use.
+        # Replace with a dedicated service account (realm-management roles only)
+        # before this runs outside KinD.
+        - name: KEYCLOAK_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-secrets
+              key: username
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-secrets
+              key: password
         envFrom:
         - configMapRef:
             name: teehr-control-plane-config
