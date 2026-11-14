@@ -29,6 +29,7 @@ spec:
         # spec when it changes, so the next deploy rolls Polaris onto it.
         teehr.io/skip-credential-subscoping: "${var.polaris.skipCredentialSubscopingIndirection}"
         teehr.io/drop-with-purge: "${environment.name == 'local'}"
+        teehr.io/service-admin-mapping: "${environment.name == 'local'}"
     spec:
       serviceAccountName: polaris
       initContainers:

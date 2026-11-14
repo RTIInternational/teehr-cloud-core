@@ -16,8 +16,13 @@ data:
   # can see every project and its members but change nothing.
   CONTROL_PLANE_ADMIN_ROLES: "control-plane-admin"
   CONTROL_PLANE_VIEWER_ROLES: "control-plane-viewer"
-  # Polaris management API, for provisioning project namespaces and roles.
+  # The control plane's own Keycloak client; the secret is in control-plane-secrets.
+  CONTROL_PLANE_CLIENT_ID: "teehr-control-plane"
+  # Polaris management API, for provisioning project namespaces and roles. The
+  # token comes from Keycloak; Polaris maps it to the named principal
+  # service-account-teehr-control-plane (polaris-bootstrap acl-config).
   POLARIS_URL: "http://polaris:8181"
+  POLARIS_TOKEN_URL: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/token"
   POLARIS_REALM: "${var.polaris.defaultRealm}"
   POLARIS_CATALOG: "${var.polaris.defaultRealm}"
   # Each project's namespace is pinned to <warehouse>/<project>/.
@@ -26,6 +31,7 @@ data:
   # only ingest's prefect-polaris service account writes.
   SYSTEM_PROJECT_READER_ROLES: "teehr-read-only"
   SYSTEM_PROJECT_WRITER_ROLES: "teehr-platform-write"
-  # Keycloak admin API, for the realm roles that carry project access.
+  # Keycloak admin API (teehr realm only), for the realm roles that carry project
+  # access.
   KEYCLOAK_ADMIN_URL: "http://keycloak-service:8080"
   KEYCLOAK_REALM: "teehr"

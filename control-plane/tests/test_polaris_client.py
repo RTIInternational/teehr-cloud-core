@@ -10,6 +10,7 @@ from src.polaris import (
     WRITE_PRIVILEGES,
     NamespaceNotEmpty,
     NamespaceTaken,
+    PolarisAdmin,
     PolarisError,
     catalog_role_name,
     deprovision,
@@ -207,3 +208,89 @@ def test_persistent_401_still_fails(fake):
     fake.handle = lambda request: httpx.Response(401)
     with pytest.raises(PolarisError, match="401"):
         admin.ensure_principal_role("after")
+
+
+def test_token_can_come_from_keycloak(fake):
+    """The control plane's Keycloak client token is what it presents to Polaris."""
+    seen = {}
+
+    def handle(request):
+        if request.url.host == "keycloak.test":
+            seen["form"] = dict(httpx.QueryParams(request.content.decode()))
+            return httpx.Response(
+                200, json={"access_token": fake.token, "expires_in": 300}
+            )
+        return fake.handle(request)
+
+    admin = PolarisAdmin(
+        "http://polaris.test",
+        "teehr",
+        "teehr",
+        "teehr-control-plane",
+        "cp-secret",
+        token_url="http://keycloak.test/realms/teehr/protocol/openid-connect/token",
+        transport=httpx.MockTransport(handle),
+    )
+    admin.ensure_principal_role("from-keycloak")
+    assert "from-keycloak" in fake.principal_roles
+    # Keycloak rejects Polaris's PRINCIPAL_ROLE:ALL scope, so it isn't sent.
+    assert seen["form"] == {
+        "grant_type": "client_credentials",
+        "client_id": "teehr-control-plane",
+        "client_secret": "cp-secret",
+    }
+    assert fake.token_requests == 0  # Polaris's own endpoint was never used
+
+
+def test_unreachable_token_endpoint_is_a_polaris_error():
+    def handle(request):
+        raise httpx.ConnectError("down", request=request)
+
+    admin = PolarisAdmin(
+        "http://polaris.test",
+        "teehr",
+        "teehr",
+        "id",
+        "secret",
+        token_url="http://keycloak.test/token",
+        transport=httpx.MockTransport(handle),
+    )
+    with pytest.raises(PolarisError, match="token request failed"):
+        admin.ensure_principal_role("x")
+
+
+def test_forbidden_with_a_stale_token_retries_once_with_a_fresh_one(fake):
+    """A token from before the control plane's roles changed lacks them (403)."""
+    admin = fake.admin()
+    admin.ensure_principal_role("before")
+    stale = fake.token
+    fake.token = "fresh-token"
+    real = fake.handle
+
+    def handle(request):
+        if request.headers.get("Authorization") == f"Bearer {stale}":
+            return httpx.Response(403, json={"error": "no activated roles"})
+        return real(request)
+
+    fake.handle = handle
+    admin.ensure_principal_role("after")
+    assert "after" in fake.principal_roles
+
+
+def test_persistent_403_fails_after_one_retry(fake):
+    admin = fake.admin()
+    admin.ensure_principal_role("before")
+    calls = []
+
+    def handle(request):
+        if request.url.path.endswith("/oauth/tokens"):
+            return httpx.Response(
+                200, json={"access_token": fake.token, "expires_in": 3600}
+            )
+        calls.append(request.url.path)
+        return httpx.Response(403, json={"error": "forbidden"})
+
+    fake.handle = handle
+    with pytest.raises(PolarisError, match="403"):
+        admin.ensure_principal_role("after")
+    assert len(calls) == 2

@@ -96,10 +96,16 @@ class PolarisAdmin:
         client_secret: str,
         *,
         warehouse: str | None = None,
+        token_url: str | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
     ):
+        """``token_url`` is an OpenID Connect token endpoint (Keycloak) to get the
+        token from; Polaris accepts those tokens and maps them to a principal.
+        Without it, Polaris's own token endpoint is used (internal principals such
+        as root)."""
         self.catalog = catalog
+        self._token_url = token_url
         # Catalog warehouse root; projects are pinned to <warehouse>/<name>/.
         self.warehouse = warehouse
         self._client_id = client_id
@@ -117,15 +123,19 @@ class PolarisAdmin:
 
     def _bearer(self) -> dict[str, str]:
         if self._token is None or time.monotonic() >= self._token_expires_at:
-            resp = self._http.post(
-                "/api/catalog/v1/oauth/tokens",
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
-                    "scope": "PRINCIPAL_ROLE:ALL",
-                },
-            )
+            data = {
+                "grant_type": "client_credentials",
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+            }
+            if self._token_url is None:
+                data["scope"] = "PRINCIPAL_ROLE:ALL"  # Polaris's own endpoint
+            try:
+                resp = self._http.post(
+                    self._token_url or "/api/catalog/v1/oauth/tokens", data=data
+                )
+            except httpx.HTTPError as exc:
+                raise PolarisError(f"token request failed: {exc}") from exc
             if resp.status_code != 200:
                 raise PolarisError(f"token request failed: {resp.status_code}")
             body = resp.json()
@@ -156,9 +166,10 @@ class PolarisAdmin:
                 raise PolarisError(f"{method} {path}: {exc}") from exc
             if resp.status_code in ok or (allow_duplicate and _is_duplicate(resp)):
                 return resp
-            # A restarted Polaris rejects tokens it issued before: get a new one,
-            # once.
-            if resp.status_code == 401 and not reauthenticated:
+            # Get a new token, once: a restarted Polaris rejects tokens it issued
+            # before (401), and a token minted before the control plane's roles
+            # changed doesn't carry them (403).
+            if resp.status_code in (401, 403) and not reauthenticated:
                 reauthenticated = True
                 self._token = None
                 continue

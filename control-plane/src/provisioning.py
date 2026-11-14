@@ -29,16 +29,16 @@ logger = logging.getLogger("control-plane.provisioning")
 def get_polaris() -> PolarisAdmin | None:
     """The Polaris admin client, or None when provisioning isn't configured."""
     settings = get_settings()
-    if not (settings.polaris_url and settings.polaris_credentials):
+    if not (settings.polaris_url and settings.client_id and settings.client_secret):
         return None
-    client_id, client_secret = settings.polaris_credentials.split(":", 1)
     return PolarisAdmin(
         settings.polaris_url,
         settings.polaris_realm,
         settings.polaris_catalog,
-        client_id,
-        client_secret,
+        settings.client_id,
+        settings.client_secret,
         warehouse=settings.polaris_warehouse,
+        token_url=settings.polaris_token_url,
     )
 
 
@@ -47,16 +47,14 @@ def get_keycloak() -> KeycloakAdmin | None:
     """The Keycloak admin client, or None when membership isn't synced to access."""
     settings = get_settings()
     if not (
-        settings.keycloak_admin_url
-        and settings.keycloak_admin_user
-        and settings.keycloak_admin_password
+        settings.keycloak_admin_url and settings.client_id and settings.client_secret
     ):
         return None
     return KeycloakAdmin(
         settings.keycloak_admin_url,
         settings.keycloak_realm,
-        settings.keycloak_admin_user,
-        settings.keycloak_admin_password,
+        settings.client_id,
+        settings.client_secret,
     )
 
 

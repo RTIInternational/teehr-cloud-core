@@ -6,8 +6,9 @@ member's tokens, and the ``polaris-principal-sync`` CronJob binds it to their na
 Polaris principal. The control plane also binds that principal role directly
 (:mod:`src.access`) so access changes take effect immediately.
 
-Authenticates like the bootstrap Job and the principal-sync CronJob do: the Keycloak
-admin user via ``admin-cli`` on the master realm.
+Authenticates as the control plane's own confidential client in the realm
+(client credentials). Its service account holds only realm-management roles in
+that realm - no master-realm or cross-realm access.
 """
 
 import time
@@ -24,15 +25,15 @@ class KeycloakAdmin:
         self,
         base_url: str,
         realm: str,
-        admin_user: str,
-        admin_password: str,
+        client_id: str,
+        client_secret: str,
         *,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
     ):
         self.realm = realm
-        self._admin_user = admin_user
-        self._admin_password = admin_password
+        self._client_id = client_id
+        self._client_secret = client_secret
         self._http = httpx.Client(
             base_url=base_url, timeout=timeout, transport=transport
         )
@@ -45,12 +46,11 @@ class KeycloakAdmin:
         if self._token is None or time.monotonic() >= self._token_expires_at:
             try:
                 resp = self._http.post(
-                    "/realms/master/protocol/openid-connect/token",
+                    f"/realms/{self.realm}/protocol/openid-connect/token",
                     data={
-                        "grant_type": "password",
-                        "client_id": "admin-cli",
-                        "username": self._admin_user,
-                        "password": self._admin_password,
+                        "grant_type": "client_credentials",
+                        "client_id": self._client_id,
+                        "client_secret": self._client_secret,
                     },
                 )
             except httpx.HTTPError as exc:
@@ -59,7 +59,7 @@ class KeycloakAdmin:
                 raise KeycloakError(f"token request failed: {resp.status_code}")
             body = resp.json()
             self._token = body["access_token"]
-            # Admin tokens are short-lived (60s by default); refresh a little early.
+            # Refresh a little early.
             self._token_expires_at = time.monotonic() + max(
                 int(body.get("expires_in", 60)) - 10, 5
             )

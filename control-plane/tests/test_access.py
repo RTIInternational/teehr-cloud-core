@@ -1,5 +1,6 @@
 """Membership becomes data access: Keycloak realm roles + Polaris principal bindings."""
 
+import httpx
 import pytest
 
 from tests.conftest import auth
@@ -159,3 +160,19 @@ def test_access_survives_a_polaris_and_keycloak_restart(
     )
     assert resp.status_code == 201
     assert "teehr-project-flood-read" in polaris.bindings["bob"]
+
+
+def test_keycloak_rejects_wrong_client_secret():
+    from src.keycloak_admin import KeycloakAdmin, KeycloakError
+    from tests.fake_keycloak import REALM, FakeKeycloak
+
+    fake = FakeKeycloak()
+    admin = KeycloakAdmin(
+        "http://keycloak.test",
+        REALM,
+        "teehr-control-plane",
+        "wrong",
+        transport=httpx.MockTransport(fake.handle),
+    )
+    with pytest.raises(KeycloakError, match="token request failed"):
+        admin.ensure_realm_role("x")
