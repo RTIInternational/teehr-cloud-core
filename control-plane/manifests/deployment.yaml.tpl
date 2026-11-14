@@ -73,26 +73,13 @@ spec:
             secretKeyRef:
               name: app-db-secrets
               key: password
-        # Polaris root credentials, as the polaris-bootstrap Job uses. Replace with a
-        # dedicated, narrower Polaris principal before this runs outside KinD.
-        - name: POLARIS_ROOT_CREDENTIALS
+        # The control plane's own Keycloak client (teehr realm, client credentials).
+        # Its token is used for the Keycloak admin API and for Polaris.
+        - name: CONTROL_PLANE_CLIENT_SECRET
           valueFrom:
             secretKeyRef:
-              name: polaris-secrets
-              key: root-credentials
-        # Keycloak admin login, as the bootstrap Job and principal-sync CronJob use.
-        # Replace with a dedicated service account (realm-management roles only)
-        # before this runs outside KinD.
-        - name: KEYCLOAK_ADMIN_USER
-          valueFrom:
-            secretKeyRef:
-              name: keycloak-admin-secrets
-              key: username
-        - name: KEYCLOAK_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: keycloak-admin-secrets
-              key: password
+              name: control-plane-secrets
+              key: client-secret
         envFrom:
         - configMapRef:
             name: teehr-control-plane-config

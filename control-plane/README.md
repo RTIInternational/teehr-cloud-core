@@ -30,8 +30,6 @@ projects are also retried when the service starts.
   dropped unless the tag matches, so a project can't take over `teehr`,
   `schema_evolution`, or anything else created outside it.
 - Deleting a project drops its namespace only when empty; otherwise 409.
-- It connects with the Polaris **root** credentials, like the `polaris-bootstrap`
-  Job. Replace them with a narrower principal before this runs outside KinD.
 
 ## System projects
 
@@ -77,8 +75,28 @@ be applied, the membership is still saved, the project goes `failed`, and
 access. The `polaris-principal-sync` CronJob is the backstop: it also revokes
 project bindings a user no longer holds in Keycloak.
 
-It uses the Keycloak **admin** login (like the bootstrap Job and the CronJob).
-Replace it with a dedicated service account before this runs outside KinD.
+
+## Its own identity
+
+The control plane signs in as itself: the confidential Keycloak client
+`teehr-control-plane` in the `teehr` realm (client credentials; secret in
+`control-plane-secrets`). One token serves both systems:
+
+- **Keycloak admin API**: the client's service account holds `manage-realm`,
+  `view-realm`, `manage-users`, `view-users` and `query-users` on the `teehr` realm
+  only (realm roles are realm configuration, hence `manage-realm`). No master-realm
+  or cross-realm access.
+- **Polaris**: the token maps to the named principal
+  `service-account-teehr-control-plane`, bound to `service_admin`
+  (`polaris-bootstrap` acl-config). Polaris activates a role only when the token
+  also carries it, so the service account holds the realm role
+  `polaris-service-admin`, which Polaris's role mapper turns into
+  `PRINCIPAL_ROLE:service_admin`. Neither the binding nor the realm role alone is
+  enough. Polaris 1.8 has no narrower option: creating
+  principal roles and binding them to principals are service-level operations only
+  `service_admin` can perform. It is a separate, rotatable identity, not root.
+
+The client is enabled, and has those roles, only in the local environment.
 
 ## Try it in a browser (KinD)
 

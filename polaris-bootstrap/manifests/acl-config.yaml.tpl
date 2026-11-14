@@ -70,7 +70,7 @@ data:
             }
           ],
           "table_policies": [],
-          "principals": []
+          "principals": ${environment.name == 'local' ? '[{"name": "service-account-teehr-control-plane", "principal_role": "service_admin"}]' : '[]'}
         }
       ]
     }

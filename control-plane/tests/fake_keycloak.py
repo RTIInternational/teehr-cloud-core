@@ -29,8 +29,8 @@ class FakeKeycloak:
         return KeycloakAdmin(
             "http://keycloak.test",
             REALM,
-            "admin",
-            "admin",
+            "teehr-control-plane",
+            "cp-secret",
             transport=httpx.MockTransport(lambda request: self.handle(request)),
         )
 
@@ -40,7 +40,14 @@ class FakeKeycloak:
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path, method = request.url.path, request.method
-        if path == "/realms/master/protocol/openid-connect/token":
+        if path == f"/realms/{REALM}/protocol/openid-connect/token":
+            form = dict(httpx.QueryParams(request.content.decode()))
+            if form != {
+                "grant_type": "client_credentials",
+                "client_id": "teehr-control-plane",
+                "client_secret": "cp-secret",
+            }:
+                return httpx.Response(401, json={"error": "unauthorized_client"})
             self.token_requests += 1
             return httpx.Response(
                 200, json={"access_token": self.token, "expires_in": 60}

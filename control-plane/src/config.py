@@ -25,12 +25,18 @@ class Settings:
     viewer_roles: tuple[str, ...] = ()
     # Public Keycloak client the /docs page signs in with. None = no login button.
     docs_client_id: str | None = None
+    # The control plane's own identity: a confidential Keycloak client in the realm
+    # (service account). Its token is used for both the Keycloak admin API and
+    # Polaris, where it maps to the control plane's named principal.
+    client_id: str | None = None
+    client_secret: str | None = None
     # Polaris management access for provisioning. None = provisioning disabled.
     polaris_url: str | None = None
     polaris_realm: str = "teehr"
     polaris_catalog: str = "teehr"
-    # "client_id:client_secret" (the polaris-secrets/root-credentials format).
-    polaris_credentials: str | None = None
+    # Where the Polaris token comes from: the Keycloak token endpoint. None =
+    # Polaris's own token endpoint (tests, standalone).
+    polaris_token_url: str | None = None
     # Catalog warehouse root; each project's namespace is pinned to <root>/<name>/.
     polaris_warehouse: str | None = None
     # Polaris principal roles given access to every system project (public,
@@ -41,8 +47,6 @@ class Settings:
     # None = membership isn't turned into data access.
     keycloak_admin_url: str | None = None
     keycloak_realm: str = "teehr"
-    keycloak_admin_user: str | None = None
-    keycloak_admin_password: str | None = None
 
     @property
     def oidc_base_url(self) -> str | None:
@@ -95,12 +99,12 @@ def get_settings() -> Settings:
         polaris_realm=os.getenv("POLARIS_REALM", "teehr"),
         polaris_catalog=os.getenv("POLARIS_CATALOG")
         or os.getenv("POLARIS_REALM", "teehr"),
-        polaris_credentials=os.getenv("POLARIS_ROOT_CREDENTIALS") or None,
+        client_id=os.getenv("CONTROL_PLANE_CLIENT_ID") or None,
+        client_secret=os.getenv("CONTROL_PLANE_CLIENT_SECRET") or None,
+        polaris_token_url=os.getenv("POLARIS_TOKEN_URL") or None,
         polaris_warehouse=os.getenv("POLARIS_WAREHOUSE") or None,
         system_reader_roles=_csv(os.getenv("SYSTEM_PROJECT_READER_ROLES")),
         system_writer_roles=_csv(os.getenv("SYSTEM_PROJECT_WRITER_ROLES")),
         keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,
         keycloak_realm=os.getenv("KEYCLOAK_REALM", "teehr"),
-        keycloak_admin_user=os.getenv("KEYCLOAK_ADMIN_USER") or None,
-        keycloak_admin_password=os.getenv("KEYCLOAK_ADMIN_PASSWORD") or None,
     )
