@@ -145,7 +145,9 @@ class PolarisAdmin:
         allow_duplicate: bool = False,
         **kwargs,
     ) -> httpx.Response:
-        for attempt in range(1, CONCURRENCY_RETRIES + 1):
+        reauthenticated = False
+        attempt = 1
+        while True:
             try:
                 resp = self._http.request(
                     method, path, headers=self._bearer(), **kwargs
@@ -154,9 +156,16 @@ class PolarisAdmin:
                 raise PolarisError(f"{method} {path}: {exc}") from exc
             if resp.status_code in ok or (allow_duplicate and _is_duplicate(resp)):
                 return resp
+            # A restarted Polaris rejects tokens it issued before: get a new one,
+            # once.
+            if resp.status_code == 401 and not reauthenticated:
+                reauthenticated = True
+                self._token = None
+                continue
             # Polaris asks to be retried when two writers touch the same entity.
             if _is_concurrency_conflict(resp) and attempt < CONCURRENCY_RETRIES:
                 time.sleep(0.2 * attempt)
+                attempt += 1
                 continue
             break
         raise PolarisError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}")

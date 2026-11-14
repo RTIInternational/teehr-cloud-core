@@ -190,3 +190,20 @@ def test_namespace_is_pinned_to_the_project_prefix(fake):
 
 def test_without_warehouse_polaris_default_location_is_reported(fake):
     assert provision(fake.admin(), "flood", OWNER) == "s3://warehouse/flood/"
+
+
+def test_token_rejected_after_polaris_restart_is_renewed_once(fake):
+    admin = fake.admin()
+    admin.ensure_principal_role("before")
+    fake.restart()
+    admin.ensure_principal_role("after")  # would 401 with the cached token
+    assert {"before", "after"} <= fake.principal_roles
+    assert fake.token_requests == 2
+
+
+def test_persistent_401_still_fails(fake):
+    admin = fake.admin()
+    admin.ensure_principal_role("before")
+    fake.handle = lambda request: httpx.Response(401)
+    with pytest.raises(PolarisError, match="401"):
+        admin.ensure_principal_role("after")

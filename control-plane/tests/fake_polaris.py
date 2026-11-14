@@ -31,6 +31,7 @@ class FakePolaris:
         self.principals: set[str] = set()
         self.bindings: dict[str, set[str]] = defaultdict(set)
         self.token_requests = 0
+        self.token = TOKEN  # what the token endpoint issues and requests must carry
         self.fail_paths: set[str] = set()  # path substrings that answer 500
 
     def admin(self) -> PolarisAdmin:
@@ -53,8 +54,10 @@ class FakePolaris:
             return httpx.Response(400, json={"error": "missing realm"})
         if path == "/api/catalog/v1/oauth/tokens":
             self.token_requests += 1
-            return httpx.Response(200, json={"access_token": TOKEN, "expires_in": 3600})
-        if request.headers.get("Authorization") != f"Bearer {TOKEN}":
+            return httpx.Response(
+                200, json={"access_token": self.token, "expires_in": 3600}
+            )
+        if request.headers.get("Authorization") != f"Bearer {self.token}":
             return httpx.Response(401)
         if any(fragment in path for fragment in self.fail_paths):
             return httpx.Response(500, json={"error": "boom"})
@@ -160,6 +163,10 @@ class FakePolaris:
                 return httpx.Response(204)
 
         return httpx.Response(405, json={"error": f"unexpected {method} {path}"})
+
+    def restart(self) -> None:
+        """Like a Polaris restart: tokens issued before it are no longer valid."""
+        self.token = f"{TOKEN}-{self.token_requests}-restarted"
 
     def add_foreign_namespace(
         self, name: str, properties: dict[str, str] | None = None

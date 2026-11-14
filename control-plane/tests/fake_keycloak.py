@@ -22,6 +22,8 @@ class FakeKeycloak:
         self.roles: dict[str, str] = {}  # role name -> id
         self.user_roles: dict[str, set[str]] = defaultdict(set)
         self.fail_paths: set[str] = set()
+        self.token = TOKEN
+        self.token_requests = 0
 
     def admin(self) -> KeycloakAdmin:
         return KeycloakAdmin(
@@ -32,11 +34,18 @@ class FakeKeycloak:
             transport=httpx.MockTransport(lambda request: self.handle(request)),
         )
 
+    def revoke_tokens(self) -> None:
+        """Like a Keycloak restart or session revocation: old tokens stop working."""
+        self.token = f"{TOKEN}-{self.token_requests}-revoked"
+
     def handle(self, request: httpx.Request) -> httpx.Response:
         path, method = request.url.path, request.method
         if path == "/realms/master/protocol/openid-connect/token":
-            return httpx.Response(200, json={"access_token": TOKEN, "expires_in": 60})
-        if request.headers.get("Authorization") != f"Bearer {TOKEN}":
+            self.token_requests += 1
+            return httpx.Response(
+                200, json={"access_token": self.token, "expires_in": 60}
+            )
+        if request.headers.get("Authorization") != f"Bearer {self.token}":
             return httpx.Response(401)
         if any(fragment in path for fragment in self.fail_paths):
             return httpx.Response(500, json={"error": "boom"})

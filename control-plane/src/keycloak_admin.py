@@ -69,12 +69,18 @@ class KeycloakAdmin:
         self, method: str, path: str, ok: tuple[int, ...], **kwargs
     ) -> httpx.Response:
         url = f"/admin/realms/{self.realm}{path}"
-        try:
-            resp = self._http.request(method, url, headers=self._bearer(), **kwargs)
-        except httpx.HTTPError as exc:
-            raise KeycloakError(f"{method} {path}: {exc}") from exc
-        if resp.status_code in ok:
-            return resp
+        for retry in (True, False):
+            try:
+                resp = self._http.request(method, url, headers=self._bearer(), **kwargs)
+            except httpx.HTTPError as exc:
+                raise KeycloakError(f"{method} {path}: {exc}") from exc
+            if resp.status_code in ok:
+                return resp
+            # A revoked or no-longer-valid admin token: get a new one, once.
+            if resp.status_code == 401 and retry:
+                self._token = None
+                continue
+            break
         raise KeycloakError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}")
 
     # --- realm roles ----------------------------------------------------------

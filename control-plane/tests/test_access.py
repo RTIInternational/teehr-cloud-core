@@ -145,3 +145,17 @@ def test_put_member_by_id_takes_username_from_keycloak(client, project, polaris)
     assert resp.status_code == 201
     assert resp.json()["username"] == "bob"
     assert polaris.bindings["bob"] == {READ}
+
+
+def test_access_survives_a_polaris_and_keycloak_restart(
+    client, project, polaris, keycloak
+):
+    polaris.restart()
+    keycloak.revoke_tokens()
+    resp = client.post(
+        "/v1/projects/flood/members",
+        json={"username": "bob", "role": "read"},
+        headers=auth("alice"),
+    )
+    assert resp.status_code == 201
+    assert "teehr-project-flood-read" in polaris.bindings["bob"]
