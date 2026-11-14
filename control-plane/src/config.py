@@ -18,8 +18,11 @@ class Settings:
     keycloak_jwks_url: str | None = None
     # A token is accepted when its `aud` or `azp` is in this list.
     allowed_audiences: tuple[str, ...] = ()
-    # Realm roles that act as platform admins: full rights on every project.
-    admin_roles: tuple[str, ...] = field(default=("admin",))
+    # Realm roles that act as platform admins: full rights on every project. Keep
+    # this to very few people.
+    admin_roles: tuple[str, ...] = field(default=("control-plane-admin",))
+    # Realm roles that can see every project and its members, but change nothing.
+    viewer_roles: tuple[str, ...] = ()
     # Public Keycloak client the /docs page signs in with. None = no login button.
     docs_client_id: str | None = None
     # Polaris management access for provisioning. None = provisioning disabled.
@@ -84,7 +87,9 @@ def get_settings() -> Settings:
         keycloak_issuer_url=issuer,
         keycloak_jwks_url=jwks,
         allowed_audiences=_csv(os.getenv("KEYCLOAK_ALLOWED_AUDIENCES")),
-        admin_roles=_csv(os.getenv("CONTROL_PLANE_ADMIN_ROLES")) or ("admin",),
+        admin_roles=_csv(os.getenv("CONTROL_PLANE_ADMIN_ROLES"))
+        or ("control-plane-admin",),
+        viewer_roles=_csv(os.getenv("CONTROL_PLANE_VIEWER_ROLES")),
         docs_client_id=os.getenv("KEYCLOAK_DOCS_CLIENT_ID") or None,
         polaris_url=os.getenv("POLARIS_URL") or None,
         polaris_realm=os.getenv("POLARIS_REALM", "teehr"),

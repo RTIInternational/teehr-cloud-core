@@ -408,7 +408,7 @@
     },
     "/v1/projects": {
       "get": {
-        "description": "The system projects plus the projects the caller belongs to (every project,\nfor a platform admin).",
+        "description": "The system projects plus the projects the caller belongs to (every project,\nfor a platform admin or viewer).",
         "operationId": "list_projects",
         "responses": {
           "200": {
