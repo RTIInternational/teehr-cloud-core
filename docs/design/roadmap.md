@@ -13,7 +13,8 @@
 
 Ten gated phases, each usable on its own and each unlocking the next. Breaking changes are
 accepted (per the team's call in #133); the one hard constraint is **we do not lose the
-existing warehouse data** — it is preserved and re-homed as the `public` project.
+existing warehouse data** — it is copied into the `public` project in the target data model
+(Phase 7, #165), with the legacy `teehr` namespace kept serving until cutover.
 
 ## The phases
 

@@ -13,10 +13,11 @@ from functools import lru_cache
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.access import AccessError, ensure_project_roles, sync_member
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.keycloak_admin import KeycloakAdmin, KeycloakError
 from src.models import Project, ProjectKind, ProjectStatus, Role
 from src.polaris import PolarisAdmin, PolarisError, provision
@@ -61,6 +62,52 @@ def get_keycloak() -> KeycloakAdmin | None:
 
 UNREADY = (ProjectStatus.PENDING, ProjectStatus.FAILED)
 
+# The system projects (ADR-0001), created and provisioned when the service starts.
+# Every user can read them; only the platform writes them. They start empty: the
+# legacy `teehr` namespace is ported into `public`, not adopted (#165).
+SYSTEM_PROJECTS: dict[str, tuple[str, str]] = {
+    "public": (
+        "Public",
+        "Open input data (observations, model outputs) and shared domain tables.",
+    ),
+    "platform": (
+        "Platform",
+        "Platform-owned evaluations and the tables behind the official dashboards.",
+    ),
+}
+SYSTEM_CREATOR = "system"
+
+
+def system_access(settings: Settings) -> dict[Role, tuple[str, ...]]:
+    """Principal roles that also get each system-project role."""
+    return {
+        Role.READ: settings.system_reader_roles,
+        Role.WRITE: settings.system_writer_roles,
+    }
+
+
+def ensure_system_projects(session: Session) -> None:
+    """Record the system projects that don't exist yet (safe to race)."""
+    existing = set(
+        session.scalars(select(Project.name).where(Project.name.in_(SYSTEM_PROJECTS)))
+    )
+    for name, (display_name, description) in SYSTEM_PROJECTS.items():
+        if name in existing:
+            continue
+        session.add(
+            Project(
+                name=name,
+                display_name=display_name,
+                description=description,
+                kind=ProjectKind.SYSTEM,
+                created_by=SYSTEM_CREATOR,
+            )
+        )
+        try:
+            session.commit()
+        except IntegrityError:  # another worker recorded it first
+            session.rollback()
+
 
 def _grant_members(
     project: Project, polaris: PolarisAdmin, keycloak: KeycloakAdmin
@@ -86,8 +133,12 @@ def provision_project(
     keycloak: KeycloakAdmin | None = None,
     *,
     only_if_unready: bool = False,
+    settings: Settings | None = None,
 ) -> bool:
-    """Provision one tenant project and commit its new status.
+    """Provision one project and commit its new status.
+
+    A system project's roles are also given to the configured system reader and
+    writer roles (``settings``).
 
     Holds a row lock on the project for the duration, so two workers (or a user's
     retry and the startup reconcile) never provision the same project at once and
@@ -105,8 +156,15 @@ def provision_project(
         session.commit()  # release the lock
         return False
     location = project.storage_location
+    also_granted = (
+        system_access(settings or get_settings())
+        if project.kind == ProjectKind.SYSTEM
+        else None
+    )
     try:
-        location = provision(admin, project.name, str(project.id), admin.warehouse)
+        location = provision(
+            admin, project.name, str(project.id), admin.warehouse, also_granted
+        )
         if keycloak is not None:
             _grant_members(project, admin, keycloak)
     except (PolarisError, KeycloakError, AccessError) as exc:
@@ -154,22 +212,36 @@ def apply_member_access(
 
 
 def reconcile(
-    engine: Engine, admin: PolarisAdmin | None, keycloak: KeycloakAdmin | None = None
+    engine: Engine,
+    admin: PolarisAdmin | None,
+    keycloak: KeycloakAdmin | None = None,
+    settings: Settings | None = None,
 ) -> int:
-    """Provision every tenant project that is still pending or failed.
+    """Record and provision the system projects, then provision every tenant
+    project that is still pending or failed.
 
-    Safe to run from several workers at once: each project is claimed under its
-    row lock and skipped if another worker already provisioned it.
+    System projects are provisioned every time, so a change to the system reader
+    or writer roles takes effect on restart. Safe to run from several workers at
+    once: each project is provisioned under its row lock, and a tenant another
+    worker already finished is skipped.
     """
-    if admin is None:
-        return 0
     with Session(engine) as session:
+        ensure_system_projects(session)
+        if admin is None:
+            return 0
         projects = session.scalars(
-            select(Project).where(
-                Project.kind == ProjectKind.TENANT, Project.status.in_(UNREADY)
-            )
+            select(Project)
+            .where((Project.kind == ProjectKind.SYSTEM) | Project.status.in_(UNREADY))
+            .order_by(Project.kind, Project.name)
         ).all()
         return sum(
-            provision_project(session, project, admin, keycloak, only_if_unready=True)
+            provision_project(
+                session,
+                project,
+                admin,
+                keycloak,
+                only_if_unready=project.kind == ProjectKind.TENANT,
+                settings=settings,
+            )
             for project in projects
         )

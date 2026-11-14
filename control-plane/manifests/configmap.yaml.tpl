@@ -20,6 +20,10 @@ data:
   POLARIS_CATALOG: "${var.polaris.defaultRealm}"
   # Each project's namespace is pinned to <warehouse>/<project>/.
   POLARIS_WAREHOUSE: "${var.polaris.catalogWarehouse}"
+  # System projects (public, platform): every user reads (the default-group role),
+  # and the platform's writers (ingest's prefect-polaris service account) write.
+  SYSTEM_PROJECT_READER_ROLES: "teehr-read-only"
+  SYSTEM_PROJECT_WRITER_ROLES: "teehr-read-write"
   # Keycloak admin API, for the realm roles that carry project access.
   KEYCLOAK_ADMIN_URL: "http://keycloak-service:8080"
   KEYCLOAK_REALM: "teehr"

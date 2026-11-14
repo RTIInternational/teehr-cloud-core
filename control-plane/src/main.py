@@ -32,7 +32,7 @@ def _reconcile_on_start() -> None:
         count = reconcile(get_engine(), get_polaris(), get_keycloak())
         if count:
             logger.info(
-                "Startup reconcile: provisioned %d pending/failed project(s)", count
+                "Startup reconcile: provisioned %d project(s) (system + unready)", count
             )
     except Exception:  # never take the service down over this
         logger.exception("Startup reconcile failed")

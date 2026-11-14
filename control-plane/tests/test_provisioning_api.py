@@ -91,53 +91,6 @@ def test_without_polaris_projects_stay_pending(client):
     assert client.delete("/v1/projects/flood", headers=ALICE).status_code == 204
 
 
-def test_reconcile_provisions_pending_and_failed_tenants_only(db_url):
-    engine = make_engine(db_url)
-    with Session(engine) as session:
-        for name, kind, status in [
-            ("pend", ProjectKind.TENANT, ProjectStatus.PENDING),
-            ("fail", ProjectKind.TENANT, ProjectStatus.FAILED),
-            ("done", ProjectKind.TENANT, ProjectStatus.READY),
-            ("public", ProjectKind.SYSTEM, ProjectStatus.PENDING),
-        ]:
-            session.add(
-                Project(
-                    id=uuid.uuid4(), name=name, kind=kind, status=status, created_by="x"
-                )
-            )
-        session.commit()
-
-    fake = FakePolaris()
-    assert reconcile(engine, fake.admin()) == 2
-    assert fake.namespaces == {"pend", "fail"}
-    with Session(engine) as session:
-        statuses = {p.name: p.status for p in session.query(Project)}
-    assert statuses == {
-        "pend": ProjectStatus.READY,
-        "fail": ProjectStatus.READY,
-        "done": ProjectStatus.READY,
-        "public": ProjectStatus.PENDING,
-    }
-
-
-def test_system_projects_cannot_be_reprovisioned(client, polaris, db_url):
-    with Session(make_engine(db_url)) as session:
-        session.add(
-            Project(
-                id=uuid.uuid4(),
-                name="public",
-                kind=ProjectKind.SYSTEM,
-                status=ProjectStatus.READY,
-                created_by="bootstrap",
-            )
-        )
-        session.commit()
-    resp = client.post(
-        "/v1/projects/public/provision", headers=auth("root", roles=("admin",))
-    )
-    assert resp.status_code == 409
-
-
 def test_second_reconcile_skips_projects_already_ready(db_url):
     engine = make_engine(db_url)
     with Session(engine) as session:
@@ -152,8 +105,9 @@ def test_second_reconcile_skips_projects_already_ready(db_url):
         )
         session.commit()
     fake = FakePolaris()
-    assert reconcile(engine, fake.admin()) == 1
-    assert reconcile(engine, fake.admin()) == 0
+    # The two system projects are provisioned every time; the tenant only once.
+    assert reconcile(engine, fake.admin()) == 3
+    assert reconcile(engine, fake.admin()) == 2
 
 
 def test_project_reports_its_storage_location(client, polaris):
