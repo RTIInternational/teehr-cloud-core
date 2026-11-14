@@ -16,12 +16,15 @@ spec:
             set -eu
             S3="aws --endpoint-url $S3_ENDPOINT s3api"
             # create-bucket fails if the bucket exists, so check first.
-            if $S3 head-bucket --bucket warehouse 2>/dev/null; then
-              echo "bucket warehouse already exists"
-            else
-              $S3 create-bucket --bucket warehouse
-              echo "created bucket warehouse"
-            fi
+            # warehouse: the Iceberg warehouse; db-backups: Postgres dumps (#173).
+            for bucket in warehouse db-backups; do
+              if $S3 head-bucket --bucket "$bucket" 2>/dev/null; then
+                echo "bucket $bucket already exists"
+              else
+                $S3 create-bucket --bucket "$bucket"
+                echo "created bucket $bucket"
+              fi
+            done
         env:
         - name: S3_ENDPOINT
           value: http://local-s3:9000

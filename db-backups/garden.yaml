@@ -1,0 +1,161 @@
+# Nightly pg_dump of each in-cluster Postgres database to S3 (#173).
+#
+# Off on a deployment until it sets `dbBackups` in its project variables:
+#   dbBackups:
+#     bucket: <bucket>                 # required
+#     roleArn: <IRSA role ARN>         # AWS: write-only role for the db-backup SA
+#     endpoint: http://local-s3:9000   # non-AWS S3 (RustFS on local)
+#     credentialsSecret: local-s3-secrets   # static keys (accesskey/secretkey), local
+#     schedule: "17 6 * * *"           # optional, UTC
+kind: Build
+type: container
+name: db-backup
+description: Postgres 15 client tools + AWS CLI, with the backup and restore-check scripts
+
+---
+kind: Deploy
+type: kubernetes
+name: db-backups
+description: Nightly pg_dump of each Postgres database to S3
+disabled: ${!(var.dbBackups || false)}
+dependencies:
+  - build.db-backup
+  - deploy.secrets
+variables:
+  databases:
+    - name: app
+      host: app-pg
+      secret: app-db-secrets
+    - name: keycloak
+      host: keycloak-pg
+      secret: keycloak-db-secrets
+    - name: polaris
+      host: polaris-pg
+      secret: polaris-db-secrets
+    - name: prefect
+      host: prefect-pg
+      secret: prefect-db-secrets
+spec:
+  manifests:
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: db-backup
+        annotations:
+          eks.amazonaws.com/role-arn: ${var.dbBackups.roleArn || ''}
+    - $concat:
+        $forEach: ${var.databases}
+        $return:
+          apiVersion: batch/v1
+          kind: CronJob
+          metadata:
+            name: db-backup-${item.value.name}
+            labels:
+              app: db-backup
+              database: ${item.value.name}
+          spec:
+            schedule: ${var.dbBackups.schedule || '17 6 * * *'}
+            timeZone: Etc/UTC
+            concurrencyPolicy: Forbid
+            successfulJobsHistoryLimit: 3
+            failedJobsHistoryLimit: 3
+            jobTemplate:
+              spec:
+                backoffLimit: 2
+                activeDeadlineSeconds: 7200
+                template:
+                  metadata:
+                    labels:
+                      app: db-backup
+                      database: ${item.value.name}
+                  spec:
+                    serviceAccountName: db-backup
+                    restartPolicy: Never
+                    containers:
+                      - name: backup
+                        image: ${actions.build.db-backup.outputs.deploymentImageId}
+                        command: ["backup.sh"]
+                        env:
+                          - name: BACKUP_NAME
+                            value: ${item.value.name}
+                          - name: PGHOST
+                            value: ${item.value.host}
+                          - name: PGPORT
+                            value: "5432"
+                          - name: PGDATABASE
+                            valueFrom:
+                              secretKeyRef: {name: "${item.value.secret}", key: database}
+                          - name: PGUSER
+                            valueFrom:
+                              secretKeyRef: {name: "${item.value.secret}", key: username}
+                          - name: PGPASSWORD
+                            valueFrom:
+                              secretKeyRef: {name: "${item.value.secret}", key: password}
+                          - name: S3_BUCKET
+                            value: ${var.dbBackups.bucket}
+                          - name: S3_PREFIX
+                            value: postgres
+                          - name: S3_ENDPOINT
+                            value: ${var.dbBackups.endpoint || ''}
+                          - name: AWS_DEFAULT_REGION
+                            value: ${var.dbBackups.region || 'us-east-1'}
+                          # Static keys only where configured (local); IRSA on AWS.
+                          - name: AWS_ACCESS_KEY_ID
+                            valueFrom:
+                              secretKeyRef:
+                                name: ${var.dbBackups.credentialsSecret || 'db-backup-static-keys'}
+                                key: accesskey
+                                optional: true
+                          - name: AWS_SECRET_ACCESS_KEY
+                            valueFrom:
+                              secretKeyRef:
+                                name: ${var.dbBackups.credentialsSecret || 'db-backup-static-keys'}
+                                key: secretkey
+                                optional: true
+                        resources:
+                          requests: {cpu: 100m, memory: 256Mi}
+                          limits: {cpu: "1", memory: 1Gi}
+
+---
+kind: Test
+type: container
+name: db-backups-restore
+description: >
+  Dumps every database with backup.sh (as the CronJobs do), then restores each
+  latest dump into a throwaway Postgres in the test pod and checks its table count
+  matches the live database. The live databases are only read.
+disabled: ${!(var.dbBackups || false)}
+environments:
+  - local
+dependencies:
+  - deploy.db-backups
+timeout: 900
+spec:
+  image: ${actions.build.db-backup.outputs.deploymentImageName}:${actions.build.db-backup.version}
+  command: ["bash", "-c", "backup-all.sh && restore-check.sh"]
+  env:
+    BACKUP_NAMES: app keycloak polaris prefect
+    S3_BUCKET: ${var.dbBackups.bucket}
+    S3_PREFIX: postgres
+    S3_ENDPOINT: ${var.dbBackups.endpoint || ''}
+    AWS_DEFAULT_REGION: us-east-1
+    AWS_ACCESS_KEY_ID:
+      secretRef: {name: local-s3-secrets, key: accesskey}
+    AWS_SECRET_ACCESS_KEY:
+      secretRef: {name: local-s3-secrets, key: secretkey}
+    APP_PGHOST: app-pg
+    APP_PGDATABASE: {secretRef: {name: app-db-secrets, key: database}}
+    APP_PGUSER: {secretRef: {name: app-db-secrets, key: username}}
+    APP_PGPASSWORD: {secretRef: {name: app-db-secrets, key: password}}
+    KEYCLOAK_PGHOST: keycloak-pg
+    KEYCLOAK_PGDATABASE: {secretRef: {name: keycloak-db-secrets, key: database}}
+    KEYCLOAK_PGUSER: {secretRef: {name: keycloak-db-secrets, key: username}}
+    KEYCLOAK_PGPASSWORD: {secretRef: {name: keycloak-db-secrets, key: password}}
+    POLARIS_PGHOST: polaris-pg
+    POLARIS_PGDATABASE: {secretRef: {name: polaris-db-secrets, key: database}}
+    POLARIS_PGUSER: {secretRef: {name: polaris-db-secrets, key: username}}
+    POLARIS_PGPASSWORD: {secretRef: {name: polaris-db-secrets, key: password}}
+    PREFECT_PGHOST: prefect-pg
+    PREFECT_PGDATABASE: {secretRef: {name: prefect-db-secrets, key: database}}
+    PREFECT_PGUSER: {secretRef: {name: prefect-db-secrets, key: username}}
+    PREFECT_PGPASSWORD: {secretRef: {name: prefect-db-secrets, key: password}}
