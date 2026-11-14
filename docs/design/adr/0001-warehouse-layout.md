@@ -69,5 +69,9 @@ instantaneous data. See `../warehouse-data-model.md` and ADR-0010.
 - **Amended 2026-11-13:** the system project formerly called `core` is renamed **`public`** (it is
   defined by what it holds — open, world-readable data — and matches VeriRace's name, so portable
   specs mean the same thing on both systems, ADR-0011). A second system project, **`platform`**,
-  is added for platform-owned evaluations and dashboard data. No data moves; this is naming and
+  is added for platform-owned evaluations and dashboard data. This amendment is naming and
   structure only.
+- **Amended 2026-11-13:** `public` and `platform` are **new, empty namespaces** (#156), not the
+  legacy `teehr` namespace renamed or adopted. The existing data is **copied** into `public` in
+  the target data model (#165), and `teehr` keeps serving until cutover, so both exist for a
+  period. The constraint is that no data is lost, not that no data moves.

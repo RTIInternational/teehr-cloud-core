@@ -12,6 +12,7 @@ straight through Polaris's existing ``^teehr-(.+)$`` mapper (#155).
 """
 
 import time
+from collections.abc import Iterable, Mapping
 
 import httpx
 
@@ -315,7 +316,11 @@ def namespace_location(warehouse: str, project: str) -> str:
 
 
 def provision(
-    admin: PolarisAdmin, project: str, owner: str, warehouse: str | None = None
+    admin: PolarisAdmin,
+    project: str,
+    owner: str,
+    warehouse: str | None = None,
+    also_granted: Mapping[Role, Iterable[str]] | None = None,
 ) -> str | None:
     """Create (or complete) a project's namespace, roles and grants. Idempotent.
 
@@ -323,6 +328,9 @@ def provision(
     ``<warehouse>/<project>/``; Polaris keeps the project's tables under it and
     scopes the credentials it vends for them to their own paths. Returns the
     namespace's storage location as Polaris reports it.
+
+    ``also_granted`` gives existing principal roles a project role as well - how
+    system projects reach every user (e.g. ``{Role.READ: ["teehr-read-only"]}``).
 
     Raises :class:`NamespaceTaken` - before any role or grant exists - if a
     namespace of that name already belongs to something else.
@@ -346,6 +354,9 @@ def provision(
         for privilege in ROLE_PRIVILEGES[role]:
             admin.grant_on_namespace(catalog_role, project, privilege)
         admin.assign_catalog_role(principal, catalog_role)
+        for other in (also_granted or {}).get(role, ()):
+            admin.ensure_principal_role(other)
+            admin.assign_catalog_role(other, catalog_role)
     return (current or {}).get("location")
 
 

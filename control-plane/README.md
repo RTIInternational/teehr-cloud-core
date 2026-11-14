@@ -33,6 +33,22 @@ projects are also retried when the service starts.
 - It connects with the Polaris **root** credentials, like the `polaris-bootstrap`
   Job. Replace them with a narrower principal before this runs outside KinD.
 
+## System projects
+
+`public` and `platform` (ADR-0001) are recorded and provisioned every time the
+service starts, as new namespaces under their own prefixes. They start empty: the
+legacy `teehr` namespace is untouched, and its data is copied into `public` later
+(#165).
+
+- **Read**: every user, via `SYSTEM_PROJECT_READER_ROLES` (`teehr-read-only`, the
+  Keycloak default group).
+- **Write**: `SYSTEM_PROJECT_WRITER_ROLES` (`teehr-read-write`: ingest's
+  `prefect-polaris` service account, and whoever writes `teehr` today).
+- Platform admins manage them (edit, members, re-provision); nobody can delete them.
+
+Changing either setting takes effect on the next restart. Removing a role from a
+setting doesn't revoke what it was already given.
+
 ## Membership is data access
 
 Each member gets exactly the role for their membership, in two places, updated as

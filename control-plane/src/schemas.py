@@ -55,7 +55,10 @@ class ProjectOut(BaseModel):
     created_at: datetime
     my_role: Role | None = Field(
         default=None,
-        description="The caller's role (null for a platform admin who isn't a member)",
+        description=(
+            "The caller's role (null if not a member: a platform admin, or anyone "
+            "reading a system project)"
+        ),
     )
 
 

@@ -6,6 +6,8 @@ Access rules:
 - Platform admins (``CONTROL_PLANE_ADMIN_ROLES``) may act on every project.
 - A non-member gets 404, not 403, so project names can't be probed.
 - A project always keeps at least one admin.
+- The system projects (``public``, ``platform``) are readable by everyone, managed
+  by platform admins, and never deleted.
 
 Creating a project records it (``pending``) and then provisions it: its Polaris
 namespace, roles and storage prefix, and data access for its members (``ready``, or
@@ -117,9 +119,13 @@ def _authorize(
     my_role = member.role if member else None
     if identity.has_any_role(settings.admin_roles):
         return project, my_role
-    if my_role is None:
+    if my_role is None and project.kind == ProjectKind.SYSTEM:
+        # Every signed-in user can see and read a system project.
+        if min_role == Role.READ:
+            return project, None
+    elif my_role is None:
         raise _not_found()
-    if my_role.rank < min_role.rank:
+    if my_role is None or my_role.rank < min_role.rank:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires the {min_role.value} role in this project",
@@ -199,11 +205,9 @@ def reprovision_project(
     Also re-applies every member's data access.
     """
     project, my_role = _authorize(session, name, identity, settings, Role.ADMIN)
-    if project.kind == ProjectKind.SYSTEM:
-        raise _conflict("System projects are provisioned at bootstrap")
     if polaris is None:
         raise _unavailable("Provisioning is not configured")
-    provision_project(session, project, polaris, keycloak)
+    provision_project(session, project, polaris, keycloak, settings=settings)
     session.refresh(project)
     return _project_out(project, my_role)
 
@@ -212,7 +216,8 @@ def reprovision_project(
 def list_projects(
     session: SessionDep, identity: IdentityDep, settings: SettingsDep
 ) -> list[ProjectOut]:
-    """Projects the caller belongs to (every project, for a platform admin)."""
+    """The system projects plus the projects the caller belongs to (every project,
+    for a platform admin)."""
     rows = session.execute(
         select(Project, Membership.role)
         .outerjoin(
@@ -223,7 +228,11 @@ def list_projects(
         .order_by(Project.name)
     ).all()
     is_admin = identity.has_any_role(settings.admin_roles)
-    return [_project_out(p, role) for p, role in rows if role is not None or is_admin]
+    return [
+        _project_out(p, role)
+        for p, role in rows
+        if role is not None or is_admin or p.kind == ProjectKind.SYSTEM
+    ]
 
 
 @router.get("/{name}", operation_id="get_project", responses=_errors(401, 404, 503))

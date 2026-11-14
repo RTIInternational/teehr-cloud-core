@@ -30,6 +30,10 @@ class Settings:
     polaris_credentials: str | None = None
     # Catalog warehouse root; each project's namespace is pinned to <root>/<name>/.
     polaris_warehouse: str | None = None
+    # Polaris principal roles given access to every system project (public,
+    # platform): read for every user, write for the platform's writers (ingest).
+    system_reader_roles: tuple[str, ...] = ()
+    system_writer_roles: tuple[str, ...] = ()
     # Keycloak admin API, for the realm roles that carry project access.
     # None = membership isn't turned into data access.
     keycloak_admin_url: str | None = None
@@ -88,6 +92,8 @@ def get_settings() -> Settings:
         or os.getenv("POLARIS_REALM", "teehr"),
         polaris_credentials=os.getenv("POLARIS_ROOT_CREDENTIALS") or None,
         polaris_warehouse=os.getenv("POLARIS_WAREHOUSE") or None,
+        system_reader_roles=_csv(os.getenv("SYSTEM_PROJECT_READER_ROLES")),
+        system_writer_roles=_csv(os.getenv("SYSTEM_PROJECT_WRITER_ROLES")),
         keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,
         keycloak_realm=os.getenv("KEYCLOAK_REALM", "teehr"),
         keycloak_admin_user=os.getenv("KEYCLOAK_ADMIN_USER") or None,
