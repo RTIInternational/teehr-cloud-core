@@ -62,4 +62,7 @@ data:
     polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3","GCS","AZURE","FILE"]
     polaris.features."ALLOW_INSECURE_STORAGE_TYPES"=true
     polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"=${var.polaris.skipCredentialSubscopingIndirection}
+    # DROP TABLE ... PURGE (drop and delete the table's files). Local only for now;
+    # whether remote allows it is part of the access review (#167).
+    polaris.features."DROP_WITH_PURGE_ENABLED"=${environment.name == 'local'}
     polaris.readiness.ignore-severe-issues=true

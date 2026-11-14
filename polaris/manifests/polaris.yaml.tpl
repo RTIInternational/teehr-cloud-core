@@ -28,6 +28,7 @@ spec:
         # alone doesn't restart the pod. Carrying the setting here changes the pod
         # spec when it changes, so the next deploy rolls Polaris onto it.
         teehr.io/skip-credential-subscoping: "${var.polaris.skipCredentialSubscopingIndirection}"
+        teehr.io/drop-with-purge: "${environment.name == 'local'}"
     spec:
       serviceAccountName: polaris
       initContainers:

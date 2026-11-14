@@ -231,3 +231,25 @@ spec:
             cpu: "250m"
           limits:
             memory: 1Gi
+
+---
+kind: Test
+name: control-plane-gate
+description: >
+  Phase 1 gate (#157): projects created through the control-plane API get an
+  isolated namespace and storage prefix; non-members are denied; vended storage
+  credentials reach only the member's own prefix; membership grants and revokes
+  access; system projects are readable by all and written only by ingest.
+dependencies:
+  - deploy.teehr-control-plane
+  - deploy.keycloak-local-users-bootstrap
+  - build.test-scripts
+environments:
+  - local
+timeout: 300
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/control_plane_gate_test.py

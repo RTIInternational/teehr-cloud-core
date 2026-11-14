@@ -3,6 +3,7 @@
 This directory contains **Python-based integration tests** running in KinD for:
 
 - the Polaris + Keycloak + Spark ecosystem (Iceberg access);
+- the project control plane (Phase 1 gate);
 - xpublish-api's Icechunk access rules.
 
 ## Test Files
@@ -13,6 +14,7 @@ This directory contains **Python-based integration tests** running in KinD for:
 - `polaris_roles_test.py` — Validates role-based access control setup
 - `spark_session_auth_test.py` — Validates Spark session creation and write permissions
 - `xpublish_access_test.py` — Validates Icechunk access rules enforced by xpublish-api
+- `control_plane_gate_test.py` — Phase 1 gate (`garden test control-plane-gate`): projects created through the control-plane API get an isolated namespace and storage prefix, non-members are denied, vended credentials reach only the member's own prefix, membership grants and revokes access, and system projects are read-all / ingest-write
 
 ## What These Tests Do
 
