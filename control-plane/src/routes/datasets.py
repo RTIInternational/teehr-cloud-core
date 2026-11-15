@@ -18,6 +18,8 @@ anywhere.
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import pyarrow as pa
+import pyarrow.compute as pc
 from fastapi import (
     APIRouter,
     Depends,
@@ -35,7 +37,15 @@ from sqlalchemy.orm import Session
 
 from src.auth import Identity
 from src.config import Settings
-from src.domains import lookup
+from src.dataset_types import (
+    SERIES,
+    TABLE,
+    TIMESERIES,
+    TYPED,
+    series_columns,
+    timeseries_columns,
+)
+from src.domains import convert, lookup
 from src.errors import APIError
 from src.formats import (
     ARROW_STREAM,
@@ -55,6 +65,7 @@ from src.models import (
     Project,
     ProjectStatus,
     Role,
+    Unit,
     Variable,
 )
 from src.paging import BadCursor, decode_cursor, encode_cursor, fingerprint
@@ -100,8 +111,6 @@ DatasetName = Annotated[
 ]
 
 TOKEN_REFRESH = "token_refresh_required"
-TABLE, TIMESERIES, SERIES = "table", "timeseries", "series"
-TYPED = (TIMESERIES, SERIES)
 
 
 def _dataset(session: Session, project: Project, name: str) -> Dataset:
@@ -293,50 +302,6 @@ def _create_table_dataset(
     _commit_new(session, dataset)
     session.refresh(dataset)
     return DatasetOut.model_validate(dataset)
-
-
-def _col(name: str, type_: str, required: bool, doc: str) -> dict:
-    return {"name": name, "type": type_, "required": required, "doc": doc}
-
-
-def timeseries_columns(
-    optional: list[str], period_form: str, extra: list[dict]
-) -> tuple[list[dict], list[str]]:
-    """A timeseries dataset's columns and key (warehouse data model v1)."""
-    on = set(optional)
-    columns = [_col("series_key", "string", True, "The series a value belongs to")]
-    if "reference_time" in on:
-        columns.append(_col("reference_time", "timestamptz", True, "Issue time"))
-    columns.append(_col("value_time", "timestamptz", True, "When the value applies"))
-    if "member" in on:
-        columns.append(_col("member", "string", True, "Ensemble member"))
-    if "quantile" in on:
-        columns.append(_col("quantile", "decimal(5,4)", True, "Quantile, 0 to 1"))
-    columns.append(_col("value", "float64", False, "Null: a missing value"))
-    if "quality" in on:
-        columns.append(_col("quality", "string", False, "The source's code(s)"))
-    if period_form == "absolute":
-        columns.append(_col("period_start", "timestamptz", True, "Window start"))
-        columns.append(_col("period_end", "timestamptz", True, "Window end"))
-    columns.extend(extra)
-    key = [
-        c
-        for c in ("series_key", "reference_time", "value_time", "member", "quantile")
-        if any(col["name"] == c for col in columns)
-    ]
-    return columns, key
-
-
-def series_columns(attributes: list[dict]) -> list[dict]:
-    """A series table's columns: one row per series_key (ADR-0010)."""
-    return [
-        _col("series_key", "string", True, "Unique series id"),
-        _col("location_key", "string", False, "Where the series is"),
-        _col("location_layer", "string", False, "Layer of location_key"),
-        _col("period", "string", False, "Overrides the dataset's period"),
-        _col("resolution", "string", False, "How often values recur (ISO 8601)"),
-        *attributes,
-    ]
 
 
 def _timeseries_metadata(
@@ -672,8 +637,23 @@ def write_dataset(
             ),
         ),
     ] = None,
+    unit: Annotated[
+        str | None,
+        Query(
+            max_length=64,
+            description=(
+                "Timeseries: the unit of `value` (UCUM, e.g. [cft_i]/s); converted "
+                "to the dataset's unit. Default: the dataset's unit."
+            ),
+        ),
+    ] = None,
 ) -> WriteOut:
-    """Write rows to a dataset, as the caller. One snapshot per request."""
+    """Write rows to a dataset, as the caller. One snapshot per request.
+
+    For a timeseries, values are converted to the dataset's unit, and series keys
+    not yet in its series table are added there first (with the dataset's default
+    layer; existing series rows are left alone).
+    """
     project, my_role = _authorize_dataset_op(
         session, name, identity, settings, Role.WRITE
     )
@@ -689,6 +669,9 @@ def write_dataset(
         raise _unprocessable("upsert needs a dataset with key_columns")
     if filter is not None and mode != "overwrite":
         raise _unprocessable("filter only applies to mode=overwrite")
+    if unit is not None and record.kind != TIMESERIES:
+        raise _unprocessable("unit only applies to timeseries datasets")
+    units = _write_units(session, project, record, unit)
     if timezone is not None:
         try:
             ZoneInfo(timezone)
@@ -708,6 +691,11 @@ def write_dataset(
                     f"{repeated} key values ({', '.join(record.key_columns)}) "
                     "occur more than once in this batch"
                 )
+        if units is not None and units[0].symbol != units[1].symbol:
+            index = data.schema.get_field_index("value")
+            data = data.set_column(
+                index, data.schema.field(index), convert(data["value"], *units)
+            )
     except DataMismatch as exc:
         raise _unprocessable(str(exc)) from exc
     except UnsupportedMediaType as exc:
@@ -715,6 +703,11 @@ def write_dataset(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
         ) from exc
     try:
+        series_added = (
+            _add_series(session, project, record, data, tables, identity)
+            if record.kind == TIMESERIES
+            else None
+        )
         result = tables.write(
             identity.token, project.name, record.name, data, mode, expression
         )
@@ -740,6 +733,8 @@ def write_dataset(
         mode=mode,
         filter=filter,
         rows=data.num_rows,
+        unit=units and units[0].symbol,
+        series_added=series_added,
         snapshot_id=result.snapshot_id,
         written_by=identity.subject,
     )
@@ -747,6 +742,53 @@ def write_dataset(
     session.commit()
     session.refresh(write)
     return WriteOut.model_validate(write)
+
+
+def _write_units(
+    session: Session, project: Project, record: Dataset, unit: str | None
+) -> tuple[Unit, Unit] | None:
+    """(the unit values arrive in, the dataset's unit), for a timeseries."""
+    if record.kind != TIMESERIES:
+        return None
+    canonical = (record.properties or {})["unit"]
+    target = lookup(session, Unit, canonical, project.id)
+    source = lookup(session, Unit, unit, project.id) if unit else target
+    if source is None or target is None:
+        raise _unprocessable(f"unknown unit '{unit or canonical}'")
+    if source.dimension != target.dimension:
+        raise _unprocessable(
+            f"{source.symbol} ({source.dimension}) doesn't convert to "
+            f"{target.symbol} ({target.dimension})"
+        )
+    return source, target
+
+
+def _add_series(
+    session: Session,
+    project: Project,
+    record: Dataset,
+    data,
+    tables: Tables,
+    identity: Identity,
+) -> int:
+    """Add the batch's series keys that the series table doesn't have yet."""
+    properties = record.properties or {}
+    series = session.scalar(
+        select(Dataset).where(
+            Dataset.project_id == project.id,
+            Dataset.name == properties["series_table"],
+        )
+    )
+    if series is None:
+        raise TableMissing(f"series table '{properties['series_table']}'")
+    keys = pc.unique(data["series_key"])
+    rows = {"series_key": keys}
+    if properties.get("location_layer"):
+        rows["location_layer"] = pa.array(
+            [properties["location_layer"]] * len(keys), pa.string()
+        )
+    new = conform(pa.table(rows), series.columns or [])
+    return tables.insert_missing(identity.token, project.name, series.name, new)
 
 
 @router.get(

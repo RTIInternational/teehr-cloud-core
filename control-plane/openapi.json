@@ -1353,6 +1353,18 @@
             "title": "Rows",
             "type": "integer"
           },
+          "series_added": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timeseries: new series keys this write added",
+            "title": "Series Added"
+          },
           "snapshot_id": {
             "anyOf": [
               {
@@ -1364,6 +1376,18 @@
             ],
             "description": "The Iceberg snapshot this write produced (a string: 64-bit id)",
             "title": "Snapshot Id"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timeseries: the unit the values arrived in (stored canonical)",
+            "title": "Unit"
           },
           "written_at": {
             "format": "date-time",
@@ -3017,7 +3041,7 @@
         ]
       },
       "post": {
-        "description": "Write rows to a dataset, as the caller. One snapshot per request.",
+        "description": "Write rows to a dataset, as the caller. One snapshot per request.\n\nFor a timeseries, values are converted to the dataset's unit, and series keys\nnot yet in its series table are added there first (with the dataset's default\nlayer; existing series rows are left alone).",
         "operationId": "write_dataset",
         "parameters": [
           {
@@ -3103,6 +3127,25 @@
               ],
               "description": "IANA time zone (e.g. America/Denver) that times without one are in, for timestamptz columns; they're stored as UTC. Without it, such times are refused.",
               "title": "Timezone"
+            }
+          },
+          {
+            "description": "Timeseries: the unit of `value` (UCUM, e.g. [cft_i]/s); converted to the dataset's unit. Default: the dataset's unit.",
+            "in": "query",
+            "name": "unit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Timeseries: the unit of `value` (UCUM, e.g. [cft_i]/s); converted to the dataset's unit. Default: the dataset's unit.",
+              "title": "Unit"
             }
           }
         ],

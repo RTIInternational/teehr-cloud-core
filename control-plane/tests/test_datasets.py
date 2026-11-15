@@ -51,6 +51,16 @@ class FakeTables:
         self.writes = [*getattr(self, "writes", []), (mode, overwrite_filter, data)]
         return WriteResult(self.snapshot)
 
+    def insert_missing(self, token, namespace, name, data):
+        self.calls.append(("insert_missing", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        self.rows = getattr(self, "rows", {})
+        rows = self.rows.setdefault((namespace, name), {})
+        new = [r for r in data.to_pylist() if r["series_key"] not in rows]
+        rows.update({r["series_key"]: r for r in new})
+        return len(new)
+
     def drop_table(self, token, namespace, name):
         self.calls.append(("drop", token, namespace, name))
         if self.fail_with:
