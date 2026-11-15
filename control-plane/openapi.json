@@ -1,6 +1,49 @@
 {
   "components": {
     "schemas": {
+      "DataPageOut": {
+        "description": "A page of rows (JSON). Arrow and Parquet pages carry ``next_cursor`` and\n``total`` in the ``X-Next-Cursor`` and ``X-Total-Rows`` headers instead.",
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `cursor` for the next page; null on the last page",
+            "title": "Next Cursor"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rows matching the filter (only with count=true)",
+            "title": "Total"
+          }
+        },
+        "required": [
+          "rows",
+          "next_cursor"
+        ],
+        "title": "DataPageOut",
+        "type": "object"
+      },
       "DatasetColumn": {
         "additionalProperties": false,
         "properties": {
@@ -183,7 +226,7 @@
         "type": "object"
       },
       "ErrorOut": {
-        "description": "Every error response (4xx/5xx other than 422) has this shape.",
+        "description": "Every error response: RFC 9457 problem details (``application/problem+json``).",
         "properties": {
           "code": {
             "anyOf": [
@@ -198,27 +241,38 @@
             "title": "Code"
           },
           "detail": {
-            "title": "Detail",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What went wrong",
+            "title": "Detail"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "description": "The HTTP status phrase, e.g. Not Found",
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "Problem type URI",
+            "title": "Type",
             "type": "string"
           }
         },
         "required": [
-          "detail"
+          "title",
+          "status"
         ],
         "title": "ErrorOut",
-        "type": "object"
-      },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
         "type": "object"
       },
       "MemberAdd": {
@@ -497,35 +551,80 @@
         "title": "Role",
         "type": "string"
       },
-      "ValidationError": {
+      "ValidationErrorOut": {
+        "description": "A 422: the request didn't validate; ``errors`` lists every problem.",
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Machine-readable reason where a client can act on it, e.g. `token_refresh_required`",
+            "title": "Code"
           },
-          "input": {
-            "title": "Input"
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What went wrong",
+            "title": "Detail"
           },
-          "loc": {
+          "errors": {
             "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
+              "$ref": "#/components/schemas/ValidationProblem"
             },
-            "title": "Location",
+            "title": "Errors",
             "type": "array"
           },
-          "msg": {
-            "title": "Message",
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "description": "The HTTP status phrase, e.g. Not Found",
+            "title": "Title",
             "type": "string"
           },
           "type": {
-            "title": "Error Type",
+            "default": "about:blank",
+            "description": "Problem type URI",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "errors"
+        ],
+        "title": "ValidationErrorOut",
+        "type": "object"
+      },
+      "ValidationProblem": {
+        "properties": {
+          "loc": {
+            "description": "Where: e.g. body, columns, 0, type",
+            "items": {
+              "type": "string"
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Msg",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
             "type": "string"
           }
         },
@@ -534,7 +633,68 @@
           "msg",
           "type"
         ],
-        "title": "ValidationError",
+        "title": "ValidationProblem",
+        "type": "object"
+      },
+      "WriteOut": {
+        "description": "Lineage for one write through the API.",
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Iceberg snapshot this write produced (a string: 64-bit id)",
+            "title": "Snapshot Id"
+          },
+          "written_at": {
+            "format": "date-time",
+            "title": "Written At",
+            "type": "string"
+          },
+          "written_by": {
+            "title": "Written By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mode",
+          "filter",
+          "rows",
+          "snapshot_id",
+          "written_by",
+          "written_at"
+        ],
+        "title": "WriteOut",
         "type": "object"
       }
     },
@@ -620,7 +780,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -628,9 +788,19 @@
             },
             "description": "Missing or invalid access token"
           },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -675,7 +845,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -685,7 +855,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -695,17 +865,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -748,7 +918,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -758,7 +928,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -768,7 +938,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -778,7 +948,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -788,17 +958,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "502": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -808,7 +978,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -856,7 +1026,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -866,7 +1036,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -876,17 +1046,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -944,7 +1114,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -954,7 +1124,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -964,7 +1134,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -974,17 +1144,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1038,7 +1208,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1048,7 +1218,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1058,17 +1228,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1088,7 +1258,7 @@
         ]
       },
       "post": {
-        "description": "Register a dataset: creates its Iceberg table, as the caller.",
+        "description": "Register a dataset: creates its Iceberg table, as the caller.\n\nDatasets are untyped (`table`) for now, a test path until typed kinds\n(timeseries, ...) exist: only platform admins may register them, unless\nUNTYPED_DATASETS_FOR_MEMBERS is on.",
         "operationId": "create_dataset",
         "parameters": [
           {
@@ -1127,7 +1297,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1137,7 +1307,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1147,7 +1317,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1157,7 +1327,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1167,17 +1337,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "502": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1187,7 +1357,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1243,7 +1413,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1253,7 +1423,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1263,7 +1433,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1273,7 +1443,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1283,17 +1453,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "502": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1303,7 +1473,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1363,7 +1533,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1373,7 +1543,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1383,17 +1553,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1408,6 +1578,582 @@
           }
         ],
         "summary": "Get Dataset",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/v1/projects/{name}/datasets/{dataset}/data": {
+      "get": {
+        "description": "Read a dataset's rows, as the caller, a page at a time.\n\nEvery page of one read sees the same snapshot (the cursor pins it), so writes\nlanding meanwhile don't shift or duplicate rows. For bulk reads use Arrow or\nParquet; large exports belong in jobs.",
+        "operationId": "read_dataset",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Dataset name",
+            "in": "path",
+            "name": "dataset",
+            "required": true,
+            "schema": {
+              "description": "Dataset name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Dataset",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated columns to return (default: all)",
+            "in": "query",
+            "name": "columns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated columns to return (default: all)",
+              "title": "Columns"
+            }
+          },
+          {
+            "description": "Rows to return, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Rows to return, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'",
+              "title": "Filter"
+            }
+          },
+          {
+            "description": "Rows per page (default PAGE_SIZE)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Rows per page (default PAGE_SIZE)",
+              "title": "Limit"
+            }
+          },
+          {
+            "description": "From the previous page's next_cursor",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "From the previous page's next_cursor",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Also count the rows matching the filter",
+            "in": "query",
+            "name": "count",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also count the rows matching the filter",
+              "title": "Count",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataPageOut"
+                }
+              },
+              "application/vnd.apache.arrow.stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/vnd.apache.parquet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A page of rows: JSON by default, or Arrow / Parquet when the Accept header asks. Every page carries X-Snapshot-Id."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor or a page too large)"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Gone: the read's snapshot has expired; start the read again"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read Dataset",
+        "tags": [
+          "datasets"
+        ]
+      },
+      "post": {
+        "description": "Write rows to a dataset, as the caller. One snapshot per request.",
+        "operationId": "write_dataset",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Dataset name",
+            "in": "path",
+            "name": "dataset",
+            "required": true,
+            "schema": {
+              "description": "Dataset name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Dataset",
+              "type": "string"
+            }
+          },
+          {
+            "description": "append (default), or overwrite rows",
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "append",
+              "description": "append (default), or overwrite rows",
+              "enum": [
+                "append",
+                "overwrite"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "description": "overwrite only: replace only rows matching this filter, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'; without it the whole table is replaced",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "overwrite only: replace only rows matching this filter, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'; without it the whole table is replaced",
+              "title": "Filter"
+            }
+          },
+          {
+            "description": "IANA time zone (e.g. America/Denver) that times without one are in, for timestamptz columns; they're stored as UTC. Without it, such times are refused.",
+            "in": "query",
+            "name": "timezone",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "IANA time zone (e.g. America/Denver) that times without one are in, for timestamptz columns; they're stored as UTC. Without it, such times are refused.",
+              "title": "Timezone"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "application/vnd.apache.arrow.stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "application/vnd.apache.parquet": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "application/x-ndjson": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The rows: Arrow IPC stream, Parquet, NDJSON, or a JSON array of objects. JSON is parsed with the declared column types; timestamptz values need a zone offset (Z or +05:00).",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Request body too large"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unsupported request body media type"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Write Dataset",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/v1/projects/{name}/datasets/{dataset}/writes": {
+      "get": {
+        "description": "The dataset's writes through the API, newest first.",
+        "operationId": "list_dataset_writes",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Dataset name",
+            "in": "path",
+            "name": "dataset",
+            "required": true,
+            "schema": {
+              "description": "Dataset name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Dataset",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WriteOut"
+                  },
+                  "title": "Response List Dataset Writes",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List Dataset Writes",
         "tags": [
           "datasets"
         ]
@@ -1447,7 +2193,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1457,7 +2203,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1467,17 +2213,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1546,7 +2292,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1556,7 +2302,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1566,7 +2312,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1576,7 +2322,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1586,17 +2332,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "502": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1606,7 +2352,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1662,7 +2408,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1672,7 +2418,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1682,7 +2428,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1692,7 +2438,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1702,17 +2448,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "502": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1722,7 +2468,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1803,7 +2549,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1813,7 +2559,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1823,7 +2569,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1833,7 +2579,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1843,17 +2589,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "502": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1863,7 +2609,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1914,7 +2660,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1924,7 +2670,7 @@
           },
           "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1934,7 +2680,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1944,7 +2690,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }
@@ -1954,17 +2700,17 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorOut"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid request"
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 }

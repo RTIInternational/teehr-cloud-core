@@ -14,9 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from src import errors
 from src.config import Settings, get_settings
 from src.db import get_engine
-from src.errors import APIError, api_error_handler
 from src.provisioning import get_keycloak, get_polaris, reconcile
 from src.routes import datasets, projects
 
@@ -69,7 +69,7 @@ app = FastAPI(
 )
 app.include_router(projects.router)
 app.include_router(datasets.router)
-app.add_exception_handler(APIError, api_error_handler)
+errors.install(app)
 
 
 def add_keycloak_login(schema: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -110,6 +110,7 @@ def _openapi() -> dict[str, Any]:
             description=app.description,
             routes=app.routes,
         )
+        schema = errors.document(schema)
         app.openapi_schema = add_keycloak_login(schema, get_settings())
     return app.openapi_schema
 

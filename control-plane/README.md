@@ -89,10 +89,43 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
 - `key_columns` (optional) name the columns that identify a row; they become the
   table's Iceberg identifier fields and are what upserts match on (load jobs).
 - Register needs the write role, delete needs admin, list/get need read.
+- Datasets are untyped (`kind: table`) for now: a test path until typed kinds
+  (`timeseries`, ...) come with data model v1. Only platform admins may register
+  them (`UNTYPED_DATASETS_FOR_MEMBERS=true` opens it to project members).
 - Polaris only activates roles the token carries. A token issued before the caller
   joined the project gets `403` with `code: token_refresh_required`: get a new
   token and retry.
+- **Writes**: `POST .../datasets/{dataset}/data` with an Arrow IPC stream
+  (`application/vnd.apache.arrow.stream`), Parquet (`application/vnd.apache.parquet`),
+  NDJSON (`application/x-ndjson`) or a JSON array of objects (`application/json`)
+  body. JSON is parsed with the declared column types: `timestamptz` values need a
+  zone offset (`Z`, `+05:00`), or pass `timezone=America/Denver` to read times
+  without one in that zone (stored as UTC; daylight-saving gaps and repeats are
+  refused). CSV files go through staged upload (Phase 3).
+  `mode=append` (default) or `mode=overwrite`, optionally with a `filter`
+  (e.g. `location_id = 'usgs-01'`) to replace only matching rows. Data is checked
+  against the declared columns (lossless type conversion only; required columns
+  can't be null) and committed as the caller in one snapshot. Bodies are capped
+  (`MAX_WRITE_BYTES`, 64 MiB): bulk loads and upserts go through staged upload and
+  a load job (Phase 3).
+- **Reads**: `GET .../datasets/{dataset}/data`, as the caller, a page at a time:
+  `columns` (comma-separated), `filter` (same syntax as writes), `limit`, `cursor`,
+  `count=true`. JSON `{rows, next_cursor, total}` by default; Arrow or Parquet when
+  `Accept` asks, with `X-Next-Cursor` / `X-Total-Rows` headers. The cursor pins the
+  snapshot the first page read, so a read isn't disturbed by writes landing
+  meanwhile; every page says which in `X-Snapshot-Id`. Pages are capped per format
+  (`MAX_PAGE_ROWS_JSON` 10k, `MAX_PAGE_ROWS_BINARY` 1M). Each page re-scans up to
+  its offset, so deep paging of big tables is slow: bulk reads belong in jobs.
+- **Lineage**: every write records who, when, mode, filter, row count and the
+  Iceberg snapshot; `GET .../datasets/{dataset}/writes` lists them.
 - Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
+
+## Errors
+
+Every error is RFC 9457 problem details (`application/problem+json`):
+`{type, title, status, detail}`, plus `code` where a client can act on it
+(`token_refresh_required`) and, on a 422, `errors` listing every problem
+(`loc`, `msg`, `type`). The same shape as VeriRace's API.
 
 ## Its own identity
 
