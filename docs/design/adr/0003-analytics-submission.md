@@ -1,6 +1,6 @@
 # ADR-0003: Analytics submission — Prefect job runner, inline deferred
 
-- **Status:** Accepted (per #133)
+- **Status:** Accepted (per #133); job runner amended by ADR-0014 (2026-11-15)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0002 (metric engine), spike-1 (identity), spike-4 (cost/weight estimator)
@@ -48,3 +48,8 @@ Guardrails designed in from the start:
   and spike-4.
 - Per-user identity on the job plane depends on spike-1 (identity propagation); its fallback is to
   route per-user reads through this same job plane.
+- **Amended 2026-11-15 (ADR-0014):** work the API starts, evaluation runs included, runs as
+  **Kubernetes Jobs the control plane creates**, not Prefect jobs. Job state lives in the
+  control-plane database; jobs act as the caller through a job grant backed by Keycloak token
+  exchange. Prefect stays for platform- and deployment-owned data flows. The guardrails above
+  (caller identity, per-project limits, admission check) are unchanged.
