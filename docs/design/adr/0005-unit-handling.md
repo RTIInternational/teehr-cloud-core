@@ -69,3 +69,24 @@ metric's unit is not a simple scalar conversion of its inputs' units.
   sources remain first-class. Confirm at ratification. Implementation note: VeriRace carries its own
   UCUM unit registry (no `pint` / `cf-units` dependency); whether we reuse a small registry or a
   UCUM-aware library is an implementation choice, not a standard choice.
+- **Amended 2026-11-15 (data model v1, #182; agreed with VeriRace):**
+  - **Every unit-bearing spec parameter is `{value, unit}`** with a UCUM symbol: contingency
+    thresholds, event and ramp thresholds, and numeric values compared against unit-bearing columns
+    in input filters. Quantile and column-reference thresholds carry no unit. (How a unit is written
+    inside a filter expression is for the shared expression language to define.) This is what makes
+    a spec mean the same on TEEHR and VeriRace, which store units differently.
+  - **Bare numbers are refused**, not deprecated: a unit-bearing parameter without a unit fails
+    spec validation. Existing specs are converted, not grandfathered.
+  - **Thresholds first, filters second:** contingency, event and ramp thresholds take units in the
+    first pass; unit-bearing filter bounds follow once the shared expression language defines them.
+  - **Variables are a registry** (public rows plus project rows), each with a **canonical unit**;
+    values are stored in it. An upload names a registered variable and its unit must convert to the
+    canonical unit (which catches e.g. streamflow in mm). The registry is TEEHR's own: it is not
+    shared with VeriRace, which keeps variables as free text. Specs don't depend on it, since every
+    unit-bearing parameter carries its unit.
+  - **Provenance is per write, not per row:** the unit a write arrived in is recorded once in the
+    write lineage, and the original values follow by reversing the affine conversion. No
+    `original_value` / `original_unit` row columns.
+- **Shared text moved (2026-11-15):** the parts shared with VeriRace are maintained in
+  [teehr-shared-eval-spec](https://github.com/RTIInternational/teehr-shared-eval-spec) and changed
+  there by PR; this ADR keeps the decision and its rationale.

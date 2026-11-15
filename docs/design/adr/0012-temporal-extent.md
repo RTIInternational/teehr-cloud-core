@@ -184,3 +184,6 @@ explicit aggregation first — pairing never does it implicitly. An observation 
   sufficient statistics / sketches still apply per resolved window.
 - Decide generality at ratification — the team may still choose the minimal code domain (enumerated
   seasonal codes only) if the general anchored-window model is judged overkill for the known need.
+- **Shared text moved (2026-11-15):** the parts shared with VeriRace are maintained in
+  [teehr-shared-eval-spec](https://github.com/RTIInternational/teehr-shared-eval-spec) and changed
+  there by PR; this ADR keeps the decision and its rationale.
