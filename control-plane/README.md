@@ -86,6 +86,8 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
 - The API creates and drops tables **as the caller**: their own token goes to
   Polaris (PyIceberg, vended credentials), so Polaris enforces their project role.
   The API never touches project data with its own identity.
+- `key_columns` (optional) name the columns that identify a row; they become the
+  table's Iceberg identifier fields and are what upserts match on (load jobs).
 - Register needs the write role, delete needs admin, list/get need read.
 - Polaris only activates roles the token carries. A token issued before the caller
   joined the project gets `403` with `code: token_refresh_required`: get a new

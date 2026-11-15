@@ -114,6 +114,8 @@ class Dataset(Base):
     description: Mapped[str | None] = mapped_column(Text)
     # [{"name", "type", "required", "doc"}], as declared at registration.
     columns: Mapped[list[dict] | None] = mapped_column(JSON)
+    # Columns that identify a row (Iceberg identifier fields); used by upserts.
+    key_columns: Mapped[list[str] | None] = mapped_column(JSON)
     table_identifier: Mapped[str | None] = mapped_column(String(200))
     created_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(

@@ -137,7 +137,9 @@ def create_dataset(
         )
     columns = [col.model_dump() for col in body.columns]
     try:
-        tables.create_table(identity.token, project.name, body.name, columns)
+        tables.create_table(
+            identity.token, project.name, body.name, columns, body.key_columns
+        )
     except TableForbidden as exc:
         raise _forbidden(project, my_role, Role.WRITE) from exc
     except NamespaceMissing as exc:
@@ -165,6 +167,7 @@ def create_dataset(
         kind=DATASET_KIND,
         description=body.description,
         columns=columns,
+        key_columns=body.key_columns,
         table_identifier=f"{project.name}.{body.name}",
         created_by=identity.subject,
     )

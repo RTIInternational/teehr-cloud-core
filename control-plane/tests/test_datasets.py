@@ -29,8 +29,9 @@ class FakeTables:
         self.calls: list[tuple[str, str, str, str]] = []  # (op, token, ns, name)
         self.fail_with: Exception | None = None
 
-    def create_table(self, token, namespace, name, columns):
+    def create_table(self, token, namespace, name, columns, key_columns=None):
         self.calls.append(("create", token, namespace, name))
+        self.keys = key_columns
         if self.fail_with:
             raise self.fail_with
         if (namespace, name) in self.tables:
@@ -237,3 +238,47 @@ def test_iceberg_schema_maps_declared_columns():
         False,
         "cms",
     )
+
+
+KEYED = [
+    {"name": "location_id", "type": "string", "required": True},
+    {"name": "value_time", "type": "timestamptz", "required": True},
+    {"name": "value", "type": "float64"},
+]
+
+
+def test_key_columns_are_recorded_and_passed_to_the_table(client, tables):
+    resp = register(client, columns=KEYED, key_columns=["location_id", "value_time"])
+    assert resp.status_code == 201
+    assert resp.json()["key_columns"] == ["location_id", "value_time"]
+    assert tables.keys == ["location_id", "value_time"]
+
+
+def test_key_columns_are_optional(client, tables):
+    assert register(client, columns=KEYED).json()["key_columns"] is None
+
+
+@pytest.mark.parametrize(
+    "keys, why",
+    [
+        (["nope"], "not a declared column"),
+        (["value"], "must be required"),
+        (["location_id", "location_id"], "duplicates"),
+    ],
+)
+def test_invalid_key_columns_are_422(client, tables, keys, why):
+    resp = register(client, columns=KEYED, key_columns=keys)
+    assert resp.status_code == 422
+    assert why in resp.text
+    assert tables.calls == []
+
+
+def test_float_key_column_is_422(client, tables):
+    cols = [{"name": "x", "type": "float64", "required": True}]
+    resp = register(client, columns=cols, key_columns=["x"])
+    assert resp.status_code == 422 and "float" in resp.text
+
+
+def test_iceberg_schema_sets_identifier_fields():
+    schema = iceberg_schema(KEYED, ["location_id", "value_time"])
+    assert schema.identifier_field_names() == {"location_id", "value_time"}

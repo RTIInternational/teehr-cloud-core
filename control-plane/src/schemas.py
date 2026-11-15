@@ -8,7 +8,7 @@ ADR-0011). Inputs are strict: an unknown field is an error, never silently dropp
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.models import ProjectKind, ProjectStatus, Role
 
@@ -130,6 +130,15 @@ class DatasetCreate(StrictInput):
     )
     description: str | None = Field(default=None, max_length=2000)
     columns: list[DatasetColumn] = Field(min_length=1, max_length=500)
+    key_columns: list[str] | None = Field(
+        default=None,
+        max_length=10,
+        description=(
+            "Columns that identify a row (e.g. location_id, value_time); used to "
+            "match rows when upserting. Each must be a declared, required column "
+            "and not a float."
+        ),
+    )
 
     @field_validator("columns")
     @classmethod
@@ -142,6 +151,23 @@ class DatasetCreate(StrictInput):
             seen.add(key)
         return columns
 
+    @model_validator(mode="after")
+    def _valid_key_columns(self):
+        if self.key_columns is None:
+            return self
+        if len(set(self.key_columns)) != len(self.key_columns):
+            raise ValueError("key_columns has duplicates")
+        declared = {col.name: col for col in self.columns}
+        for name in self.key_columns:
+            col = declared.get(name)
+            if col is None:
+                raise ValueError(f"key column '{name}' is not a declared column")
+            if not col.required:
+                raise ValueError(f"key column '{name}' must be required")
+            if col.type in ("float32", "float64"):
+                raise ValueError(f"key column '{name}' can't be a float")
+        return self
+
 
 class DatasetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -150,6 +176,7 @@ class DatasetOut(BaseModel):
     kind: str
     description: str | None
     columns: list[DatasetColumn]
+    key_columns: list[str] | None
     table: str = Field(
         validation_alias="table_identifier",
         description="The Iceberg table: <project namespace>.<dataset name>",

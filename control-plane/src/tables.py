@@ -69,25 +69,35 @@ class TableExists(TableError):
     """A table of that name already exists in the namespace."""
 
 
-def iceberg_schema(columns: Iterable[dict]) -> Schema:
-    """The Iceberg schema for declared columns ({name, type, required, doc})."""
-    return Schema(
-        *(
-            NestedField(
-                field_id=i,
-                name=col["name"],
-                field_type=COLUMN_TYPES[col["type"]],
-                required=bool(col.get("required")),
-                doc=col.get("doc"),
-            )
-            for i, col in enumerate(columns, start=1)
+def iceberg_schema(
+    columns: Iterable[dict], key_columns: Iterable[str] | None = None
+) -> Schema:
+    """The Iceberg schema for declared columns ({name, type, required, doc}), with
+    the key columns as its identifier fields."""
+    fields = [
+        NestedField(
+            field_id=i,
+            name=col["name"],
+            field_type=COLUMN_TYPES[col["type"]],
+            required=bool(col.get("required")),
+            doc=col.get("doc"),
         )
+        for i, col in enumerate(columns, start=1)
+    ]
+    ids = {f.name: f.field_id for f in fields}
+    return Schema(
+        *fields, identifier_field_ids=[ids[name] for name in key_columns or ()]
     )
 
 
 class Tables(Protocol):
     def create_table(
-        self, token: str, namespace: str, name: str, columns: list[dict]
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        columns: list[dict],
+        key_columns: list[str] | None = None,
     ) -> str:
         """Create the table as the caller; returns its storage location."""
 
@@ -117,11 +127,16 @@ class PolarisTables:
         return load_catalog("polaris", **self._properties, token=token)
 
     def create_table(
-        self, token: str, namespace: str, name: str, columns: list[dict]
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        columns: list[dict],
+        key_columns: list[str] | None = None,
     ) -> str:
         try:
             table = self._catalog(token).create_table(
-                (namespace, name), schema=iceberg_schema(columns)
+                (namespace, name), schema=iceberg_schema(columns, key_columns)
             )
         except (ForbiddenError, UnauthorizedError) as exc:
             raise TableForbidden(str(exc)) from exc

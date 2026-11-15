@@ -75,6 +75,22 @@
             ],
             "title": "Description"
           },
+          "key_columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Columns that identify a row (e.g. location_id, value_time); used to match rows when upserting. Each must be a declared, required column and not a float.",
+            "title": "Key Columns"
+          },
           "name": {
             "description": "Unique within the project",
             "pattern": "^[a-z][a-z0-9_]{0,59}$",
@@ -125,6 +141,20 @@
             ],
             "title": "Description"
           },
+          "key_columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Columns"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"
@@ -144,6 +174,7 @@
           "kind",
           "description",
           "columns",
+          "key_columns",
           "table",
           "created_by",
           "created_at"
