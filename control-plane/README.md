@@ -145,6 +145,28 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   series it added; `GET .../datasets/{dataset}/writes` lists them.
 - Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
 
+## Uploads (Phase 3)
+
+Files go straight to staging storage, not through the API
+(`/v1/projects/{name}/uploads`, the same contract as VeriRace's uploads):
+
+1. `POST .../uploads` `{filename, kind: timeseries, format?}` returns `upload_url`, a
+   presigned URL (an hour) to `PUT` the file to: one object in the staging bucket
+   (`STAGING_BUCKET`), which only the control plane otherwise reaches.
+2. `POST .../uploads/{id}/inspect` reads the start of the file (a Parquet file's footer
+   and first rows; a CSV's first MiB, every column as text so `01010000` stays
+   `01010000`) and proposes a mapping to the timeseries columns, a dataset name, what
+   each column looks like, and what's still needed (role, variable, unit, statistic;
+   a time zone when times have none; a series key when the file has no key column).
+3. `POST .../uploads/{id}/ingest` confirms the mapping and starts the load as a
+   Kubernetes Job acting as the caller (ADR-0014; next).
+4. `GET .../uploads[/{id}]` lists or shows uploads; `DELETE` removes one and its staged
+   file.
+
+Uploading and inspecting need the write role; listing and reading need read. CSV and
+Parquet, up to `MAX_UPLOAD_BYTES` (5 GiB). Staging is configured on local only until
+the remote bucket and role exist (#171).
+
 ## Domains
 
 `/v1/domains/units`, `/v1/domains/periods` and `/v1/domains/variables` list and

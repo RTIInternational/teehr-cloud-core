@@ -524,3 +524,55 @@ class VariableOut(BaseModel):
     canonical_unit: str
     description: str | None
     project: str | None = Field(description="null for a public row")
+
+
+# --- uploads ------------------------------------------------------------------
+
+
+class UploadCreate(StrictInput):
+    filename: str = Field(
+        min_length=1, max_length=255, pattern=r"^[^/\\]+$", description="No paths"
+    )
+    format: Literal["csv", "parquet"] | None = Field(
+        default=None, description="Default: from the file name's extension"
+    )
+    kind: Literal["timeseries"] = Field(
+        description="What the file holds (layers and crosswalks come later)"
+    )
+
+
+class UploadOut(BaseModel):
+    """An upload: its file, what inspecting found, and its load's outcome."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    filename: str
+    format: str
+    kind: str
+    status: str = Field(
+        description=(
+            "staged | inspected | queued | running | succeeded | failed | cancelled"
+        )
+    )
+    size_bytes: int | None
+    preview: dict | None = Field(
+        description=(
+            "From inspect: columns, sample rows, row count (when known), the proposed "
+            "mapping and dataset, what's still needed, and notes"
+        )
+    )
+    mapping: dict | None
+    dataset: dict | None
+    rows_done: int
+    result: dict | None
+    problems: list[str] | None
+    error: str | None
+    created_by: str
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    upload_url: str | None = Field(
+        default=None, description="Only when created: PUT the file here"
+    )
+    upload_url_expires_at: datetime | None = None

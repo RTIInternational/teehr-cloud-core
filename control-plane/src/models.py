@@ -157,6 +157,50 @@ class DatasetWrite(Base):
     )
 
 
+class UploadStatus(StrEnum):
+    STAGED = "staged"  # created; the file may or may not be there yet
+    INSPECTED = "inspected"  # read, mapping proposed
+    QUEUED = "queued"  # load job accepted
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class Upload(Base):
+    """A file uploaded to staging to be loaded into a dataset (Phase 3)."""
+
+    __tablename__ = "uploads"
+    __table_args__ = (Index("ix_uploads_project_created", "project_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(_fk("projects"))
+    filename: Mapped[str] = mapped_column(String(255))
+    format: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(32))
+    # Where the file is staged: a key in the staging bucket.
+    object_key: Mapped[str] = mapped_column(String(512))
+    status: Mapped[UploadStatus] = mapped_column(
+        _enum(UploadStatus), default=UploadStatus.STAGED
+    )
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    preview: Mapped[dict | None] = mapped_column(JSON)
+    mapping: Mapped[dict | None] = mapped_column(JSON)
+    dataset: Mapped[dict | None] = mapped_column(JSON)
+    rows_done: Mapped[int] = mapped_column(BigInteger, default=0)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    problems: Mapped[list[str] | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 # --- domains ----------------------------------------------------------------
 #
 # Units, periods and variables a dataset's metadata must name. A row with no

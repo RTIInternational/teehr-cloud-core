@@ -44,6 +44,11 @@ OPERATION_IDS = {
     "add_period",
     "list_variables",
     "add_variable",
+    "create_upload",
+    "list_uploads",
+    "get_upload",
+    "inspect_upload",
+    "delete_upload",
 }
 
 

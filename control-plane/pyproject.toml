@@ -19,6 +19,7 @@ dependencies = [
     "httpx>=0.26.0",
     # Iceberg table I/O as the caller (Phase 2); no query engine.
     "pyiceberg[pyarrow,pyiceberg-core]>=0.12,<0.13",
+    "boto3>=1.34",
 ]
 
 [project.optional-dependencies]
