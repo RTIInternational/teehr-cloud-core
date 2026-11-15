@@ -81,11 +81,9 @@ metric's unit is not a simple scalar conversion of its inputs' units.
     first pass; unit-bearing filter bounds follow once the shared expression language defines them.
   - **Variables are a registry** (public rows plus project rows), each with a **canonical unit**;
     values are stored in it. An upload names a registered variable and its unit must convert to the
-    canonical unit (which catches e.g. streamflow in mm). VeriRace adopts the same registry while
-    keeping its as-uploaded storage.
-  - **Shared variable rows are copied**, not read from a shared file: each system carries the
-    agreed public rows in its own migrations (a short list: streamflow, stage, precipitation,
-    temperature, electric load, …), and changes are made in both. Revisit if the list churns.
+    canonical unit (which catches e.g. streamflow in mm). The registry is TEEHR's own: it is not
+    shared with VeriRace, which keeps variables as free text. Specs don't depend on it, since every
+    unit-bearing parameter carries its unit.
   - **Provenance is per write, not per row:** the unit a write arrived in is recorded once in the
     write lineage, and the original values follow by reversing the affine conversion. No
     `original_value` / `original_unit` row columns.

@@ -46,7 +46,7 @@ of its own.
 | --- | --- | --- |
 | **units** | `symbol` (UCUM), `dimension`, `to_si`, `offset` | affine conversion `si = value × to_si + offset` (ADR-0005) |
 | **periods** | `name`, `form`, `length`, `value_time_at`, `start`, `end`, `description` | exactly ADR-0012's table; shared rows `instant`, `hour_starting`, `hour_ending`, `day_starting`, `day_ending` ship fixed in both systems |
-| **variables** | `name`, `canonical_unit`, `description` | the canonical unit is what values of this variable are stored in; shared public rows are copied into both systems' migrations (ADR-0005) |
+| **variables** | `name`, `canonical_unit`, `description` | the canonical unit is what values of this variable are stored in; TEEHR's own, not shared with VeriRace |
 
 Code enums, not tables: `role` (`observed` \| `simulated` \| `forecast`), `statistic`
 (`inst` \| `mean` \| `sum` \| `min` \| `max`), period `form`.
@@ -156,7 +156,7 @@ derived row/run: `run_id`, `spec_version`, `engine_version`, and each input's sn
 | | TEEHR | VeriRace |
 | --- | --- | --- |
 | Stored unit | canonical, converted on write | as uploaded, converted at pairing |
-| Variables | registry with canonical unit | same registry; canonical unit used for validation only |
+| Variables | registry with canonical unit (TEEHR only) | free text |
 | Location layer | per series, dataset default | per dataset |
 | `quantile` type | decimal(5,4) | double (same values at 4 decimal places) |
 
