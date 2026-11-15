@@ -40,3 +40,10 @@ data:
   # access.
   KEYCLOAK_ADMIN_URL: "http://keycloak-service:8080"
   KEYCLOAK_REALM: "teehr"
+  # Upload staging (Phase 3): a bucket only the control plane reaches. Local only
+  # until the remote bucket and IAM role exist (#171); empty = uploads disabled.
+  STAGING_BUCKET: "${environment.name == 'local' ? 'uploads' : ''}"
+  STAGING_S3_ENDPOINT: "${environment.name == 'local' ? 'http://local-s3:9000' : ''}"
+  # Upload URLs are signed for the address clients use: on local, the S3 ingress
+  # (so a laptop can PUT); on AWS, S3 itself.
+  STAGING_S3_PUBLIC_ENDPOINT: "${environment.name == 'local' ? 'https://s3.' + var.hostname : ''}"

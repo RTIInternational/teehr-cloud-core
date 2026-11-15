@@ -73,6 +73,19 @@ spec:
             secretKeyRef:
               name: app-db-secrets
               key: password
+        # Local staging keys (RustFS); absent on AWS, where the default chain applies.
+        - name: STAGING_S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: local-s3-secrets
+              key: accesskey
+              optional: true
+        - name: STAGING_S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: local-s3-secrets
+              key: secretkey
+              optional: true
         # The control plane's own Keycloak client (teehr realm, client credentials).
         # Its token is used for the Keycloak admin API and for Polaris.
         - name: CONTROL_PLANE_CLIENT_SECRET

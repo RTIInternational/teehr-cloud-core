@@ -64,6 +64,18 @@ class Settings:
     # None = membership isn't turned into data access.
     keycloak_admin_url: str | None = None
     keycloak_realm: str = "teehr"
+    # Upload staging (Phase 3): a bucket only the control plane reaches; files are
+    # PUT there with a presigned URL. None = uploads disabled.
+    staging_bucket: str | None = None
+    # S3 endpoint the control plane uses (None: AWS), and the one upload URLs are
+    # signed for, when clients reach storage at another address (local KinD).
+    staging_endpoint: str | None = None
+    staging_public_endpoint: str | None = None
+    # Static keys (local); None: the default chain (IRSA on AWS).
+    staging_access_key: str | None = None
+    staging_secret_key: str | None = None
+    upload_url_ttl_seconds: int = 3600
+    max_upload_bytes: int = 5 * 1024**3
 
     @property
     def oidc_base_url(self) -> str | None:
@@ -135,4 +147,11 @@ def get_settings() -> Settings:
         system_writer_roles=_csv(os.getenv("SYSTEM_PROJECT_WRITER_ROLES")),
         keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,
         keycloak_realm=os.getenv("KEYCLOAK_REALM", "teehr"),
+        staging_bucket=os.getenv("STAGING_BUCKET") or None,
+        staging_endpoint=os.getenv("STAGING_S3_ENDPOINT") or None,
+        staging_public_endpoint=os.getenv("STAGING_S3_PUBLIC_ENDPOINT") or None,
+        staging_access_key=os.getenv("STAGING_S3_ACCESS_KEY") or None,
+        staging_secret_key=os.getenv("STAGING_S3_SECRET_KEY") or None,
+        upload_url_ttl_seconds=int(os.getenv("UPLOAD_URL_TTL_SECONDS") or 3600),
+        max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES") or 5 * 1024**3),
     )

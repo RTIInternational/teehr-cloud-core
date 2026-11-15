@@ -18,6 +18,7 @@ in Keycloak and Polaris immediately. Deleting a project removes its namespace an
 roles first, and refuses while the namespace still holds tables.
 """
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
@@ -30,7 +31,15 @@ from src.auth import Identity, get_identity
 from src.config import Settings, get_settings
 from src.db import get_session
 from src.keycloak_admin import KeycloakAdmin, KeycloakError
-from src.models import Membership, Project, ProjectKind, ProjectStatus, Role
+from src.models import (
+    Membership,
+    Project,
+    ProjectKind,
+    ProjectStatus,
+    Role,
+    Upload,
+    UploadStatus,
+)
 from src.polaris import NamespaceNotEmpty, PolarisAdmin, PolarisError, deprovision
 from src.provisioning import (
     apply_member_access,
@@ -50,6 +59,9 @@ from src.schemas import (
     ProjectUpdate,
     ValidationErrorOut,
 )
+from src.staging import Staging, get_staging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"])
 
@@ -293,10 +305,19 @@ def delete_project(
     settings: SettingsDep,
     polaris: PolarisDep,
     keycloak: KeycloakDep,
+    staging: Annotated[Staging | None, Depends(get_staging)],
 ) -> Response:
     project, _ = _authorize(session, name, identity, settings, Role.ADMIN)
     if project.kind == ProjectKind.SYSTEM:
         raise _conflict("System projects cannot be deleted")
+    loading = session.scalar(
+        select(Upload.id).where(
+            Upload.project_id == project.id,
+            Upload.status.in_((UploadStatus.QUEUED, UploadStatus.RUNNING)),
+        )
+    )
+    if loading is not None:
+        raise _conflict("An upload is loading; wait for it or cancel it first")
     if polaris is not None:
         try:
             # Drops the namespace (only if empty) and the Polaris roles, which
@@ -316,6 +337,13 @@ def delete_project(
     elif project.status != ProjectStatus.PENDING:
         # It may own Polaris resources we can't reach to remove.
         raise _unavailable("Provisioning is not configured")
+    if staging is not None:
+        # Its staged upload files. Best effort: keys are unique per upload, and
+        # the bucket's expiry removes anything left.
+        try:
+            staging.delete_prefix(f"{project.name}/")
+        except Exception:
+            logger.warning("couldn't remove %s's staged uploads", project.name)
     session.delete(project)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
