@@ -1,9 +1,202 @@
 {
   "components": {
     "schemas": {
+      "DatasetColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "doc": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc"
+          },
+          "name": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "default": false,
+            "description": "Values may not be null",
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "int32",
+              "int64",
+              "float32",
+              "float64",
+              "boolean",
+              "date",
+              "timestamp",
+              "timestamptz",
+              "binary"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "DatasetColumn",
+        "type": "object"
+      },
+      "DatasetCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetColumn"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Columns",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "key_columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Columns that identify a row (e.g. location_id, value_time); used to match rows when upserting. Each must be a declared, required column and not a float.",
+            "title": "Key Columns"
+          },
+          "name": {
+            "description": "Unique within the project",
+            "pattern": "^[a-z][a-z0-9_]{0,59}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "columns"
+        ],
+        "title": "DatasetCreate",
+        "type": "object"
+      },
+      "DatasetOut": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetColumn"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "key_columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Columns"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "table": {
+            "description": "The Iceberg table: <project namespace>.<dataset name>",
+            "title": "Table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "description",
+          "columns",
+          "key_columns",
+          "table",
+          "created_by",
+          "created_at"
+        ],
+        "title": "DatasetOut",
+        "type": "object"
+      },
       "ErrorOut": {
         "description": "Every error response (4xx/5xx other than 422) has this shape.",
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Machine-readable reason where a client can act on it, e.g. `token_refresh_required`",
+            "title": "Code"
+          },
           "detail": {
             "title": "Detail",
             "type": "string"
@@ -354,7 +547,7 @@
     }
   },
   "info": {
-    "description": "Projects and membership. Use **Authorize** to sign in with Keycloak, or paste an access token under BearerAuth.",
+    "description": "Projects, membership and datasets. Use **Authorize** to sign in with Keycloak, or paste an access token under BearerAuth.",
     "title": "TEEHR control plane",
     "version": "0.1.0"
   },
@@ -808,6 +1001,415 @@
         "summary": "Update Project",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/v1/projects/{name}/datasets": {
+      "get": {
+        "operationId": "list_datasets",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DatasetOut"
+                  },
+                  "title": "Response List Datasets",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List Datasets",
+        "tags": [
+          "datasets"
+        ]
+      },
+      "post": {
+        "description": "Register a dataset: creates its Iceberg table, as the caller.",
+        "operationId": "create_dataset",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create Dataset",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/v1/projects/{name}/datasets/{dataset}": {
+      "delete": {
+        "description": "Delete a dataset: drops its table and data files, as the caller.",
+        "operationId": "delete_dataset",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Dataset name",
+            "in": "path",
+            "name": "dataset",
+            "required": true,
+            "schema": {
+              "description": "Dataset name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Dataset",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete Dataset",
+        "tags": [
+          "datasets"
+        ]
+      },
+      "get": {
+        "operationId": "get_dataset",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Dataset name",
+            "in": "path",
+            "name": "dataset",
+            "required": true,
+            "schema": {
+              "description": "Dataset name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Dataset",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Dataset",
+        "tags": [
+          "datasets"
         ]
       }
     },

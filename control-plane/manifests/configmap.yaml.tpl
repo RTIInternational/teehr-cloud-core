@@ -27,6 +27,11 @@ data:
   POLARIS_CATALOG: "${var.polaris.defaultRealm}"
   # Each project's namespace is pinned to <warehouse>/<project>/.
   POLARIS_WAREHOUSE: "${var.polaris.catalogWarehouse}"
+  # Object storage as Polaris's vended credentials reach it (dataset I/O as the
+  # caller): RustFS on local.
+  STORAGE_S3_ENDPOINT: "${var.polaris.catalogS3Endpoint}"
+  STORAGE_S3_REGION: "${var.polaris.catalogS3Region}"
+  STORAGE_S3_PATH_STYLE: "${var.polaris.catalogS3PathStyleAccess}"
   # System projects (public, platform): every user reads (the default-group role);
   # only ingest's prefect-polaris service account writes.
   SYSTEM_PROJECT_READER_ROLES: "teehr-read-only"

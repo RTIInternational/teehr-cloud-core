@@ -16,8 +16,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.config import Settings, get_settings
 from src.db import get_engine
+from src.errors import APIError, api_error_handler
 from src.provisioning import get_keycloak, get_polaris, reconcile
-from src.routes import projects
+from src.routes import datasets, projects
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
@@ -60,13 +61,15 @@ app = FastAPI(
     title="TEEHR control plane",
     version="0.1.0",
     description=(
-        "Projects and membership. Use **Authorize** to sign in with Keycloak, "
+        "Projects, membership and datasets. Use **Authorize** to sign in with Keycloak, "
         "or paste an access token under BearerAuth."
     ),
     swagger_ui_init_oauth=_swagger_oauth(get_settings()),
     lifespan=lifespan,
 )
 app.include_router(projects.router)
+app.include_router(datasets.router)
+app.add_exception_handler(APIError, api_error_handler)
 
 
 def add_keycloak_login(schema: dict[str, Any], settings: Settings) -> dict[str, Any]:

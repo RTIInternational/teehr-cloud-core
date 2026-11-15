@@ -17,6 +17,8 @@ dependencies = [
     "psycopg[binary]>=3.1.18",
     "PyJWT[crypto]>=2.10.0",
     "httpx>=0.26.0",
+    # Iceberg table I/O as the caller (Phase 2); no query engine.
+    "pyiceberg[pyarrow]>=0.12,<0.13",
 ]
 
 [project.optional-dependencies]
