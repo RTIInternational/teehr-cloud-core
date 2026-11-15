@@ -61,6 +61,20 @@ class FakeTables:
         rows.update({r["series_key"]: r for r in new})
         return len(new)
 
+    def merge(self, token, namespace, name, data, key_columns, provided):
+        self.calls.append(("merge", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        self.rows = getattr(self, "rows", {})
+        rows = self.rows.setdefault((namespace, name), {})
+        for row in data.to_pylist():
+            key = tuple(row[k] for k in key_columns)
+            key = key[0] if len(key) == 1 else key
+            current = rows.get(key)
+            rows[key] = {**current, **{c: row[c] for c in provided}} if current else row
+        self.merged = (key_columns, provided, data)
+        return self.write(token, namespace, name, data, "upsert")
+
     def drop_table(self, token, namespace, name):
         self.calls.append(("drop", token, namespace, name))
         if self.fail_with:

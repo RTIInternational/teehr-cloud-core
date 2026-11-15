@@ -199,6 +199,14 @@ def write_read_gate(p):
 
     r = write("user", path, rows_for("usgs-01", range(12), 0.0))
     check("an upsert replaces 12 values", r.status_code == 201, str(r.status_code))
+    r = write(
+        "user", path, [{"series_key": "usgs-01", "value_time": "2026-01-01T00:00:00Z"}]
+    )
+    check(
+        "a write missing a column is refused",
+        r.status_code == 422 and "missing: value" in r.text,
+        f"{r.status_code} {r.text[:120]}",
+    )
     r = write("user", path, rows_for("usgs-02", range(24), 50.0))
     check("a new series is added", r.ok and r.json().get("series_added") == 1)
     full = api("user", "GET", path, params={"limit": 1000, "count": "true"}).json()
@@ -228,6 +236,11 @@ def write_read_gate(p):
     check(
         "later writes leave series attributes alone",
         series.get("usgs-01", {}).get("basin") == "upper",
+        series.get("usgs-01"),
+    )
+    check(
+        "an attribute write keeps the columns it left out",
+        series.get("usgs-01", {}).get("location_layer") == "usgs_gauges",
         series.get("usgs-01"),
     )
     check(

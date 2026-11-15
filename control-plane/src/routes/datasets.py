@@ -610,8 +610,10 @@ def write_dataset(
         Query(
             description=(
                 "upsert (replace rows with the same key, add the rest; the default "
-                "for timeseries and series tables), append (the default for "
-                "untyped datasets; not allowed on typed ones), or overwrite"
+                "for timeseries and series tables; on a series table, columns "
+                "left out keep their values), append (the default for untyped "
+                "datasets; not allowed on typed ones), or overwrite. Timeseries "
+                "writes must send every column (null where there's no value)."
             )
         ),
     ] = None,
@@ -682,6 +684,16 @@ def write_dataset(
         data = decode(*payload, columns)
         if data.num_rows == 0:
             raise _unprocessable("No rows to write")
+        provided = list(data.column_names)
+        if record.kind == TIMESERIES:
+            # A timeseries row is a whole record from its source: leaving a column
+            # out would null it (e.g. wipe a quality code), so it's refused.
+            absent = [c["name"] for c in columns if c["name"] not in provided]
+            if absent:
+                raise DataMismatch(
+                    f"send every column of the dataset; missing: {', '.join(absent)}"
+                    " (null where there's no value)"
+                )
         data = conform(data, columns, timezone)
         expression = parse_filter(filter, columns) if filter else None
         if mode == "upsert" or typed:
@@ -708,9 +720,21 @@ def write_dataset(
             if record.kind == TIMESERIES
             else None
         )
-        result = tables.write(
-            identity.token, project.name, record.name, data, mode, expression
-        )
+        if record.kind == SERIES and mode == "upsert":
+            # Series rows are attributes filled in a piece at a time: columns
+            # left out keep their current values.
+            result = tables.merge(
+                identity.token,
+                project.name,
+                record.name,
+                data,
+                record.key_columns or [],
+                provided,
+            )
+        else:
+            result = tables.write(
+                identity.token, project.name, record.name, data, mode, expression
+            )
     except TableForbidden as exc:
         raise _forbidden(project, my_role, Role.WRITE) from exc
     except TableMissing as exc:

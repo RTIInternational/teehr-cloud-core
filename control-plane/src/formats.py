@@ -66,13 +66,19 @@ def decode(media_type: str, body: bytes, columns: list[dict]) -> pa.Table:
                 if not rows:
                     return pa.table({})
                 body = "\n".join(json.dumps(r) for r in rows).encode()
-            return pjson.read_json(
+            else:
+                rows = [json.loads(line) for line in body.splitlines() if line.strip()]
+            sent = set().union(*(r.keys() for r in rows if isinstance(r, dict)))
+            table = pjson.read_json(
                 io.BytesIO(body),
                 parse_options=pjson.ParseOptions(
                     explicit_schema=_text_types(columns),
                     unexpected_field_behavior="error",
                 ),
             )
+            # The reader adds every declared column; keep only those sent, so a
+            # column left out is known to be left out (not sent as nulls).
+            return table.select([c for c in table.column_names if c in sent])
     except DataMismatch:
         raise
     except (pa.ArrowInvalid, OSError, ValueError) as exc:
