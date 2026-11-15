@@ -78,6 +78,9 @@ def client(db_url):
         keycloak_issuer_url=ISSUER,
         allowed_audiences=AUDIENCES,
         admin_roles=(ADMIN_ROLE,),
+        # Most tests register datasets as members; the default (off) is tested
+        # in test_datasets.
+        untyped_datasets_for_members=True,
     )
     verifier = TokenVerifier(ISSUER, AUDIENCES, lambda _token: _KEY.public_key())
     app.dependency_overrides[get_engine] = lambda: engine

@@ -44,6 +44,18 @@ class Settings:
     storage_endpoint: str | None = None
     storage_region: str = "us-east-1"
     storage_path_style: bool = False
+    # Largest request body a write through the API accepts; bigger loads go through
+    # staged upload and a load job (Phase 3).
+    # Untyped (`table`) datasets are a test path until typed kinds exist (data
+    # model v1): only platform admins may register them unless this is on.
+    untyped_datasets_for_members: bool = False
+    max_write_bytes: int = 64 * 1024 * 1024
+    # Reads through the API: rows per page by default, and the most a page may
+    # hold per format (JSON is far heavier than Arrow/Parquet). Bulk reads belong
+    # in jobs (Phase 5).
+    page_size: int = 1000
+    max_page_rows_json: int = 10_000
+    max_page_rows_binary: int = 1_000_000
     # Polaris principal roles given access to every system project (public,
     # platform): read for every user, write for the platform's writers (ingest).
     system_reader_roles: tuple[str, ...] = ()
@@ -111,6 +123,14 @@ def get_settings() -> Settings:
         storage_endpoint=os.getenv("STORAGE_S3_ENDPOINT") or None,
         storage_region=os.getenv("STORAGE_S3_REGION") or "us-east-1",
         storage_path_style=os.getenv("STORAGE_S3_PATH_STYLE", "").lower() == "true",
+        untyped_datasets_for_members=os.getenv(
+            "UNTYPED_DATASETS_FOR_MEMBERS", ""
+        ).lower()
+        == "true",
+        max_write_bytes=int(os.getenv("MAX_WRITE_BYTES") or 64 * 1024 * 1024),
+        page_size=int(os.getenv("PAGE_SIZE") or 1000),
+        max_page_rows_json=int(os.getenv("MAX_PAGE_ROWS_JSON") or 10_000),
+        max_page_rows_binary=int(os.getenv("MAX_PAGE_ROWS_BINARY") or 1_000_000),
         system_reader_roles=_csv(os.getenv("SYSTEM_PROJECT_READER_ROLES")),
         system_writer_roles=_csv(os.getenv("SYSTEM_PROJECT_WRITER_ROLES")),
         keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,

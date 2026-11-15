@@ -35,6 +35,9 @@ OPERATION_IDS = {
     "list_datasets",
     "get_dataset",
     "delete_dataset",
+    "write_dataset",
+    "list_dataset_writes",
+    "read_dataset",
 }
 
 
@@ -91,9 +94,11 @@ def test_every_api_operation_documents_its_errors():
         responses = op["responses"]
         assert "401" in responses, f"{method} {path} doesn't document 401"
         for code, body in responses.items():
-            if code.startswith(("4", "5")) and code != "422":
-                ref = body["content"]["application/json"]["schema"]["$ref"]
-                assert ref.endswith("/ErrorOut"), f"{method} {path} {code}"
+            if code.startswith(("4", "5")):
+                assert list(body["content"]) == ["application/problem+json"]
+                ref = body["content"]["application/problem+json"]["schema"]["$ref"]
+                want = "/ValidationErrorOut" if code == "422" else "/ErrorOut"
+                assert ref.endswith(want), f"{method} {path} {code}"
 
 
 def test_published_spec_matches_snapshot():
@@ -105,3 +110,44 @@ def test_published_spec_matches_snapshot():
         "The API contract changed. If deliberate, regenerate with "
         "UPDATE_OPENAPI=1 and review the openapi.json diff."
     )
+
+
+def test_errors_are_problem_details(client):
+    resp = client.get("/v1/projects/nope", headers=ALICE)
+    assert resp.status_code == 404
+    assert resp.headers["content-type"] == "application/problem+json"
+    assert resp.json() == {
+        "type": "about:blank",
+        "title": "Not Found",
+        "status": 404,
+        "detail": "Project not found",
+    }
+
+
+def test_validation_errors_list_every_problem(client):
+    resp = client.post(
+        "/v1/projects", json={"name": "Bad Name", "extra": 1}, headers=ALICE
+    )
+    assert resp.status_code == 422
+    assert resp.headers["content-type"] == "application/problem+json"
+    body = resp.json()
+    assert body["title"] == "Unprocessable Content" and body["status"] == 422
+    locs = {tuple(e["loc"]) for e in body["errors"]}
+    assert {("body", "name"), ("body", "extra")} <= locs
+
+
+def test_unauthenticated_is_a_problem_with_www_authenticate(client):
+    resp = client.get("/v1/projects")
+    assert resp.status_code == 401
+    assert resp.headers["www-authenticate"] == "Bearer"
+    assert resp.json()["title"] == "Unauthorized"
+
+
+def test_titles_dont_depend_on_the_python_version():
+    """Python 3.12 calls 422 "Unprocessable Entity"; the API always says Content."""
+    import json
+
+    from src.errors import problem
+
+    for status, title in ((422, "Unprocessable Content"), (413, "Content Too Large")):
+        assert json.loads(problem(status).body)["title"] == title

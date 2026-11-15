@@ -5,6 +5,7 @@ pinned by a snapshot test), which is what a CLI or SDK is built from (ADR-0007,
 ADR-0011). Inputs are strict: an unknown field is an error, never silently dropped.
 """
 
+import uuid
 from datetime import datetime
 from typing import Literal
 
@@ -88,9 +89,12 @@ class MemberOut(BaseModel):
 
 
 class ErrorOut(BaseModel):
-    """Every error response (4xx/5xx other than 422) has this shape."""
+    """Every error response: RFC 9457 problem details (``application/problem+json``)."""
 
-    detail: str
+    type: str = Field(default="about:blank", description="Problem type URI")
+    title: str = Field(description="The HTTP status phrase, e.g. Not Found")
+    status: int
+    detail: str | None = Field(default=None, description="What went wrong")
     code: str | None = Field(
         default=None,
         description=(
@@ -98,6 +102,18 @@ class ErrorOut(BaseModel):
             "`token_refresh_required`"
         ),
     )
+
+
+class ValidationProblem(BaseModel):
+    loc: list[str] = Field(description="Where: e.g. body, columns, 0, type")
+    msg: str
+    type: str
+
+
+class ValidationErrorOut(ErrorOut):
+    """A 422: the request didn't validate; ``errors`` lists every problem."""
+
+    errors: list[ValidationProblem]
 
 
 # --- datasets ---------------------------------------------------------------
@@ -183,3 +199,37 @@ class DatasetOut(BaseModel):
     )
     created_by: str | None
     created_at: datetime
+
+
+class WriteOut(BaseModel):
+    """Lineage for one write through the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    mode: str
+    filter: str | None
+    rows: int
+    snapshot_id: str | None = Field(
+        description="The Iceberg snapshot this write produced (a string: 64-bit id)"
+    )
+    written_by: str
+    written_at: datetime
+
+    @field_validator("snapshot_id", mode="before")
+    @classmethod
+    def _snapshot_as_string(cls, value):
+        return None if value is None else str(value)
+
+
+class DataPageOut(BaseModel):
+    """A page of rows (JSON). Arrow and Parquet pages carry ``next_cursor`` and
+    ``total`` in the ``X-Next-Cursor`` and ``X-Total-Rows`` headers instead."""
+
+    rows: list[dict]
+    next_cursor: str | None = Field(
+        description="Pass as `cursor` for the next page; null on the last page"
+    )
+    total: int | None = Field(
+        default=None, description="Rows matching the filter (only with count=true)"
+    )

@@ -1,14 +1,16 @@
 """Control-plane tables (all in the ``control_plane`` schema)."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -120,6 +122,29 @@ class Dataset(Base):
     created_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DatasetWrite(Base):
+    """Lineage for one write through the API."""
+
+    __tablename__ = "dataset_writes"
+    __table_args__ = (
+        Index("ix_dataset_writes_dataset_written_at", "dataset_id", "written_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(_fk("datasets"))
+    mode: Mapped[str] = mapped_column(String(16))
+    filter: Mapped[str | None] = mapped_column(Text)
+    rows: Mapped[int] = mapped_column(BigInteger)
+    snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
+    written_by: Mapped[str] = mapped_column(String(255))
+    # Set here (microseconds) so quick successive writes keep their order.
+    written_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
     )
 
 

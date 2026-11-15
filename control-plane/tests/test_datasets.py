@@ -9,6 +9,7 @@ from src.tables import (
     TableError,
     TableExists,
     TableForbidden,
+    WriteResult,
     get_tables,
     iceberg_schema,
 )
@@ -38,6 +39,14 @@ class FakeTables:
             raise TableExists(name)
         self.tables[(namespace, name)] = columns
         return f"s3://warehouse/{namespace}/{name}"
+
+    def write(self, token, namespace, name, data, mode, overwrite_filter=None):
+        self.calls.append(("write", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        self.snapshot = getattr(self, "snapshot", 9_000_000_000_000_000_000) + 1
+        self.writes = [*getattr(self, "writes", []), (mode, overwrite_filter, data)]
+        return WriteResult(self.snapshot)
 
     def drop_table(self, token, namespace, name):
         self.calls.append(("drop", token, namespace, name))
@@ -159,7 +168,7 @@ def test_platform_admin_refused_by_catalog_gets_no_refresh_code(client, tables):
     tables.fail_with = TableForbidden("no grants")
     resp = register(client, headers=ROOT)
     assert resp.status_code == 403
-    assert resp.json()["code"] is None
+    assert "code" not in resp.json()
 
 
 @pytest.mark.parametrize(
@@ -282,3 +291,19 @@ def test_float_key_column_is_422(client, tables):
 def test_iceberg_schema_sets_identifier_fields():
     schema = iceberg_schema(KEYED, ["location_id", "value_time"])
     assert schema.identifier_field_names() == {"location_id", "value_time"}
+
+
+def test_untyped_datasets_are_admin_only_by_default(client, tables):
+    import dataclasses
+
+    from src.config import get_settings
+
+    strict = dataclasses.replace(
+        app.dependency_overrides[get_settings](), untyped_datasets_for_members=False
+    )
+    app.dependency_overrides[get_settings] = lambda: strict
+    resp = register(client)  # alice: project admin, not platform admin
+    assert resp.status_code == 403
+    assert "platform admins" in resp.json()["detail"]
+    assert tables.calls == []
+    assert register(client, headers=ROOT).status_code == 201

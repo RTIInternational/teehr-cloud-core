@@ -48,6 +48,7 @@ from src.schemas import (
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
+    ValidationErrorOut,
 )
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"])
@@ -64,18 +65,25 @@ ProjectName = Annotated[
 Subject = Annotated[str, Path(max_length=255, description="Keycloak user id")]
 
 _ERROR_TEXT = {
+    400: "Bad request (e.g. an invalid cursor or a page too large)",
     401: "Missing or invalid access token",
     403: "Signed in, but without the project role this needs",
     404: "No such project (or the caller isn't a member), member or user",
     409: "Conflicts with the project's current state",
+    410: "Gone: the read's snapshot has expired; start the read again",
+    413: "Request body too large",
+    415: "Unsupported request body media type",
     502: "A Keycloak or Polaris call failed",
     503: "Provisioning or user lookup isn't configured, or Keycloak is down",
 }
 
 
 def _errors(*codes: int) -> dict:
-    """OpenAPI ``responses`` entry documenting these error codes."""
-    return {c: {"model": ErrorOut, "description": _ERROR_TEXT[c]} for c in codes}
+    """OpenAPI ``responses`` entry documenting these error codes (and the 422 every
+    route can return), all as problem details."""
+    responses = {c: {"model": ErrorOut, "description": _ERROR_TEXT[c]} for c in codes}
+    responses[422] = {"model": ValidationErrorOut, "description": "Invalid request"}
+    return responses
 
 
 def _not_found() -> HTTPException:
