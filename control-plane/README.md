@@ -165,7 +165,8 @@ Files go straight to staging storage, not through the API
 
 Uploading and inspecting need the write role; listing and reading need read. CSV and
 Parquet, up to `MAX_UPLOAD_BYTES` (5 GiB). Staging is configured on local only until
-the remote bucket and role exist (#171).
+the remote bucket and role exist (#171). Files are staged under `<project>/<upload id>/`; deleting a
+project removes its staged files (and is refused while one of its uploads is loading).
 
 ## Domains
 

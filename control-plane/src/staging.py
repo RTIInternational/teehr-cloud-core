@@ -39,6 +39,9 @@ class Staging(Protocol):
     def delete(self, key: str) -> None:
         """Remove the object; no error if it's gone."""
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Remove every object under ``prefix``; returns how many."""
+
 
 class S3Staging:
     """:class:`Staging` on an S3 bucket."""
@@ -107,6 +110,18 @@ class S3Staging:
 
     def delete(self, key: str) -> None:
         self._s3.delete_object(Bucket=self.bucket, Key=key)
+
+    def delete_prefix(self, prefix: str) -> int:
+        removed = 0
+        pages = self._s3.get_paginator("list_objects_v2").paginate(
+            Bucket=self.bucket, Prefix=prefix
+        )
+        for page in pages:
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if keys:  # a page holds at most 1000, the batch-delete limit
+                self._s3.delete_objects(Bucket=self.bucket, Delete={"Objects": keys})
+                removed += len(keys)
+        return removed
 
 
 @lru_cache

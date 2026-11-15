@@ -1,6 +1,7 @@
 """Uploads (Phase 3): stage a file with a presigned URL, inspect it."""
 
 import io
+import uuid
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -39,6 +40,12 @@ class FakeStaging:
     def delete(self, key):
         self.deleted.append(key)
         self.objects.pop(key, None)
+
+    def delete_prefix(self, prefix):
+        keys = [k for k in self.objects if k.startswith(prefix)]
+        for key in keys:
+            self.delete(key)
+        return len(keys)
 
 
 @pytest.fixture
@@ -232,3 +239,24 @@ def test_detect_format():
     assert detect_format("a.PARQUET") == "parquet"
     assert detect_format("a.pq") == "parquet"
     assert detect_format("a") is None
+
+
+def test_deleting_a_project_removes_its_staged_files(client, staging):
+    client.post("/v1/projects", json={"name": "scratch"}, headers=ALICE)
+    staging.objects |= {"scratch/u1/a.csv": b"x", "scratchpad/u2/b.csv": b"y"}
+    assert client.delete("/v1/projects/scratch", headers=ALICE).status_code == 204
+    assert list(staging.objects) == ["scratchpad/u2/b.csv"]  # another project's
+
+
+def test_a_project_with_a_loading_upload_cant_be_deleted(client, staging):
+    from sqlalchemy.orm import Session
+
+    from src.db import get_engine
+    from src.models import Upload, UploadStatus
+
+    upload = create(client).json()
+    with Session(app.dependency_overrides[get_engine]()) as session:
+        session.get(Upload, uuid.UUID(upload["id"])).status = UploadStatus.RUNNING
+        session.commit()
+    resp = client.delete("/v1/projects/flood", headers=ALICE)
+    assert resp.status_code == 409 and "loading" in resp.json()["detail"]
