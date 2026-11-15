@@ -6,8 +6,9 @@ ADR-0011). Inputs are strict: an unknown field is an error, never silently dropp
 """
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.models import ProjectKind, ProjectStatus, Role
 
@@ -90,3 +91,68 @@ class ErrorOut(BaseModel):
     """Every error response (4xx/5xx other than 422) has this shape."""
 
     detail: str
+    code: str | None = Field(
+        default=None,
+        description=(
+            "Machine-readable reason where a client can act on it, e.g. "
+            "`token_refresh_required`"
+        ),
+    )
+
+
+# --- datasets ---------------------------------------------------------------
+
+COLUMN_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+ColumnType = Literal[
+    "string",
+    "int32",
+    "int64",
+    "float32",
+    "float64",
+    "boolean",
+    "date",
+    "timestamp",
+    "timestamptz",
+    "binary",
+]
+
+
+class DatasetColumn(StrictInput):
+    name: str = Field(pattern=COLUMN_NAME_PATTERN)
+    type: ColumnType
+    required: bool = Field(default=False, description="Values may not be null")
+    doc: str | None = Field(default=None, max_length=1000)
+
+
+class DatasetCreate(StrictInput):
+    name: str = Field(
+        pattern=PROJECT_NAME_PATTERN, description="Unique within the project"
+    )
+    description: str | None = Field(default=None, max_length=2000)
+    columns: list[DatasetColumn] = Field(min_length=1, max_length=500)
+
+    @field_validator("columns")
+    @classmethod
+    def _unique_column_names(cls, columns: list[DatasetColumn]):
+        seen: set[str] = set()
+        for col in columns:
+            key = col.name.lower()
+            if key in seen:
+                raise ValueError(f"duplicate column name '{col.name}'")
+            seen.add(key)
+        return columns
+
+
+class DatasetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    kind: str
+    description: str | None
+    columns: list[DatasetColumn]
+    table: str = Field(
+        validation_alias="table_identifier",
+        description="The Iceberg table: <project namespace>.<dataset name>",
+    )
+    created_by: str | None
+    created_at: datetime

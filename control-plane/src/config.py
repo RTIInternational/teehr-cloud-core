@@ -39,6 +39,11 @@ class Settings:
     polaris_token_url: str | None = None
     # Catalog warehouse root; each project's namespace is pinned to <root>/<name>/.
     polaris_warehouse: str | None = None
+    # Object storage, as Polaris's vended credentials reach it. Set for non-AWS S3
+    # (RustFS on local); on AWS the defaults are right.
+    storage_endpoint: str | None = None
+    storage_region: str = "us-east-1"
+    storage_path_style: bool = False
     # Polaris principal roles given access to every system project (public,
     # platform): read for every user, write for the platform's writers (ingest).
     system_reader_roles: tuple[str, ...] = ()
@@ -103,6 +108,9 @@ def get_settings() -> Settings:
         client_secret=os.getenv("CONTROL_PLANE_CLIENT_SECRET") or None,
         polaris_token_url=os.getenv("POLARIS_TOKEN_URL") or None,
         polaris_warehouse=os.getenv("POLARIS_WAREHOUSE") or None,
+        storage_endpoint=os.getenv("STORAGE_S3_ENDPOINT") or None,
+        storage_region=os.getenv("STORAGE_S3_REGION") or "us-east-1",
+        storage_path_style=os.getenv("STORAGE_S3_PATH_STYLE", "").lower() == "true",
         system_reader_roles=_csv(os.getenv("SYSTEM_PROJECT_READER_ROLES")),
         system_writer_roles=_csv(os.getenv("SYSTEM_PROJECT_WRITER_ROLES")),
         keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,

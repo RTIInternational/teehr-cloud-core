@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     Enum,
     ForeignKey,
@@ -100,7 +101,8 @@ class Membership(Base):
 
 
 class Dataset(Base):
-    """Stub: a project's registered dataset (filled in by later phases)."""
+    """A project's registered dataset: one Iceberg table in the project namespace,
+    with its declared columns (the schema writes are checked against)."""
 
     __tablename__ = "datasets"
     __table_args__ = (UniqueConstraint("project_id", "name"),)
@@ -109,6 +111,11 @@ class Dataset(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(_fk("projects"))
     name: Mapped[str] = mapped_column(String(60))
     kind: Mapped[str] = mapped_column(String(32))
+    description: Mapped[str | None] = mapped_column(Text)
+    # [{"name", "type", "required", "doc"}], as declared at registration.
+    columns: Mapped[list[dict] | None] = mapped_column(JSON)
+    table_identifier: Mapped[str | None] = mapped_column(String(200))
+    created_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

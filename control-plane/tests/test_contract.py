@@ -31,6 +31,10 @@ OPERATION_IDS = {
     "add_member",
     "set_member",
     "remove_member",
+    "create_dataset",
+    "list_datasets",
+    "get_dataset",
+    "delete_dataset",
 }
 
 

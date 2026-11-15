@@ -6,7 +6,7 @@ untouched.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -22,6 +22,8 @@ class Identity:
     subject: str
     username: str | None
     roles: frozenset[str]
+    # The verified bearer token, so the API can act as the caller toward Polaris.
+    token: str = field(default="", repr=False, compare=False)
 
     def has_any_role(self, roles: tuple[str, ...]) -> bool:
         return not self.roles.isdisjoint(roles)
@@ -88,6 +90,7 @@ class TokenVerifier:
             subject=claims["sub"],
             username=claims.get("preferred_username"),
             roles=frozenset(str(r) for r in roles),
+            token=token,
         )
 
 

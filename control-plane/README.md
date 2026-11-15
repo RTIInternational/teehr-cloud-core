@@ -76,6 +76,22 @@ access. The `polaris-principal-sync` CronJob is the backstop: it also revokes
 project bindings a user no longer holds in Keycloak.
 
 
+## Datasets (Phase 2)
+
+`/v1/projects/{name}/datasets` registers, lists, gets and deletes a project's
+datasets. A dataset is one Iceberg table in the project namespace, with declared
+columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
+`timestamp`, `timestamptz`, `binary`).
+
+- The API creates and drops tables **as the caller**: their own token goes to
+  Polaris (PyIceberg, vended credentials), so Polaris enforces their project role.
+  The API never touches project data with its own identity.
+- Register needs the write role, delete needs admin, list/get need read.
+- Polaris only activates roles the token carries. A token issued before the caller
+  joined the project gets `403` with `code: token_refresh_required`: get a new
+  token and retry.
+- Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
+
 ## Its own identity
 
 The control plane signs in as itself: the confidential Keycloak client
