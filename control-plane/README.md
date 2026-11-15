@@ -122,8 +122,12 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   against the declared columns (lossless type conversion only; required columns
   can't be null) and committed as the caller in one snapshot. Bodies are capped
   (`MAX_WRITE_BYTES`, 64 MiB): bulk loads go through staged upload and a load job
-  (Phase 3). Unit conversion on write and adding new series keys to the series
-  table come next (#182).
+  (Phase 3).
+- **Timeseries writes**: `unit=` (UCUM) says what unit `value` is in; values are
+  converted to the dataset's unit (through SI) and a unit of another dimension is
+  refused. Without it, values are taken as already in the dataset's unit. Series
+  keys not yet in the series table are added first (with the dataset's default
+  layer; existing series rows are left alone).
 - **Reads**: `GET .../datasets/{dataset}/data`, as the caller, a page at a time:
   `columns` (comma-separated), `filter` (same syntax as writes), `limit`, `cursor`,
   `count=true`. JSON `{rows, next_cursor, total}` by default; Arrow or Parquet when
@@ -132,8 +136,9 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   meanwhile; every page says which in `X-Snapshot-Id`. Pages are capped per format
   (`MAX_PAGE_ROWS_JSON` 10k, `MAX_PAGE_ROWS_BINARY` 1M). Each page re-scans up to
   its offset, so deep paging of big tables is slow: bulk reads belong in jobs.
-- **Lineage**: every write records who, when, mode, filter, row count and the
-  Iceberg snapshot; `GET .../datasets/{dataset}/writes` lists them.
+- **Lineage**: every write records who, when, mode, filter, row count, the
+  Iceberg snapshot and, for a timeseries, the unit values arrived in and how many
+  series it added; `GET .../datasets/{dataset}/writes` lists them.
 - Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
 
 ## Domains

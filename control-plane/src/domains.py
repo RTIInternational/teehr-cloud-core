@@ -6,6 +6,7 @@ so a lookup in a project's scope is never ambiguous.
 
 import uuid
 
+import pyarrow.compute as pc
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -39,3 +40,12 @@ def taken(session: Session, model, name: str, project_id: uuid.UUID | None) -> b
             or_(model.project_id.is_(None), model.project_id == project_id)
         )
     return session.scalar(query.limit(1)) is not None
+
+
+def convert(values, source: Unit, target: Unit):
+    """Values in ``source`` as ``target`` (same dimension), through SI:
+    ``si = v * to_si + offset`` (ADR-0005)."""
+    if source.symbol == target.symbol:
+        return values
+    si = pc.add(pc.multiply(values, source.to_si), source.offset)
+    return pc.divide(pc.subtract(si, target.offset), target.to_si)

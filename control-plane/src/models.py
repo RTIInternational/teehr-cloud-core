@@ -143,6 +143,10 @@ class DatasetWrite(Base):
     mode: Mapped[str] = mapped_column(String(16))
     filter: Mapped[str | None] = mapped_column(Text)
     rows: Mapped[int] = mapped_column(BigInteger)
+    # Timeseries: the unit the values arrived in (stored converted to the
+    # canonical unit), and how many new series keys the write added.
+    unit: Mapped[str | None] = mapped_column(String(64))
+    series_added: Mapped[int | None] = mapped_column(BigInteger)
     snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
     written_by: Mapped[str] = mapped_column(String(255))
     # Set here (microseconds) so quick successive writes keep their order.

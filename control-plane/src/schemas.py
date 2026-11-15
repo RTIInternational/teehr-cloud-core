@@ -370,6 +370,13 @@ class WriteOut(BaseModel):
     mode: str
     filter: str | None
     rows: int
+    unit: str | None = Field(
+        default=None,
+        description="Timeseries: the unit the values arrived in (stored canonical)",
+    )
+    series_added: int | None = Field(
+        default=None, description="Timeseries: new series keys this write added"
+    )
     snapshot_id: str | None = Field(
         description="The Iceberg snapshot this write produced (a string: 64-bit id)"
     )

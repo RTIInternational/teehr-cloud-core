@@ -300,3 +300,107 @@ def test_json_rows_give_quantiles_as_numbers():
 
     table = pa.table({"quantile": pa.array([Decimal("0.2500")], pa.decimal128(5, 4))})
     assert json.loads(json.dumps(json_rows(table))) == [{"quantile": 0.25}]
+
+
+# --- units and series on write ------------------------------------------------
+
+
+def written_values(tables):
+    return tables.writes[-1][2].column("value").to_pylist()
+
+
+def test_values_are_converted_to_the_dataset_unit(client, tables):
+    register(client)  # streamflow, stored in m3/s
+    resp = write(client, ROWS, unit="[cft_i]/s")
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["unit"] == "[cft_i]/s"
+    assert written_values(tables) == pytest.approx(
+        [1.5 * 0.028316846592, 2.5 * 0.028316846592]
+    )
+    # No unit: already in the dataset's unit, recorded as such.
+    resp = write(client, ROWS)
+    assert resp.json()["unit"] == "m3/s" and written_values(tables) == [1.5, 2.5]
+    history = client.get(f"{DATASETS}/usgs_obs/writes", headers=ALICE).json()
+    assert [w["unit"] for w in history] == ["m3/s", "[cft_i]/s"]
+
+
+def test_affine_conversion(client, tables):
+    register(client, "temp", variable="air_temperature")  # stored in Cel
+    rows = [{**ROWS[0], "value": 32.0}, {**ROWS[1], "value": 212.0}]
+    assert write(client, rows, name="temp", unit="[degF]").status_code == 201
+    assert written_values(tables) == pytest.approx([0.0, 100.0])
+    assert write(client, rows[:1], name="temp", unit="K").status_code == 201
+    assert written_values(tables) == pytest.approx([32.0 - 273.15])
+
+
+def test_nulls_stay_null_through_conversion(client, tables):
+    register(client)
+    rows = [ROWS[0], {**ROWS[1], "value": None}]
+    assert write(client, rows, unit="L/s").status_code == 201
+    assert written_values(tables) == pytest.approx([0.0015, None])
+
+
+@pytest.mark.parametrize(
+    ("unit", "detail"),
+    [("mm", "doesn't convert"), ("furlong", "unknown unit")],
+)
+def test_unconvertible_units_are_refused(client, tables, unit, detail):
+    register(client)
+    resp = write(client, ROWS, unit=unit)
+    assert resp.status_code == 422 and detail in resp.json()["detail"]
+    assert not getattr(tables, "writes", [])
+
+
+def test_a_projects_own_unit_converts(client, tables):
+    client.post(
+        "/v1/domains/units",
+        json={"project": "flood", "symbol": "[gal_us]/min", "dimension": "volume_flow",
+              "to_si": 0.003785411784 / 60},
+        headers=ALICE,
+    )  # fmt: skip
+    register(client)
+    assert write(client, ROWS[:1], unit="[gal_us]/min").status_code == 201
+    assert written_values(tables) == pytest.approx([1.5 * 0.003785411784 / 60])
+
+
+def test_unit_is_for_timeseries_only(client, tables):
+    client.post(
+        DATASETS,
+        json={"name": "plain", "columns": [{"name": "value", "type": "float64"}]},
+        headers=ALICE,
+    )
+    resp = write(client, [{"value": 1.0}], name="plain", unit="m")
+    assert resp.status_code == 422
+
+
+def test_new_series_keys_are_added_to_the_series_table(client, tables):
+    register(client, location_layer="usgs_gauges")
+    resp = write(client, ROWS)
+    assert resp.json()["series_added"] == 1
+    series = tables.rows[("flood", "usgs_obs_series")]
+    assert series["usgs-01"]["location_layer"] == "usgs_gauges"
+    assert series["usgs-01"]["location_key"] is None
+    # Known keys aren't added (or touched) again; new ones are.
+    more = [{**ROWS[0], "series_key": "usgs-02"}, ROWS[1]]
+    assert write(client, more).json()["series_added"] == 1
+    assert sorted(series) == ["usgs-01", "usgs-02"]
+    # The series table is written before the data.
+    ops = [c[0] for c in tables.calls]
+    assert ops[-2:] == ["insert_missing", "write"]
+
+
+def test_family_writes_share_the_series_table(client, tables):
+    register(client, "short_range", role="forecast")
+    register(client, "medium_range", role="forecast", series_table="short_range_series")
+    row = {**ROWS[0], "reference_time": "2026-01-01T00:00:00Z"}
+    assert write(client, [row], name="short_range").json()["series_added"] == 1
+    assert write(client, [row], name="medium_range").json()["series_added"] == 0
+
+
+def test_series_table_writes_dont_add_series(client, tables):
+    register(client)
+    resp = write(
+        client, [{"series_key": "a", "location_key": "01"}], name="usgs_obs_series"
+    )
+    assert resp.status_code == 201
+    assert resp.json()["series_added"] is None and resp.json()["unit"] is None

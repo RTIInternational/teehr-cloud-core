@@ -342,6 +342,12 @@ class Tables(Protocol):
     ) -> int:
         """Rows matching ``row_filter`` in the snapshot, as the caller."""
 
+    def insert_missing(
+        self, token: str, namespace: str, name: str, data: pa.Table
+    ) -> int:
+        """Insert the rows whose key isn't in the table yet, leaving existing rows
+        alone, as the caller. Returns how many were inserted."""
+
     def drop_table(self, token: str, namespace: str, name: str) -> None:
         """Drop the table and its files, as the caller. A missing table is fine."""
 
@@ -434,6 +440,22 @@ class PolarisTables:
         except Exception as exc:
             raise TableError(str(exc)) from exc
         return WriteResult(snapshot.snapshot_id if snapshot else None)
+
+    def insert_missing(
+        self, token: str, namespace: str, name: str, data: pa.Table
+    ) -> int:
+        try:
+            table = self._catalog(token).load_table((namespace, name))
+            result = table.upsert(data, when_matched_update_all=False)
+        except NoSuchTableError as exc:
+            raise TableMissing(str(exc)) from exc
+        except (ForbiddenError, UnauthorizedError) as exc:
+            raise TableForbidden(str(exc)) from exc
+        except CommitFailedException as exc:
+            raise WriteConflict(str(exc)) from exc
+        except Exception as exc:
+            raise TableError(str(exc)) from exc
+        return result.rows_inserted
 
     def _scan(self, token, namespace, name, columns, row_filter, snapshot_id, limit):
         table = self._catalog(token).load_table((namespace, name))
