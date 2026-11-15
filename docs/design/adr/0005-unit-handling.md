@@ -87,3 +87,6 @@ metric's unit is not a simple scalar conversion of its inputs' units.
   - **Provenance is per write, not per row:** the unit a write arrived in is recorded once in the
     write lineage, and the original values follow by reversing the affine conversion. No
     `original_value` / `original_unit` row columns.
+- **Shared text moved (2026-11-15):** the parts shared with VeriRace are maintained in
+  [teehr-shared-eval-spec](https://github.com/RTIInternational/teehr-shared-eval-spec) and changed
+  there by PR; this ADR keeps the decision and its rationale.

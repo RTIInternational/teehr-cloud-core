@@ -82,3 +82,6 @@ at larger scale.
   re-implement (we do **not** adopt VeriRace's package) and build it clean enough that VeriRace can
   switch to ours. This supersedes any reading of this ADR in which TEEHR would depend on VeriRace's
   package — the dependency points at TEEHR, not away from it.
+- **Shared text moved (2026-11-15):** the parts shared with VeriRace are maintained in
+  [teehr-shared-eval-spec](https://github.com/RTIInternational/teehr-shared-eval-spec) and changed
+  there by PR; this ADR keeps the decision and its rationale.

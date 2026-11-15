@@ -2,7 +2,9 @@
 
 - **Status:** v1, decided 2026-11-15 (#182). Supersedes the v0 draft (2026-11-10).
 - **Related:** ADR-0001 (layout), ADR-0005 (units), ADR-0010 (series identity), ADR-0011 (VeriRace
-  parity), ADR-0012 (temporal extent), `spec-schema-v0.md`, `shared-contract-v0.md`
+  parity), ADR-0012 (temporal extent), `spec-schema-v0.md`,
+  [teehr-shared-eval-spec](https://github.com/RTIInternational/teehr-shared-eval-spec) (the shared
+  columns, units and periods)
 
 The canonical model the platform is built against. Existing data is **ported** into it once
 (validated backfill, #165), not carried forward. v1 adopts VeriRace's typed datasets as implemented
