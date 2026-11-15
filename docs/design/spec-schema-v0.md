@@ -36,7 +36,8 @@ diverge the schema.
   `threshold: {value: 1000, unit: "[cft_i]/s"}`: contingency, event and ramp thresholds, and
   numeric values compared against unit-bearing columns in filters (expression syntax for that is
   the shared expression language's to define). Quantile and column thresholds take no unit.
-  (Amended 2026-11-15, #182.)
+  A bare number where a unit is required is a validation error. Thresholds come first; filter
+  bounds follow. (Amended 2026-11-15, #182.)
 - **Versioned.** `version` is recorded on every run for reproducibility.
 
 ## Steps (always run in this order)

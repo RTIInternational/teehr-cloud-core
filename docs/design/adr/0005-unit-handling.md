@@ -75,9 +75,17 @@ metric's unit is not a simple scalar conversion of its inputs' units.
     in input filters. Quantile and column-reference thresholds carry no unit. (How a unit is written
     inside a filter expression is for the shared expression language to define.) This is what makes
     a spec mean the same on TEEHR and VeriRace, which store units differently.
+  - **Bare numbers are refused**, not deprecated: a unit-bearing parameter without a unit fails
+    spec validation. Existing specs are converted, not grandfathered.
+  - **Thresholds first, filters second:** contingency, event and ramp thresholds take units in the
+    first pass; unit-bearing filter bounds follow once the shared expression language defines them.
   - **Variables are a registry** (public rows plus project rows), each with a **canonical unit**;
-    values are stored in it. VeriRace may adopt the same registry while keeping its as-uploaded
-    storage.
+    values are stored in it. An upload names a registered variable and its unit must convert to the
+    canonical unit (which catches e.g. streamflow in mm). VeriRace adopts the same registry while
+    keeping its as-uploaded storage.
+  - **Shared variable rows are copied**, not read from a shared file: each system carries the
+    agreed public rows in its own migrations (a short list: streamflow, stage, precipitation,
+    temperature, electric load, …), and changes are made in both. Revisit if the list churns.
   - **Provenance is per write, not per row:** the unit a write arrived in is recorded once in the
     write lineage, and the original values follow by reversing the affine conversion. No
     `original_value` / `original_unit` row columns.
