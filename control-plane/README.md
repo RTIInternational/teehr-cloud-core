@@ -168,6 +168,9 @@ Parquet, up to `MAX_UPLOAD_BYTES` (5 GiB). Staging is configured on local only u
 the remote bucket and role exist (#171). Files are staged under `<project>/<upload id>/`; deleting a
 project removes its staged files (and is refused while one of its uploads is loading).
 
+To try it by hand: sample files, a script and steps in
+[`examples/uploads/`](examples/uploads/README.md).
+
 ## Domains
 
 `/v1/domains/units`, `/v1/domains/periods` and `/v1/domains/variables` list and
