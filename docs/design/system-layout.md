@@ -70,24 +70,29 @@ any write. Fetch is not privileged internal access.
 ### Bulk data in: staged upload (confirmed pattern, from VeriRace)
 
 Large data does **not** stream through the API — that would make the boundary a bottleneck.
-The API is a control plane and the bytes go straight to object storage:
+The API is a control plane and the bytes go straight to object storage
+(`/v1/projects/{project}/uploads`, the same contract as VeriRace's uploads):
 
 ```
-POST /uploads          → API returns a short-lived, scoped upload URL
-PUT  <upload_url>       → file goes DIRECTLY to object storage (bypasses the API)
-POST /uploads/{id}/inspect   → reads first rows, proposes a column→series mapping
-POST /uploads/{id}/ingest    → runs the load as a JOB; whole file validated before any write
-GET  /uploads/{id}           → status (queued → running → succeeded/failed)
+POST   /uploads                → a short-lived URL to PUT the file to (storage, not the API)
+PUT    <upload_url>             → the file goes DIRECTLY to the staging area
+POST   /uploads/{id}/inspect    → reads the start of the file, proposes a column mapping
+                                   and the dataset's metadata, says what's still needed
+POST   /uploads/{id}/ingest     → confirms or changes the mapping, starts the load JOB;
+                                   the whole file is validated before anything is written
+GET    /uploads/{id}            → status (queued → running → succeeded/failed), progress,
+                                   the outcome and every problem found
+DELETE /uploads/{id}            → removes the upload and its staged file
 ```
 
 The staged file is deleted after load. **Both model runners and fetchers submit bulk data
-this way** — the boundary holds (API authorizes, validates, registers, and runs the ingest
+this way** — the boundary holds (API authorizes, validates, registers, and runs the load
 job) while GB-scale bytes never pass through it.
 
-On TEEHR's substrate the pieces already exist: the upload URL is an **STS-vended,
-prefix-scoped credential** (Spike 2 / `allowed_locations`, ADR-0001); the staged area is a
-**project-scoped S3 prefix**; the ingest job is a **Prefect job** (ADR-0003) on the
-appropriate work pool, writing to Iceberg through the write gateway.
+On TEEHR's substrate: the staging area is an S3 location only the control plane can reach
+(the upload URL is presigned for one object); the load is a **Kubernetes Job the control
+plane starts** (ADR-0014), acting as the caller through a job grant, and writes to Iceberg
+through the same checks as API writes (types, units, keys, series).
 
 ## Open questions
 

@@ -36,6 +36,7 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0011](0011-interface-parity-verirace.md) | Interface parity with VeriRace; deviate on substrate | Accepted (2026-11-13) |
 | [0012](0012-temporal-extent.md) | Temporal extent — fixed periods & a general window model | Accepted (2026-11-13) |
 | [0013](0013-evaluation-system-boundary.md) | Evaluation-system boundary & deployment ancillary services | Accepted (2026-11-13) |
+| [0014](0014-api-jobs-as-kubernetes-jobs.md) | Work the API starts runs as Kubernetes Jobs, not Prefect | Accepted (2026-11-15) |
 
 ## Phase 0 exit checklist
 

@@ -23,9 +23,9 @@ existing warehouse data** — it is copied into the `public` project in the targ
 | **0** | Foundations and decisions | Ratify the ADRs; run the four de-risking spikes; draft the spec schema + canonical data model. *(This phase.)* |
 | **1** | Project control plane | Project namespaces + prefix-scoped storage. |
 | **2** | Identity propagation & write gateway | Data plane knows who is asking; API/SDK is the only write path; one schema owner. **Hard prerequisite for 3 and 5.** |
-| **3** | User data upload & registration | Async upload + dataset registration. |
+| **3** | User data upload & registration | Staged upload → inspect → load job (ADR-0014) + dataset registration. |
 | **4** | Analytics spec & dual-path metrics | One dual-path metrics engine (vectorized-Python default, Spark for large) + the evaluation spec. |
-| **5** | On-demand analytics via Prefect | Submit → track → results; every run is a Prefect K8s job under the caller's delegated identity; per-project quotas. |
+| **5** | On-demand analytics as jobs | Submit → track → results; every run is a Kubernetes Job the control plane starts, under the caller's delegated identity (ADR-0014); per-project quotas. |
 | **6** | Clients & Jupyter reconciliation | SDK / CLI / MCP; Jupyter goes through the gateway. |
 | **7** | Migrate core, harden, cut over | Port data (not code) to the new model; run legacy alongside until parity; retire legacy. |
 | **8** | Synchronous (inline) submission | Add in-request execution + size-based routing (inline vs job). Deferred until here by design. |
@@ -57,8 +57,9 @@ The ADRs ([`adr/`](adr/)) are the Phase 0 deliverable; each lands in a later pha
 | --- | --- |
 | 0 | All ADRs ratified; spikes run |
 | 2 | ADR-0004 (write gateway / API access path) |
+| 3 | ADR-0014 (API-started jobs) |
 | 4 | ADR-0002 (metric engine), ADR-0011 + ADR-0012 + ADR-0010 (spec & data model), `spec-schema-v0.md`, `warehouse-data-model.md` |
-| 5 | ADR-0003 (Prefect job runner) |
+| 5 | ADR-0003 (analytics submission), ADR-0014 (API-started jobs) |
 | 7 | ADR-0006 (migrations), ADR-0009 (branching & cutover) |
 | 8 | ADR-0002 / ADR-0003 (inline submission + routing) |
 | 9 | ADR-0007 (package decomposition), ADR-0002 (light-core kernels) |
