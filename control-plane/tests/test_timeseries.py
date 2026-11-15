@@ -404,3 +404,67 @@ def test_series_table_writes_dont_add_series(client, tables):
     )
     assert resp.status_code == 201
     assert resp.json()["series_added"] is None and resp.json()["unit"] is None
+
+
+# --- complete records; series attributes merge ------------------------------
+
+
+def test_timeseries_writes_must_send_every_column(client, tables):
+    register(client, optional_columns=["quality"])
+    resp = write(client, ROWS)  # no quality column
+    assert resp.status_code == 422
+    assert "missing: quality" in resp.json()["detail"]
+    rows = [{**ROWS[0], "quality": "P"}, {**ROWS[1], "quality": None}]
+    assert write(client, rows).status_code == 201
+
+
+def test_a_revised_quality_code_replaces_the_old_one(client, tables):
+    register(client, optional_columns=["quality"])
+    write(client, [{**ROWS[0], "quality": "P"}])
+    assert write(client, [{**ROWS[0], "quality": "A"}]).status_code == 201
+    mode, _, data = tables.writes[-1]
+    assert mode == "upsert" and data.column("quality").to_pylist() == ["A"]
+
+
+def test_series_writes_keep_columns_left_out(client, tables):
+    register(client, location_layer="gauges",
+             series_attributes=[{"name": "basin", "type": "string"}])  # fmt: skip
+    write(client, ROWS)  # adds usgs-01 with the dataset's layer
+    resp = write(
+        client, [{"series_key": "usgs-01", "basin": "upper"}], name="usgs_obs_series"
+    )
+    assert resp.status_code == 201
+    row = tables.rows[("flood", "usgs_obs_series")]["usgs-01"]
+    assert row["location_layer"] == "gauges" and row["basin"] == "upper"
+    key_columns, provided, _ = tables.merged
+    assert key_columns == ["series_key"] and provided == ["series_key", "basin"]
+
+
+def test_keep_unprovided_fills_from_stored_rows():
+    from src.tables import keep_unprovided
+
+    schema = pa.schema(
+        [pa.field("series_key", pa.string(), nullable=False),
+         pa.field("layer", pa.string()), pa.field("basin", pa.string())]
+    )  # fmt: skip
+    data = pa.table(
+        {
+            "series_key": ["b", "new", "a"],
+            "layer": [None] * 3,
+            "basin": ["B", "N", "A"],
+        },
+        schema=schema,
+    )
+    current = pa.table(
+        {"series_key": ["a", "b"], "layer": ["la", "lb"], "basin": ["old", "old"]},
+        schema=schema,
+    )
+    out = keep_unprovided(data, current, ["series_key"], ["series_key", "basin"])
+    assert out.schema == schema
+    assert out.to_pylist() == [
+        {"series_key": "b", "layer": "lb", "basin": "B"},
+        {"series_key": "new", "layer": None, "basin": "N"},
+        {"series_key": "a", "layer": "la", "basin": "A"},
+    ]
+    # Everything provided: unchanged.
+    assert keep_unprovided(data, current, ["series_key"], schema.names) is data

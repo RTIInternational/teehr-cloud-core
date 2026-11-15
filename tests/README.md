@@ -15,6 +15,7 @@ This directory contains **Python-based integration tests** running in KinD for:
 - `spark_session_auth_test.py` — Validates Spark session creation and write permissions
 - `xpublish_access_test.py` — Validates Icechunk access rules enforced by xpublish-api
 - `control_plane_gate_test.py` — Phase 1 gate (`garden test control-plane-gate`): projects created through the control-plane API get an isolated namespace and storage prefix, non-members are denied, vended credentials reach only the member's own prefix, membership grants and revokes access, and system projects are read-all / ingest-write
+- `control_plane_data_gate_test.py` — Phase 2 gate (`garden test control-plane-data-gate`): members register typed timeseries and write and read them through the control-plane API as themselves (unit conversion, series keys, paged snapshot-pinned reads, a lineage record per write); non-members and read-only members are refused; the legacy `teehr` namespace and teehr-api are unchanged
 
 ## What These Tests Do
 

@@ -18,3 +18,4 @@ COPY spark_authmanager_test.py /app/tests/
 COPY spark_authmanager_executor_test.py /app/tests/
 COPY xpublish_access_test.py /app/tests/
 COPY control_plane_gate_test.py /app/tests/
+COPY control_plane_data_gate_test.py /app/tests/

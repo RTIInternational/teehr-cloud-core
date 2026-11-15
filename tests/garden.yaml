@@ -253,3 +253,26 @@ spec:
   command:
     - python3
     - /app/tests/control_plane_gate_test.py
+
+---
+kind: Test
+name: control-plane-data-gate
+description: >
+  Phase 2 gate (#180): members register typed timeseries and write and read them
+  through the control-plane API as themselves (units converted, series added,
+  paged snapshot-pinned reads, lineage per write); non-members and read-only
+  members are refused; today's teehr namespace and teehr-api are unchanged.
+dependencies:
+  - deploy.teehr-control-plane
+  - deploy.keycloak-local-users-bootstrap
+  - deploy.teehr-api
+  - build.test-scripts
+environments:
+  - local
+timeout: 300
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/control_plane_data_gate_test.py
