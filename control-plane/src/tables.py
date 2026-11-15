@@ -34,6 +34,7 @@ from pyiceberg.partitioning import (
 )
 from pyiceberg.schema import Schema
 from pyiceberg.table.sorting import UNSORTED_SORT_ORDER, SortField, SortOrder
+from pyiceberg.table.upsert_util import create_match_filter
 from pyiceberg.transforms import IdentityTransform, MonthTransform, YearTransform
 from pyiceberg.types import (
     BinaryType,
@@ -147,6 +148,28 @@ def iceberg_schema(
     ids = {f.name: f.field_id for f in fields}
     return Schema(
         *fields, identifier_field_ids=[ids[name] for name in key_columns or ()]
+    )
+
+
+def keep_unprovided(
+    data: pa.Table, current: pa.Table, key_columns: list[str], provided: list[str]
+) -> pa.Table:
+    """``data`` with the columns it didn't provide taken from ``current`` (the
+    matching stored rows); null for new rows. Same schema and row order as
+    ``data``."""
+    missing = [c for c in data.column_names if c not in provided]
+    if not missing:
+        return data
+    order = "__row"
+    left = data.select([*key_columns, *[c for c in provided if c not in key_columns]])
+    left = left.append_column(order, pa.array(range(data.num_rows), pa.int64()))
+    right = current.select([*key_columns, *missing]).cast(
+        pa.schema([data.schema.field(c) for c in [*key_columns, *missing]])
+    )
+    joined = left.join(right, keys=key_columns, join_type="left outer")
+    joined = joined.sort_by(order)
+    return pa.Table.from_arrays(
+        [joined.column(c) for c in data.column_names], schema=data.schema
     )
 
 
@@ -348,6 +371,18 @@ class Tables(Protocol):
         """Insert the rows whose key isn't in the table yet, leaving existing rows
         alone, as the caller. Returns how many were inserted."""
 
+    def merge(
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        data: pa.Table,
+        key_columns: list[str],
+        provided: list[str],
+    ) -> WriteResult:
+        """Upsert where only the ``provided`` columns change: a matched row keeps
+        its current values in the others, as the caller."""
+
     def drop_table(self, token: str, namespace: str, name: str) -> None:
         """Drop the table and its files, as the caller. A missing table is fine."""
 
@@ -457,6 +492,26 @@ class PolarisTables:
             raise TableError(str(exc)) from exc
         return result.rows_inserted
 
+    def merge(
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        data: pa.Table,
+        key_columns: list[str],
+        provided: list[str],
+    ) -> WriteResult:
+        def run() -> WriteResult:
+            table = self._catalog(token).load_table((namespace, name))
+            current = table.scan(
+                row_filter=create_match_filter(data, key_columns)
+            ).to_arrow()
+            table.upsert(keep_unprovided(data, current, key_columns, provided))
+            snapshot = table.current_snapshot()
+            return WriteResult(snapshot.snapshot_id if snapshot else None)
+
+        return self._guard(run)
+
     def _scan(self, token, namespace, name, columns, row_filter, snapshot_id, limit):
         table = self._catalog(token).load_table((namespace, name))
         if snapshot_id is None:
@@ -483,6 +538,8 @@ class PolarisTables:
             raise TableMissing(str(exc)) from exc
         except (ForbiddenError, UnauthorizedError) as exc:
             raise TableForbidden(str(exc)) from exc
+        except CommitFailedException as exc:
+            raise WriteConflict(str(exc)) from exc
         except Exception as exc:
             raise TableError(str(exc)) from exc
 

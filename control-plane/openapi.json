@@ -3069,7 +3069,7 @@
             }
           },
           {
-            "description": "upsert (replace rows with the same key, add the rest; the default for timeseries and series tables), append (the default for untyped datasets; not allowed on typed ones), or overwrite",
+            "description": "upsert (replace rows with the same key, add the rest; the default for timeseries and series tables; on a series table, columns left out keep their values), append (the default for untyped datasets; not allowed on typed ones), or overwrite. Timeseries writes must send every column (null where there's no value).",
             "in": "query",
             "name": "mode",
             "required": false,
@@ -3087,7 +3087,7 @@
                   "type": "null"
                 }
               ],
-              "description": "upsert (replace rows with the same key, add the rest; the default for timeseries and series tables), append (the default for untyped datasets; not allowed on typed ones), or overwrite",
+              "description": "upsert (replace rows with the same key, add the rest; the default for timeseries and series tables; on a series table, columns left out keep their values), append (the default for untyped datasets; not allowed on typed ones), or overwrite. Timeseries writes must send every column (null where there's no value).",
               "title": "Mode"
             }
           },

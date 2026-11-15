@@ -127,7 +127,11 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   converted to the dataset's unit (through SI) and a unit of another dimension is
   refused. Without it, values are taken as already in the dataset's unit. Series
   keys not yet in the series table are added first (with the dataset's default
-  layer; existing series rows are left alone).
+  layer; existing series rows are left alone). A timeseries write sends every
+  column of the dataset (null where there's no value): a row is a whole record, so
+  a revised record replaces the old one, quality code included, and leaving a
+  column out is refused rather than wiping it. A series-table upsert changes only
+  the columns sent; the rest keep their values.
 - **Reads**: `GET .../datasets/{dataset}/data`, as the caller, a page at a time:
   `columns` (comma-separated), `filter` (same syntax as writes), `limit`, `cursor`,
   `count=true`. JSON `{rows, next_cursor, total}` by default; Arrow or Parquet when
