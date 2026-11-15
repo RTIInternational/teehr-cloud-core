@@ -576,3 +576,48 @@ class UploadOut(BaseModel):
         default=None, description="Only when created: PUT the file here"
     )
     upload_url_expires_at: datetime | None = None
+
+
+class IngestMapping(StrictInput):
+    """Changes to the mapping inspect proposed (a field left out keeps it)."""
+
+    series_key: str | None = Field(default=None, description="Column with series keys")
+    series_key_value: str | None = Field(
+        default=None, max_length=255, description="One series key for every row"
+    )
+    value_time: str | None = None
+    value: str | None = None
+    reference_time: str | None = None
+    member: str | None = None
+    quantile: str | None = None
+    quality: str | None = None
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description="IANA zone of times without an offset, e.g. America/Denver",
+    )
+
+
+class IngestDataset(StrictInput):
+    """The dataset to load into: an existing timeseries, or a new one."""
+
+    name: str | None = Field(
+        default=None, pattern=PROJECT_NAME_PATTERN, description="Default: proposed"
+    )
+    unit: str = Field(
+        pattern=UNIT_SYMBOL_PATTERN,
+        description="The unit of the file's values (UCUM); converted on load",
+    )
+    role: TimeseriesRole | None = Field(default=None, description="New datasets")
+    variable: str | None = Field(default=None, description="New datasets")
+    statistic: Statistic | None = Field(default=None, description="New datasets")
+    period: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    source: str | None = Field(default=None, max_length=2000)
+    location_layer: str | None = Field(default=None, pattern=PROJECT_NAME_PATTERN)
+    time_partition: TimePartition = "month"
+
+
+class IngestRequest(StrictInput):
+    dataset: IngestDataset
+    mapping: IngestMapping = Field(default_factory=IngestMapping)

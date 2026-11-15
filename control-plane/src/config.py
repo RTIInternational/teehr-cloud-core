@@ -76,6 +76,22 @@ class Settings:
     staging_secret_key: str | None = None
     upload_url_ttl_seconds: int = 3600
     max_upload_bytes: int = 5 * 1024**3
+    # Jobs the API starts (ADR-0014): the image their pods run (the control
+    # plane's own), where, with what memory, and how the pod reaches the control
+    # plane. None = jobs disabled.
+    job_image: str | None = None
+    job_namespace: str | None = None
+    job_memory_request: str = "1Gi"
+    job_memory_limit: str = "4Gi"
+    job_ttl_seconds: int = 86_400
+    # Jobs one project may have queued or running at once.
+    max_active_jobs_per_project: int = 2
+    internal_url: str = "http://teehr-control-plane:8000"
+    # Encrypts the refresh tokens jobs act as their callers with (any string; a
+    # key is derived from it).
+    job_token_key: str | None = None
+    # Keycloak's token endpoint, as the control plane reaches it (token exchange).
+    keycloak_token_url: str | None = None
 
     @property
     def oidc_base_url(self) -> str | None:
@@ -154,4 +170,16 @@ def get_settings() -> Settings:
         staging_secret_key=os.getenv("STAGING_S3_SECRET_KEY") or None,
         upload_url_ttl_seconds=int(os.getenv("UPLOAD_URL_TTL_SECONDS") or 3600),
         max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES") or 5 * 1024**3),
+        job_image=os.getenv("JOB_IMAGE") or None,
+        job_namespace=os.getenv("JOB_NAMESPACE") or None,
+        job_memory_request=os.getenv("JOB_MEMORY_REQUEST") or "1Gi",
+        job_memory_limit=os.getenv("JOB_MEMORY_LIMIT") or "4Gi",
+        job_ttl_seconds=int(os.getenv("JOB_TTL_SECONDS") or 86_400),
+        max_active_jobs_per_project=int(os.getenv("MAX_ACTIVE_JOBS_PER_PROJECT") or 2),
+        internal_url=os.getenv("CONTROL_PLANE_INTERNAL_URL")
+        or "http://teehr-control-plane:8000",
+        job_token_key=os.getenv("JOB_TOKEN_KEY") or None,
+        keycloak_token_url=os.getenv("KEYCLOAK_TOKEN_URL")
+        or os.getenv("POLARIS_TOKEN_URL")
+        or None,
     )

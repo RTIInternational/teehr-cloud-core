@@ -124,7 +124,20 @@ data:
           ],
           "attributes": {
             "pkce.code.challenge.method": "S256"
-          }
+          },
+          "protocolMappers": [
+            {
+              "name": "audience-teehr-control-plane",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "teehr-control-plane",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
         },
         {
           "clientId": "teehr-control-plane",
@@ -136,6 +149,10 @@ data:
           "serviceAccountsEnabled": true,
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
+          "attributes": {
+            "standard.token.exchange.enabled": "true",
+            "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
+          },
           "secret": "${environment.name == 'local' ? '$(env:CONTROL_PLANE_CLIENT_SECRET)' : ''}",
           "protocolMappers": [
             {
@@ -170,7 +187,20 @@ data:
           ],
           "attributes": {
             "pkce.code.challenge.method": "S256"
-          }
+          },
+          "protocolMappers": [
+            {
+              "name": "audience-teehr-control-plane",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "teehr-control-plane",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
         },
         {
           "clientId": "teehr-frontend-local-dev",
@@ -187,7 +217,20 @@ data:
           ],
           "attributes": {
             "pkce.code.challenge.method": "S256"
-          }
+          },
+          "protocolMappers": [
+            {
+              "name": "audience-teehr-control-plane",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "teehr-control-plane",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
         },
         {
           "clientId": "teehr-api",
@@ -244,6 +287,17 @@ data:
               "consentRequired": false,
               "config": {
                 "included.client.audience": "teehr-api",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "audience-teehr-control-plane",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "teehr-control-plane",
                 "id.token.claim": "false",
                 "access.token.claim": "true"
               }

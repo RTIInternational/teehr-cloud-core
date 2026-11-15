@@ -158,8 +158,14 @@ Files go straight to staging storage, not through the API
    `01010000`) and proposes a mapping to the timeseries columns, a dataset name, what
    each column looks like, and what's still needed (role, variable, unit, statistic;
    a time zone when times have none; a series key when the file has no key column).
-3. `POST .../uploads/{id}/ingest` confirms the mapping and starts the load as a
-   Kubernetes Job acting as the caller (ADR-0014; next).
+3. `POST .../uploads/{id}/ingest` `{dataset: {name, unit, role, variable, statistic,
+   ...}, mapping: {...}}` confirms or changes the mapping and names the dataset (an
+   existing timeseries, or a new one), reporting everything wrong at once (422).
+   Then it starts the load as a Kubernetes Job acting as the caller (see Jobs). The
+   load checks the whole file before writing any of it, registers a new dataset,
+   and writes through `POST .../data` in chunks: units converted, series added,
+   each chunk in the write history. A load that fails partway keeps the chunks it
+   wrote; upserts make a retry safe. `POST .../uploads/{id}/cancel` stops one.
 4. `GET .../uploads[/{id}]` lists or shows uploads; `DELETE` removes one and its staged
    file.
 
@@ -170,6 +176,27 @@ project removes its staged files (and is refused while one of its uploads is loa
 
 To try it by hand: sample files, a script and steps in
 [`examples/uploads/`](examples/uploads/README.md).
+
+## Jobs (ADR-0014)
+
+Work a user starts through the API (upload loads now, evaluation runs later) runs as
+a Kubernetes Job the control plane creates with its own service account, which may
+only manage Jobs and read their pods in its namespace (`manifests/rbac.yaml`). The
+job's state lives in the `jobs` table; reading an active upload checks its
+Kubernetes Job, so a pod that died (e.g. out of memory) fails it with the reason.
+
+A job acts as its caller. At start, the caller's token is exchanged with Keycloak
+(standard token exchange) for a refresh token bound to their login session, stored
+encrypted (`JOB_TOKEN_KEY`). The pod (`python -m src.jobs run <id>`: the control
+plane's image, non-root, no Kubernetes token, memory-limited, never restarted) gets
+only a job grant, which it trades at `/v1/job-grants/*` for fresh access tokens as
+the caller, its task, and reporting progress and the outcome. A grant stops working
+when its job ends; a job also ends with the caller's login session. At most
+`MAX_ACTIVE_JOBS_PER_PROJECT` (2) jobs per project run at once (429 beyond).
+
+Token exchange needs the caller's token to name `teehr-control-plane` as an audience
+(the sign-in clients' audience mapper, keycloak-bootstrap). Local only until the
+dark launch (#171).
 
 ## Domains
 
