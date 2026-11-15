@@ -14,6 +14,7 @@ import base64
 import io
 import json
 from datetime import date, datetime
+from decimal import Decimal
 
 import pyarrow as pa
 import pyarrow.json as pjson
@@ -102,6 +103,8 @@ def _json_value(value):
         return value.isoformat()
     if isinstance(value, bytes):
         return base64.b64encode(value).decode()
+    if isinstance(value, Decimal):
+        return float(value)  # quantiles: 4 decimal places, exact as a JSON number
     return value
 
 
@@ -110,7 +113,7 @@ _INF = float("inf")
 
 def json_rows(table: pa.Table) -> list[dict]:
     """Rows as JSON-ready dicts: times ISO 8601 (UTC with offset), binary base64,
-    NaN as null."""
+    decimals as numbers, NaN as null."""
     return [{k: _json_value(v) for k, v in row.items()} for row in table.to_pylist()]
 
 

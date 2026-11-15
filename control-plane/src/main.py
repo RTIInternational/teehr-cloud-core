@@ -18,7 +18,7 @@ from src import errors
 from src.config import Settings, get_settings
 from src.db import get_engine
 from src.provisioning import get_keycloak, get_polaris, reconcile
-from src.routes import datasets, projects
+from src.routes import datasets, domains, projects
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
@@ -69,6 +69,7 @@ app = FastAPI(
 )
 app.include_router(projects.router)
 app.include_router(datasets.router)
+app.include_router(domains.router)
 errors.install(app)
 
 

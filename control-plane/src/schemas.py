@@ -7,9 +7,17 @@ ADR-0011). Inputs are strict: an unknown field is an error, never silently dropp
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    field_validator,
+    model_validator,
+)
 
 from src.models import ProjectKind, ProjectStatus, Role
 
@@ -130,6 +138,7 @@ ColumnType = Literal[
     "timestamp",
     "timestamptz",
     "binary",
+    "decimal(5,4)",
 ]
 
 
@@ -140,7 +149,21 @@ class DatasetColumn(StrictInput):
     doc: str | None = Field(default=None, max_length=1000)
 
 
+def _unique_names(columns: list[DatasetColumn]) -> list[DatasetColumn]:
+    seen: set[str] = set()
+    for col in columns:
+        key = col.name.lower()
+        if key in seen:
+            raise ValueError(f"duplicate column name '{col.name}'")
+        seen.add(key)
+    return columns
+
+
 class DatasetCreate(StrictInput):
+    """An untyped dataset (`table`): any columns. A test path, not part of the
+    data model; platform admins only unless configured otherwise."""
+
+    type: Literal["table"] = "table"
     name: str = Field(
         pattern=PROJECT_NAME_PATTERN, description="Unique within the project"
     )
@@ -159,13 +182,7 @@ class DatasetCreate(StrictInput):
     @field_validator("columns")
     @classmethod
     def _unique_column_names(cls, columns: list[DatasetColumn]):
-        seen: set[str] = set()
-        for col in columns:
-            key = col.name.lower()
-            if key in seen:
-                raise ValueError(f"duplicate column name '{col.name}'")
-            seen.add(key)
-        return columns
+        return _unique_names(columns)
 
     @model_validator(mode="after")
     def _valid_key_columns(self):
@@ -185,14 +202,157 @@ class DatasetCreate(StrictInput):
         return self
 
 
+TimeseriesRole = Literal["observed", "simulated", "forecast"]
+Statistic = Literal["inst", "mean", "sum", "min", "max"]
+OptionalColumn = Literal["reference_time", "member", "quantile", "quality"]
+TimePartition = Literal["month", "year", "none"]
+
+# Columns every timeseries has or may have; extra columns can't reuse them.
+TIMESERIES_COLUMNS = frozenset(
+    {
+        "series_key",
+        "value_time",
+        "value",
+        "reference_time",
+        "member",
+        "quantile",
+        "quality",
+        "period_start",
+        "period_end",
+    }
+)
+SERIES_COLUMNS = frozenset(
+    {"series_key", "location_key", "location_layer", "period", "resolution"}
+)
+
+
+class TimeseriesCreate(StrictInput):
+    """A `timeseries` dataset (warehouse data model v1): its columns, key and
+    layout follow from these fields."""
+
+    type: Literal["timeseries"]
+    name: str = Field(
+        pattern=PROJECT_NAME_PATTERN, description="Unique within the project"
+    )
+    description: str | None = Field(default=None, max_length=2000)
+    source: str | None = Field(
+        default=None, max_length=2000, description="Where the data comes from"
+    )
+    role: TimeseriesRole
+    variable: str = Field(description="A registered variable")
+    unit: str | None = Field(
+        default=None,
+        description=(
+            "The variable's canonical unit (the default); values are stored in it"
+        ),
+    )
+    statistic: Statistic
+    period: str | None = Field(
+        default=None,
+        description=(
+            "A registered period. Default `instant` for `inst`; required otherwise"
+        ),
+    )
+    optional_columns: list[OptionalColumn] = Field(
+        default_factory=list,
+        description="Which optional columns exist (reference_time is on for forecasts)",
+    )
+    extra_columns: list[DatasetColumn] = Field(default_factory=list, max_length=100)
+    series_table: str | None = Field(
+        default=None,
+        pattern=PROJECT_NAME_PATTERN,
+        description=(
+            "An existing series table to share (e.g. across a forecast family); "
+            "default: a new `<name>_series`"
+        ),
+    )
+    series_attributes: list[DatasetColumn] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Extra columns for a new series table (basin, zone, ...)",
+    )
+    location_layer: str | None = Field(
+        default=None,
+        pattern=PROJECT_NAME_PATTERN,
+        description="Default layer for this dataset's series",
+    )
+    time_partition: TimePartition = "month"
+
+    @field_validator("optional_columns")
+    @classmethod
+    def _no_repeats(cls, value: list[str]):
+        if len(set(value)) != len(value):
+            raise ValueError("optional_columns has duplicates")
+        return value
+
+    @field_validator("extra_columns")
+    @classmethod
+    def _extra_columns(cls, columns: list[DatasetColumn]):
+        for col in columns:
+            if col.name.lower() in TIMESERIES_COLUMNS:
+                raise ValueError(f"'{col.name}' is a timeseries column")
+        return _unique_names(columns)
+
+    @field_validator("series_attributes")
+    @classmethod
+    def _series_attributes(cls, columns: list[DatasetColumn]):
+        for col in columns:
+            if col.name.lower() in SERIES_COLUMNS:
+                raise ValueError(f"'{col.name}' is a series table column")
+        return _unique_names(columns)
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        if self.role == "forecast" and "reference_time" not in self.optional_columns:
+            self.optional_columns = ["reference_time", *self.optional_columns]
+        if self.series_table and self.series_attributes:
+            raise ValueError(
+                "series_attributes only apply to a new series table, not a shared one"
+            )
+        return self
+
+
+def _dataset_type(value) -> str:
+    if isinstance(value, dict):
+        return value.get("type", "table")
+    return getattr(value, "type", "table")
+
+
+DatasetRegistration = Annotated[
+    Annotated[DatasetCreate, Tag("table")]
+    | Annotated[TimeseriesCreate, Tag("timeseries")],
+    Discriminator(_dataset_type),
+]
+
+
+class TimeseriesOut(BaseModel):
+    """A timeseries dataset's dataset-level metadata."""
+
+    role: TimeseriesRole
+    variable: str
+    unit: str
+    statistic: Statistic
+    period: str
+    optional_columns: list[OptionalColumn]
+    series_table: str
+    location_layer: str | None = None
+    time_partition: TimePartition
+    source: str | None = None
+
+
 class DatasetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str
-    kind: str
+    kind: str = Field(description="table | timeseries | series")
     description: str | None
     columns: list[DatasetColumn]
     key_columns: list[str] | None
+    timeseries: TimeseriesOut | None = Field(
+        default=None,
+        validation_alias="properties",
+        description="For a timeseries dataset: its metadata",
+    )
     table: str = Field(
         validation_alias="table_identifier",
         description="The Iceberg table: <project namespace>.<dataset name>",
@@ -233,3 +393,127 @@ class DataPageOut(BaseModel):
     total: int | None = Field(
         default=None, description="Rows matching the filter (only with count=true)"
     )
+
+
+# --- domains ----------------------------------------------------------------
+
+# UCUM symbols: printable ASCII, no spaces (e.g. m3/s, [cft_i]/s, Cel).
+UNIT_SYMBOL_PATTERN = r"^[!-~]{1,64}$"
+SLUG_PATTERN = r"^[a-z][a-z0-9_]{0,59}$"
+# ISO 8601 durations with fixed parts only (P1D, PT1H, PT15M, P1Y2M).
+DURATION_PATTERN = r"^P(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$"
+MONTH_DAY_PATTERN = r"^--(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$"
+_DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+
+class DomainScope(StrictInput):
+    project: str | None = Field(
+        default=None,
+        pattern=PROJECT_NAME_PATTERN,
+        description="The project the row belongs to; omit for a public row",
+    )
+
+
+class UnitCreate(DomainScope):
+    symbol: str = Field(pattern=UNIT_SYMBOL_PATTERN, description="UCUM symbol")
+    dimension: str = Field(pattern=SLUG_PATTERN, description="e.g. volume_flow")
+    to_si: float = Field(gt=0, description="si = value * to_si + offset")
+    offset: float = 0.0
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class UnitOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    symbol: str
+    dimension: str
+    to_si: float
+    offset: float
+    description: str | None
+    project: str | None = Field(description="null for a public row")
+
+
+PeriodForm = Literal["instant", "duration", "calendar", "absolute"]
+
+
+class PeriodCreate(DomainScope):
+    """A period (ADR-0012). A row fills exactly the fields its form uses:
+    `duration` takes `length` and `value_time_at`; `calendar` takes `start` and
+    `end`; `instant` and `absolute` take neither."""
+
+    name: str = Field(pattern=SLUG_PATTERN)
+    form: PeriodForm
+    length: str | None = Field(
+        default=None, pattern=DURATION_PATTERN, description="ISO 8601, e.g. PT1H"
+    )
+    value_time_at: Literal["start", "end"] | None = None
+    start: str | None = Field(
+        default=None, pattern=MONTH_DAY_PATTERN, description="--MM-DD, inclusive"
+    )
+    end: str | None = Field(
+        default=None, pattern=MONTH_DAY_PATTERN, description="--MM-DD, inclusive"
+    )
+    description: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("length")
+    @classmethod
+    def _has_a_part(cls, value: str | None):
+        if value is not None and (value == "P" or value.endswith("T")):
+            raise ValueError(f"{value} is not a duration")
+        return value
+
+    @field_validator("start", "end")
+    @classmethod
+    def _day_exists(cls, value: str | None):
+        if value is not None:
+            month, day = int(value[2:4]), int(value[5:7])
+            if day > _DAYS_IN_MONTH[month - 1]:
+                raise ValueError(f"{value} is not a day of the year")
+        return value
+
+    @model_validator(mode="after")
+    def _fields_for_form(self):
+        uses = {
+            "instant": set(),
+            "absolute": set(),
+            "duration": {"length", "value_time_at"},
+            "calendar": {"start", "end"},
+        }[self.form]
+        for field in ("length", "value_time_at", "start", "end"):
+            given = getattr(self, field) is not None
+            if field in uses and not given:
+                raise ValueError(f"a {self.form} period needs {field}")
+            if field not in uses and given:
+                raise ValueError(f"a {self.form} period doesn't take {field}")
+        return self
+
+
+class PeriodOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    form: PeriodForm
+    length: str | None
+    value_time_at: str | None
+    start: str | None
+    end: str | None
+    description: str | None
+    project: str | None = Field(description="null for a public row")
+
+
+class VariableCreate(DomainScope):
+    name: str = Field(pattern=SLUG_PATTERN)
+    canonical_unit: str = Field(
+        pattern=UNIT_SYMBOL_PATTERN,
+        description="A registered unit; values of this variable are stored in it",
+    )
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class VariableOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    canonical_unit: str
+    description: str | None
+    project: str | None = Field(description="null for a public row")

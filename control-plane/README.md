@@ -81,7 +81,19 @@ project bindings a user no longer holds in Keycloak.
 `/v1/projects/{name}/datasets` registers, lists, gets and deletes a project's
 datasets. A dataset is one Iceberg table in the project namespace, with declared
 columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
-`timestamp`, `timestamptz`, `binary`).
+`timestamp`, `timestamptz`, `binary`, `decimal(5,4)`).
+
+- **Timeseries** (`type: timeseries`, `docs/design/warehouse-data-model.md`):
+  register `role`, `variable`, `statistic`, `period` (default `instant` for
+  `inst`), `optional_columns` (`reference_time`, on for forecasts; `member`;
+  `quantile`; `quality`), `extra_columns` and `time_partition` (`month`, `year`,
+  `none`). The API builds the columns, key, partitioning (on `reference_time` for
+  forecasts, else `value_time`), sort order and Iceberg properties, and checks
+  the metadata against the domains. Values are stored in the variable's canonical
+  unit. Each gets a `<name>_series` series table (one row per `series_key`:
+  location, layer, period override, resolution, `series_attributes`) unless
+  `series_table` names an existing one to share. Deleting the last timeseries
+  that uses a series table deletes it too.
 
 - The API creates and drops tables **as the caller**: their own token goes to
   Polaris (PyIceberg, vended credentials), so Polaris enforces their project role.
@@ -89,9 +101,9 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
 - `key_columns` (optional) name the columns that identify a row; they become the
   table's Iceberg identifier fields and are what upserts match on (load jobs).
 - Register needs the write role, delete needs admin, list/get need read.
-- Datasets are untyped (`kind: table`) for now: a test path until typed kinds
-  (`timeseries`, ...) come with data model v1. Only platform admins may register
-  them (`UNTYPED_DATASETS_FOR_MEMBERS=true` opens it to project members).
+- Untyped datasets (`type: table`, the default) are a test path, not part of the
+  data model. Only platform admins may register them
+  (`UNTYPED_DATASETS_FOR_MEMBERS=true` opens it to project members).
 - Polaris only activates roles the token carries. A token issued before the caller
   joined the project gets `403` with `code: token_refresh_required`: get a new
   token and retry.
@@ -102,12 +114,16 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   zone offset (`Z`, `+05:00`), or pass `timezone=America/Denver` to read times
   without one in that zone (stored as UTC; daylight-saving gaps and repeats are
   refused). CSV files go through staged upload (Phase 3).
-  `mode=append` (default) or `mode=overwrite`, optionally with a `filter`
-  (e.g. `location_id = 'usgs-01'`) to replace only matching rows. Data is checked
+  `mode=upsert` replaces rows with the same key and adds the rest (the default for
+  timeseries and series tables, which refuse `append`); `mode=append` (the default
+  for untyped datasets); or `mode=overwrite`, optionally with a `filter`
+  (e.g. `location_id = 'usgs-01'`) to replace only matching rows. A batch with
+  repeated key values is refused for upserts and typed datasets. Data is checked
   against the declared columns (lossless type conversion only; required columns
   can't be null) and committed as the caller in one snapshot. Bodies are capped
-  (`MAX_WRITE_BYTES`, 64 MiB): bulk loads and upserts go through staged upload and
-  a load job (Phase 3).
+  (`MAX_WRITE_BYTES`, 64 MiB): bulk loads go through staged upload and a load job
+  (Phase 3). Unit conversion on write and adding new series keys to the series
+  table come next (#182).
 - **Reads**: `GET .../datasets/{dataset}/data`, as the caller, a page at a time:
   `columns` (comma-separated), `filter` (same syntax as writes), `limit`, `cursor`,
   `count=true`. JSON `{rows, next_cursor, total}` by default; Arrow or Parquet when
@@ -119,6 +135,17 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
 - **Lineage**: every write records who, when, mode, filter, row count and the
   Iceberg snapshot; `GET .../datasets/{dataset}/writes` lists them.
 - Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
+
+## Domains
+
+`/v1/domains/units`, `/v1/domains/periods` and `/v1/domains/variables` list and
+add the domain rows a dataset's metadata must name. Public rows (seeded by
+migration: UCUM units with their affine conversion to SI, the five shared periods
+of ADR-0012, a starting set of variables) are readable by anyone and added by
+platform admins. A project's own rows (`?project=` to list, `"project"` in the body
+to add) are readable by its readers and added by its writers. A name is defined
+once across public and a project's rows. Rows can't be edited or deleted through
+the API yet.
 
 ## Errors
 
