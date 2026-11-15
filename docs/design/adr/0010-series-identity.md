@@ -62,3 +62,9 @@ kind of series."
   reference), while the roles are **not symmetric** in the math — the primary side is the
   reference/baseline for bias, skill, and NSE — so the names mark the asymmetric role without
   implying one side is "observed." The spec's `inputs` keys match: `primary` / `secondary`.
+- **Amended 2026-11-15 (data model v1, #182):** the location id is renamed **`location_key`**
+  (VeriRace's name, which specs reference). A series points into a layer through
+  `(location_layer, location_key)` in the series table, per series as decided here, with a
+  dataset-level default layer (VeriRace sets the layer per dataset only; specs that use the
+  dataset's layer behave the same on both). The series table's per-series `interval` is replaced by
+  ADR-0012's `period` (an optional per-series override) and optional `resolution`.

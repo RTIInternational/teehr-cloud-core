@@ -69,3 +69,15 @@ metric's unit is not a simple scalar conversion of its inputs' units.
   sources remain first-class. Confirm at ratification. Implementation note: VeriRace carries its own
   UCUM unit registry (no `pint` / `cf-units` dependency); whether we reuse a small registry or a
   UCUM-aware library is an implementation choice, not a standard choice.
+- **Amended 2026-11-15 (data model v1, #182; agreed with VeriRace):**
+  - **Every unit-bearing spec parameter is `{value, unit}`** with a UCUM symbol: contingency
+    thresholds, event and ramp thresholds, and numeric values compared against unit-bearing columns
+    in input filters. Quantile and column-reference thresholds carry no unit. (How a unit is written
+    inside a filter expression is for the shared expression language to define.) This is what makes
+    a spec mean the same on TEEHR and VeriRace, which store units differently.
+  - **Variables are a registry** (public rows plus project rows), each with a **canonical unit**;
+    values are stored in it. VeriRace may adopt the same registry while keeping its as-uploaded
+    storage.
+  - **Provenance is per write, not per row:** the unit a write arrived in is recorded once in the
+    write lineage, and the original values follow by reversing the affine conversion. No
+    `original_value` / `original_unit` row columns.

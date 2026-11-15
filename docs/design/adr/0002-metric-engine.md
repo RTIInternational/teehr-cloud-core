@@ -3,7 +3,7 @@
 - **Status:** Accepted (ratified by the team, 2026-11-13)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
-- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0003 (submission), ADR-0005 (units), ADR-0006 (regenerate not migrate), ADR-0007 (package decomposition), `../warehouse-data-model.md` (`<eval>__state`), spike-3 (parity)
+- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0003 (submission), ADR-0005 (units), ADR-0006 (regenerate not migrate), ADR-0007 (package decomposition), `../warehouse-data-model.md` (`state_<slug>_v<version>`), spike-3 (parity)
 
 ## Context
 
@@ -35,7 +35,7 @@ still needed at the top of the size range.
   design. (DDSketch over t-digest: its merge is exact and order-independent, which the state design
   requires.)
 - **This per-chunk state is persisted, not just computed in memory.** The sufficient statistics and
-  sketches are written to a durable, per-evaluation artifact — the `<eval>__state` table in the
+  sketches are written to a durable, per-evaluation artifact — the `state_<slug>_v<version>` table in the
   warehouse data model — so an incremental run recomputes only new chunks and a block bootstrap
   resamples stored state rather than raw data. A run must therefore **emit this state**, not only
   final metric values. The state is regenerated, not migrated, on a schema change (ADR-0006).
@@ -48,7 +48,7 @@ still needed at the top of the size range.
   inline-ready for Phase 8; per-chunk state reused for both incremental recompute and bootstrap.
 - **Negative / cost:** two execution backends to keep in parity; kernels must be written against
   the array / sufficient-statistics contract, which is stricter than "take a timeseries slice"; the
-  persisted `<eval>__state` is additional data to store and keep in step with the evaluation.
+  persisted `state_<slug>_v<version>` is additional data to store and keep in step with the evaluation.
 - **Tradeoff accepted:** maintaining parity tests and a stricter kernel contract, in exchange for
   a single definition that runs everywhere.
 
@@ -69,5 +69,5 @@ still needed at the top of the size range.
   order-statistic / sketch path is optional and not yet exercised.
 - Kernels are extracted in Phase 4; the light-core packaging lands in Phase 9 (ADR-0007).
 - The additive-statistics / sketch contract is the "per-chunk metric state" design constraint in
-  the plan, persisted as the `<eval>__state` table (warehouse data model) — it must not be blocked by
+  the plan, persisted as the `state_<slug>_v<version>` table (warehouse data model) — it must not be blocked by
   run outputs that are only final metric values.

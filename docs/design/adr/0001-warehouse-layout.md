@@ -75,3 +75,10 @@ instantaneous data. See `../warehouse-data-model.md` and ADR-0010.
   legacy `teehr` namespace renamed or adopted. The existing data is **copied** into `public` in
   the target data model (#165), and `teehr` keeps serving until cutover, so both exist for a
   period. The constraint is that no data is lost, not that no data moves.
+- **Amended 2026-11-15 (data model v1, #182):** dataset types are **`timeseries`**, **`layer`** and
+  **`crosswalk`** (VeriRace's names); each `timeseries` has a companion series table rather than a
+  `series` type. A `timeseries` is homogeneous in `role`, `variable`, `unit`, `statistic` and
+  `period`; there is no `configuration` column (the dataset's name identifies the source). Per-series
+  `interval` is gone: ADR-0012's `period` (coverage) and optional `resolution` replace it. The
+  dataset registry lives in the control-plane Postgres, mirrored into Iceberg table properties.
+  See `../warehouse-data-model.md` (v1).

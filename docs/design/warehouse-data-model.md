@@ -1,233 +1,170 @@
-# Target warehouse data model (v0 draft)
+# Warehouse data model (v1)
 
-- **Status:** Draft v0 — Phase 0 design artifact, input to ratification and spikes
-- **Date:** 2026-11-10
-- **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout), ADR-0005 (units), ADR-0002 (metric engine), ADR-0010 (series identity), ADR-0012 (temporal extent)
+- **Status:** v1, decided 2026-11-15 (#182). Supersedes the v0 draft (2026-11-10).
+- **Related:** ADR-0001 (layout), ADR-0005 (units), ADR-0010 (series identity), ADR-0011 (VeriRace
+  parity), ADR-0012 (temporal extent), `spec-schema-v0.md`, `shared-contract-v0.md`
 
-This is the greenfield, canonical schema the platform is built against. Existing data is
-**ported** into it once (validated backfill), not carried forward. It is a draft to react to, not
-a settled schema.
+The canonical model the platform is built against. Existing data is **ported** into it once
+(validated backfill, #165), not carried forward. v1 adopts VeriRace's typed datasets as implemented
+wherever no ratified TEEHR ADR decides otherwise (ADR-0011); the differences are listed at the end.
 
 ## Principles
 
-- **Greenfield, canonical.** Redesign clean; do not inherit the compound `variable_name`, string
-  units, or denormalized domains.
-- **Star, not full 3NF.** Normalize the *domains* into small validated domain tables, but
-  keep the *fact* tables wide for scan performance.
-- **Table-per-dataset within a project namespace** (ADR-0001). A dataset has a type and lives in
-  its own Iceberg table; a project is a Polaris namespace.
-- **Write gateway enforces the schema.** No writer bypasses it (ADR-0004).
-- **Canonical units + provenance** (ADR-0005). Store canonical; keep the original value and unit.
+- **Typed datasets only.** A dataset is one of a few types with a fixed shape. The untyped `table`
+  kind in the API is a test path (platform admins only), not part of the model.
+- **Metadata at the dataset, values in the rows.** Role, variable, unit, statistic and period are
+  dataset-level (fixed for the dataset); rows hold only what varies per value.
+- **Controlled vocabularies.** Units, periods and variables are registries; a dataset's metadata must
+  name registered entries.
+- **Canonical units.** Values are stored in the variable's canonical unit (ADR-0005).
+- **One write path enforces it.** The API and its load jobs validate every write (ADR-0004);
+  Iceberg enforces no foreign keys, so nothing else does.
 
-## Namespaces and datasets
+## Where things live
 
-- `public` namespace (system project) holds the open input data and the **shared domain tables**.
-- `platform` namespace (system project) holds platform-owned evaluations and the derived tables
-  behind the official dashboards.
-- Each tenant project is its own namespace; its datasets may reference `public` and `platform`.
-- A **dataset** is one typed Iceberg table. Dataset types:
+- **Data:** one Iceberg table per dataset, in its project's namespace (ADR-0001). The system
+  project `public` holds open input data; `platform` holds platform-owned evaluations.
+- **Dataset registry and vocabularies:** the control-plane Postgres (`control_plane` schema), the
+  authority; each dataset's metadata is mirrored into its Iceberg table properties.
+- **Vocabulary rows:** public rows (managed by platform admins) plus each project's own rows
+  (added by its writers). A name is defined once across both, so it means the same everywhere.
 
-| Type | Holds | Notes |
+## Dataset types
+
+| Type | Holds | Key |
 | --- | --- | --- |
-| `timeseries` | observed / simulated / forecast values | the fact table; keyed by `series_key` |
-| `series` | per-series attributes (the series catalog) | `series_key` → attributes, incl. an optional `(location_layer, location_id)`; one per `timeseries` dataset |
-| `locations` | geo layer: points, lines or polygons + inline attributes | `location_id` → `geometry`; shareable, linked from the series catalog |
-| `crosswalks` | series ↔ series links | one `series_key` ↔ another, for pairing (role-neutral; spec assigns primary/secondary) |
+| `timeseries` | observed, simulated or forecast values | `series_key`, [`reference_time`], `value_time`, [`member`], [`quantile`] |
+| `layer` | locations: geometry + attributes | `location_key` |
+| `crosswalk` | links between two datasets' series | `left_key`, `right_key` |
 
-**Series are the identity.** A `timeseries` row is keyed by `series_key`, not a location — a gage,
-an energy zone, or a grid node are all just series (ADR-0010). A series's attributes, including an
-optional `location_id`, live in the `series` catalog; geometry lives in a `locations` layer the
-catalog points to. So `location_id` is a catalog attribute where a series is geographic, not an
-assumption baked into the fact key.
+Each `timeseries` dataset has a companion **series table** (its series catalog), not a dataset type
+of its own.
 
-**Datasets are homogeneous.** A `timeseries` dataset holds exactly one `configuration`, one
-`variable`, and one `statistic`; **any variation requires a separate table**. These — and the
-canonical `unit` that follows from variable + statistic — are dataset-level metadata (in the dataset
-registry and the Iceberg table properties, each an FK to its domain table), not stored per row.
-**`interval` is the exception: it is per-series** — set in the `series` catalog, **nullable** (null
-for instantaneous data), with an optional dataset-level default — because one network can mix
-reporting intervals (hourly, 15-minute, daily) under the same variable and statistic. This keeps
-the fact rows minimal while letting a dataset hold mixed-interval series.
+## Vocabularies
 
-Derived outputs are **owned by an evaluation** and scoped by its id within the namespace — see
-"Derived tables — owned by an evaluation" below. They are regenerated, not migrated (ADR-0006).
-
-## Domain tables (controlled, in `public`)
-
-Small validated domain tables; every fact-table code column is a foreign key into one of these.
-
-**"Foreign key" here is logical, not enforced by storage.** Iceberg does not support foreign-key
-(or primary-key / uniqueness) constraints, and neither Spark nor Trino enforce them on Iceberg
-tables. Every FK in this document — domain references, `(location_layer, location_id)`, crosswalk
-series links — is validated and enforced by the **write gateway** at write time (ADR-0004), not by
-the catalog or query engine. A reader must not assume the engine rejects a dangling reference.
-
-- **`variable`** — the measured quantity only (e.g. `streamflow`, `precipitation`,
-  `air_temperature`). No interval or statistic baked in.
-- **`interval`** — the time step / accumulation window as a *duration* (e.g. `instantaneous`,
-  `hourly`, `daily`, `PT1H`, `P1D`). A duration is an unanchored length; it is **not** a fixed
-  calendar span like April–July — see the fixed-period open question below.
-- **`statistic`** — how the value is reduced over the interval (e.g. `instantaneous`, `mean`,
-  `sum`, `max`, `min`).
-- **`unit`** — canonical unit as a **UCUM symbol** (e.g. `m3/s`, `[cft_i]/s`, `Cel`), with `to_si`
-  scale and `offset` for affine conversion plus a dimension signature (the registry, ADR-0005).
-- **`configuration`** — the data source / model configuration (e.g. `usgs_observations`,
-  `nwm30_retrospective`, `nwm30_short_range`), with its kind (observed / simulated / forecast).
-- **`quality`** — per-observation quality / qualifier codes (e.g. `approved`, `provisional`,
-  `estimated`, `ice`), mapping the source's native code where it has one. Referenced by the
-  `timeseries` fact `quality` column, not by the `series` catalog.
-
-### The compound-name split
-
-The legacy `variable_name` (e.g. `streamflow_hourly_inst`) is split into **three descriptors**:
-`variable` + `interval` + `statistic`, each an FK to its domain. `variable` and `statistic` are
-dataset-level; `interval` is per-series (nullable). This is the single most load-bearing schema
-change — it makes grouping, unit semantics, and cross-dataset joins well-defined instead of
-string-parsed.
-
-## Fact table — `timeseries`
-
-One row per value. A dataset table is **homogeneous** in `configuration`, `variable`, `interval`,
-and `statistic` (the rule above), so those — and the canonical `unit` that follows from them — are
-**dataset-level metadata**, not row columns. Row columns (v0):
-
-| Column | Type | Notes |
+| Registry | Columns | Notes |
 | --- | --- | --- |
-| `series_key` | string | the series identity; its attributes (incl. an optional `location_id`) live in the `series` catalog |
-| `value_time` | timestamp | the time the value is for |
-| `reference_time` | timestamp, nullable | forecast issue time; null for observed/retrospective |
-| `member` | string, nullable | ensemble member; null if deterministic |
-| `value` | double | in the dataset's canonical unit |
-| `quality` | string, nullable | per-observation quality / qualifier code (FK to the `quality` domain); e.g. USGS approved / provisional / estimated. Null where the source carries no quality (typically simulated / forecast) |
-| `original_value` | double, nullable | provenance |
-| `original_unit` | string, nullable | provenance (FK to `unit`); dataset-level if the source is uniform |
+| **units** | `symbol` (UCUM), `dimension`, `to_si`, `offset` | affine conversion `si = value × to_si + offset` (ADR-0005) |
+| **periods** | `name`, `form`, `length`, `value_time_at`, `start`, `end`, `description` | exactly ADR-0012's table; shared rows `instant`, `hour_starting`, `hour_ending`, `day_starting`, `day_ending` ship fixed in both systems |
+| **variables** | `name`, `canonical_unit`, `description` | the canonical unit is what values of this variable are stored in |
 
-`quality` is **per-observation**, not per-series — it varies row by row (a gage reading can be
-provisional today, approved later), so it is a fact column, not a `series` catalog attribute. It is
-nullable because simulated / forecast values usually have none.
+Code enums, not tables: `role` (`observed` \| `simulated` \| `forecast`), `statistic`
+(`inst` \| `mean` \| `sum` \| `min` \| `max`), period `form`.
 
-The engine materializes `configuration` / `variable` / `statistic` / `unit` (dataset-level) and
-`interval` (per-series, from the `series` catalog) as columns when it composes or pairs datasets
-(VeriRace's `secondary_dataset` pattern), so they are available for `group_by` and output without
-being stored per row.
+There is **no `configuration` vocabulary**: a dataset's name identifies its source/configuration
+(`usgs_observations`, `nwm30_retrospective`), and `role` says what kind it is. There is **no
+`quality` vocabulary** in v1 (see below).
 
-Partitioning / sort: by time (and `series_key` where it helps) — to be confirmed by the storage
-spike against real query shapes.
+## `timeseries`
 
-## Series catalog — `series`
+### Registration (dataset-level)
 
-One row per `series_key` in a `timeseries` dataset, holding its attributes:
-
-- `series_key` (string, stable) — the series identity, matching the `timeseries` fact.
-- `location_id` (string, nullable) — the id within a `locations` layer; null for non-geographic
-  series.
-- `location_layer` (string, nullable) — names the `locations` dataset that `location_id` resolves
-  into, so the FK is the pair `(location_layer, location_id)`. This is **explicit**, not inferred
-  from an id prefix, so a series resolves unambiguously when a namespace holds several location
-  layers. Null whenever `location_id` is null.
-- `interval` (string, nullable) — FK into the `interval` domain; the series' reporting interval,
-  null for instantaneous data, falling back to the dataset's default interval when set.
-- any free-form attributes used for grouping or pairing (e.g. `zone`, basin id, vendor).
-
-Constant per series. A geographic attribute resolves `series_key → series → location_id →
-locations` (the spec's `of: location`); a spatial label resolves the series's geometry against a
-polygon layer (`within`).
-
-## Locations layer — `locations`
-
-Geo layer, keyed by `location_id`:
-
-- `location_id` (string, stable), `name`, `geometry` (`GEOMETRY`), plus **arbitrary attribute
-  columns** inline (drainage area, stream order, …) rather than a separate attributes table
-  (ADR-0001). Id conventions carried forward where they encode meaning (e.g. `usgs-` points vs
-  `usgsbasin-` polygons).
-- Linked from the `series` catalog (`series.location_id`), not from `timeseries` directly. Can be
-  shared (in `public`) and referenced by many datasets' series.
-- **Many layers per namespace.** `locations` is a dataset *type*, so a project can hold several —
-  gage points, basin polygons, reach lines, grid nodes — each its own table, each shareable. A
-  `series` catalog resolves into one of them by its explicit `location_layer` reference (below).
-
-## Crosswalks — `crosswalks`
-
-- One `series_key` ↔ another `series_key` (+ optional `weight` for many-to-one aggregation).
-  Used to pair two series for an evaluation — a series↔series link, not a location link. The link
-  is role-neutral; a spec's `inputs` assign which side is `primary` vs `secondary`.
-- **Many crosswalks per namespace.** One `crosswalk` table per pairing you need (e.g. `usgs_nwm30`,
-  `usgs_rfc`); a spec's `pair.relation` names which one to use.
-
-## Derived tables — owned by an evaluation
-
-Derived outputs are **not** global shared tables. Each **evaluation** (a saved, versioned spec and
-its runs) owns its own set of derived tables, scoped by the evaluation's id/slug within the project
-namespace. This extends the table-per-dataset principle (ADR-0001) to derived data: an evaluation's
-tables get their own snapshots and lifecycle, and dropping the evaluation drops its tables.
-
-Illustrative set for an evaluation `<eval>` (names and suffixes indicative, not final):
-
-| Table | Holds |
+| Field | Rule |
 | --- | --- |
-| `<eval>__paired` | primary paired with secondary (via crosswalk), time-aligned, plus derived fields |
-| `<eval>__groups` | the resolved grouping — group keys and membership |
-| `<eval>__state` | per-chunk sufficient statistics / sketches that feed the metrics |
-| `<eval>__metrics` | metric results + bootstrap CIs, keyed by the group-by columns |
+| `name` | `[a-z][a-z0-9_]{0,59}`, unique in the project |
+| `type` | `timeseries` |
+| `role` | `observed` \| `simulated` \| `forecast` |
+| `variable` | a registered variable |
+| `unit` | the variable's canonical unit (uploads in another unit of the same dimension are converted) |
+| `statistic` | `inst` \| `mean` \| `sum` \| `min` \| `max` |
+| `period` | a registered period. Default `instant` for `inst`; required otherwise; `instant` only with `inst` (ADR-0012 rule 4) |
+| optional columns | which of `reference_time` (always on for `forecast`), `member`, `quantile`, `quality` are present; `period_start`/`period_end` are on exactly when the period's form is `absolute` |
+| extra columns | named and typed at registration |
+| `series_table` | default: the dataset's own; may name an existing one shared by a family (e.g. NWM forecast ranges) |
+| `location_layer` | optional default layer for the dataset's series |
+| `time_partition` | `month` (default) \| `year` \| `none` |
+| `description`, `source` | free text |
 
-- **`<eval>__state`** carries the per-`(group, month)` additive statistics (counts, sums, squared
-  sums, cross-products) for moment-based metrics and mergeable sketches (histogram / t-digest) for
-  order-statistic metrics, so later runs of the same evaluation recompute only new units and
-  bootstrap resamples stored state (ADR-0002). Run outputs must **not** be only final metric
-  values, or this is blocked.
-- **`<eval>__metrics`** columns: the group-by key columns + `metric` + `value` + `unit`
-  (metric-aware, ADR-0005) + `ci_lower`, `ci_upper`, `ci_level`, `seed`. The group-by columns are
-  its uniqueness key.
-- **Regenerated, not migrated** (ADR-0006): a run (re)builds these from the source datasets; a
-  schema change regenerates them rather than migrating in place.
-- **Control-plane linkage:** the evaluation's identity, spec versions, and run history live in the
-  metadata control-plane DB (not the warehouse); that record points to this set of warehouse
-  tables. The warehouse holds the data; the control plane holds the evaluation and its lineage.
+`role`, `variable`, `unit`, `statistic` and `period` are fixed once registered: appending data that
+claims different values is refused.
 
-## Lineage (every derived row / run)
+### Columns
 
-`run_id`, `spec_version`, `engine_version`, and the **input table snapshot** (Iceberg snapshot id)
-of each source — so any result is reproducible.
+| Column | Type | Presence |
+| --- | --- | --- |
+| `series_key` | string, not null | always |
+| `value_time` | timestamptz (UTC, µs), not null | always |
+| `value` | double | always (null allowed: a missing value) |
+| `reference_time` | timestamptz, not null | forecasts (issue time) |
+| `member` | string, not null | ensembles |
+| `quantile` | decimal(5,4), not null | quantile forecasts; 4 decimal places in both systems |
+| `quality` | string | optional: the source's own code(s), several joined with commas |
+| `period_start`, `period_end` | timestamptz, not null | only for `absolute` periods |
+| extra columns | as declared | as declared |
 
-## Open questions
+An optional column either doesn't exist in the dataset or is never null. That is what lets it be
+part of the key: Iceberg identifier fields must be required and can't be floating point (hence
+`quantile` is a decimal, not a double).
 
-- Partitioning/sort keys for `timeseries` — defer to the storage spike on real query shapes.
-- Do ensemble members live as a column (above) or as a separate dataset type? (v0: column.)
-- Where polygon geometries that are too large for GeoJSON transport are summarized for the API.
-- Exact `configuration` taxonomy and whether `kind` (observed/simulated/forecast) is its own
-  domain column.
-- Evaluation table scoping — three candidates: eval-first `<eval>__paired`, type-first
-  `paired__<eval>` (VeriRace-style, groups like tables together when listing), or a per-evaluation
-  sub-namespace. Plus whether a new `version` gets a fresh table set or regenerates in place.
-- Which derived tables are mandatory vs optional per evaluation (not every spec needs `__groups`
-  or `__state`).
-- Provenance granularity: is `original_unit` (and the source) always uniform per dataset — making
-  it dataset-level too — or can one dataset mix source units, keeping them row columns?
-- `interval` is per-series in the `series` catalog (nullable, with a dataset default), and pairing
-  requires matching `interval` per pair for non-`inst` statistics (as VeriRace does) — decided,
-  pending ratification (ADR-0010).
-- Is the `series` catalog one table per `timeseries` dataset, or a shared catalog per namespace?
-- Quality codes are source-specific (USGS approval + qualifiers differ from RFC / NWPS). One shared
-  `quality` domain with namespaced codes, or a per-`configuration` quality vocabulary? And can one
-  observation carry **multiple** qualifiers at once — v0 models a single `quality` code per row.
-- Multiple `locations` layers in a namespace: a `series` row names its layer with an explicit
-  `location_layer` column — the FK is `(location_layer, location_id)`, not an id-prefix convention —
-  decided, pending ratification.
-- **Fixed calendar periods (water-supply seasonal values).** FVED needs values defined over an
-  *anchored* calendar span — e.g. an April–July volume, encoded `0407` — which is not an ISO-8601
-  duration and does not belong in `interval` (a floating length). VeriRace did not model this.
-  Options: (a) overload `interval` to also hold a range — rejected, it re-creates the compound-field
-  parsing this redesign removes; (b) a distinct, nullable **`period`** concept, per-series like
-  `interval`, FK to a `period` domain that resolves a code (`0407`) to an explicit start/end;
-  (c) explicit `window_start` / `window_end` fact columns — most general, but adds columns to every
-  row for an edge case. **Proposed: (b)** — `variable`=volume, `statistic`=sum, `period`=`0407`
-  decomposes with no overloading (the period is the explicit Apr 1 – Jul 31 window, not the legacy
-  `0407` code), `value_time` distinguishes the water year, `interval` stays duration-only, and
-  pairing then also matches on `period`. Decide generality at ratification
-  (one-off FVED need vs a core concept) — the field is null for every non-period series, so it costs
-  the common case nothing. **Written up as ADR-0012**, which goes further: it treats coverage as an
-  *anchored window* (anchored to `value_time`, to issuance/`reference_time`, to the calendar, or
-  absolute), so a forecast window "an interval from issuance" and a "fixed period" are one model, and
-  it decomposes the old `interval` into coverage (`period`) + frequency (`resolution`). See ADR-0012
-  for the full decision and open questions.
+### Key, writes, layout
+
+- **Key:** `series_key`, [`reference_time`], `value_time`, [`member`], [`quantile`] (the columns
+  present). A batch with duplicate keys is refused; writes **upsert** on the key, so a revised
+  record (e.g. provisional → approved) replaces the old values.
+- **Validation on write:** required columns present and not null; types convert losslessly (times
+  need a zone or an explicit `timezone`); values converted to the canonical unit; every new
+  `series_key` added to the series table; every problem in a file reported at once.
+- **Partitioning:** by `time_partition` on `reference_time` for forecasts, else `value_time`;
+  sorted by `series_key`, [`reference_time`], `value_time`. Tuned later by the storage spike;
+  doesn't block registration.
+
+### Series table
+
+One row per `series_key`:
+
+| Column | Notes |
+| --- | --- |
+| `series_key` | unique, not null |
+| `location_key`, `location_layer` | where the series is; the layer defaults to the dataset's (ADR-0010) |
+| `period` | overrides the dataset's period for this series (same statistic rule) |
+| `resolution` | optional, descriptive: how often values recur (ADR-0012) |
+| free attributes | for grouping and pairing (basin, zone, operator, …) |
+
+## `layer`
+
+Locations, keyed by `location_key`, with EPSG:4326 `geometry` (points, lines or polygons), an
+optional `name`, and arbitrary attribute columns inline. Large polygon layers are served to maps as
+vector tiles (PMTiles), not GeoJSON. A series points into a layer through `(location_layer,
+location_key)`; an evaluation can also group series by the polygon they fall within (`within`).
+
+## `crosswalk`
+
+`left_key` → `right_key` (series keys of two datasets), plus optional free columns (e.g. `weight`
+for many-to-one aggregation). Role-neutral: a spec's inputs decide which side is primary.
+
+## Units and provenance
+
+Values are stored in the variable's canonical unit (ADR-0005). The unit a write arrived in is
+recorded **once per write** in the write lineage (control-plane DB), not per row; the original values
+follow by reversing the affine conversion. No `original_value` / `original_unit` row columns.
+
+## Evaluation outputs
+
+An evaluation version gets its own tables in its project namespace:
+`{pairs|results|groups|state}_{slug}_v{version}`. `results` always; `pairs` optional; `groups` and
+`state` when the spec supports incremental runs (ADR-0002). A new version gets a fresh set; they're
+regenerated, never migrated (ADR-0006). The evaluation, its spec versions and its runs live in the
+control-plane DB.
+
+## Lineage
+
+Every write: who, when, mode, rows, original unit, and the Iceberg snapshot it produced. Every
+derived row/run: `run_id`, `spec_version`, `engine_version`, and each input's snapshot id.
+
+## Differences from VeriRace (ADR-0011)
+
+| | TEEHR | VeriRace |
+| --- | --- | --- |
+| Stored unit | canonical, converted on write | as uploaded, converted at pairing |
+| Variables | validated registry with canonical unit | free text (may adopt the registry) |
+| Location layer | per series, dataset default | per dataset |
+| `quantile` type | decimal(5,4) | double (same values at 4 decimal places) |
+
+Specs mean the same on both because every unit-bearing spec parameter carries its unit
+(`{value, unit}`, ADR-0005).
+
+## Deferred
+
+- Partition/sort tuning (storage spike, real query shapes).
+- A quality vocabulary (per-source codes, multiple qualifiers per value).
+- Multiple `layer` geometries per location, and gridded data.

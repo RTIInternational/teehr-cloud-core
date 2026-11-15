@@ -32,6 +32,11 @@ diverge the schema.
 - **Validated against the domain tables.** Every referenced dataset, column, metric, and unit is
   checked against the warehouse domains (`warehouse-data-model.md`).
 - **Units are explicit** and canonicalized on submit (ADR-0005).
+  Every unit-bearing parameter is `{value, unit}` (UCUM), e.g.
+  `threshold: {value: 1000, unit: "[cft_i]/s"}`: contingency, event and ramp thresholds, and
+  numeric values compared against unit-bearing columns in filters (expression syntax for that is
+  the shared expression language's to define). Quantile and column thresholds take no unit.
+  (Amended 2026-11-15, #182.)
 - **Versioned.** `version` is recorded on every run for reproducibility.
 
 ## Steps (always run in this order)
@@ -90,7 +95,7 @@ output:
   (`rmse`) or an object (`{name: nash_sutcliffe_efficiency, transform: log}`). `skill` computes a
   skill score against a `reference` predicted dataset. Metric names resolve to the kernel registry;
   each kernel declares its unit semantics (ADR-0005).
-- **`bootstrap`** — optional; `method: block` resamples the per-`<eval>__state` chunks (ADR-0002)
+- **`bootstrap`** — optional; `method: block` resamples the per-`state_<slug>_v<version>` chunks (ADR-0002)
   rather than recomputing from raw. `block` should match the state granularity.
 - **`output`** — `units` (display render), `include_pairs`, and for a geospatial group key
   `geometry` / `attributes` to attach polygons/names for the API.
