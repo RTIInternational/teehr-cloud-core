@@ -8,6 +8,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     DateTime,
+    Double,
     Enum,
     ForeignKey,
     Index,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -118,6 +120,9 @@ class Dataset(Base):
     columns: Mapped[list[dict] | None] = mapped_column(JSON)
     # Columns that identify a row (Iceberg identifier fields); used by upserts.
     key_columns: Mapped[list[str] | None] = mapped_column(JSON)
+    # Typed datasets: their dataset-level metadata (role, variable, unit, ...),
+    # also mirrored into the Iceberg table properties.
+    properties: Mapped[dict | None] = mapped_column(JSON)
     table_identifier: Mapped[str | None] = mapped_column(String(200))
     created_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
@@ -146,6 +151,83 @@ class DatasetWrite(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
+
+
+# --- domains ----------------------------------------------------------------
+#
+# Units, periods and variables a dataset's metadata must name. A row with no
+# project is public (managed by platform admins); a project's own rows are added
+# by its writers. A name is defined once across public and a project's rows, so
+# it means the same thing everywhere it's visible.
+
+
+def _public_unique(table: str, column: str) -> Index:
+    """Public names are unique (a plain unique constraint lets NULL projects
+    repeat)."""
+    return Index(
+        f"uq_{table}_public_{column}",
+        column,
+        unique=True,
+        postgresql_where=text("project_id IS NULL"),
+        sqlite_where=text("project_id IS NULL"),
+    )
+
+
+class Unit(Base):
+    """A UCUM unit and its affine conversion to SI: ``si = value * to_si + offset``
+    (ADR-0005)."""
+
+    __tablename__ = "units"
+    __table_args__ = (
+        UniqueConstraint("project_id", "symbol"),
+        _public_unique("units", "symbol"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(_fk("projects"))
+    symbol: Mapped[str] = mapped_column(String(64))
+    dimension: Mapped[str] = mapped_column(String(64))
+    to_si: Mapped[float] = mapped_column(Double)
+    offset: Mapped[float] = mapped_column(Double, default=0.0)
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class Period(Base):
+    """The span of time a value covers (ADR-0012); a row fills only the columns
+    its form uses."""
+
+    __tablename__ = "periods"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name"),
+        _public_unique("periods", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(_fk("projects"))
+    name: Mapped[str] = mapped_column(String(60))
+    form: Mapped[str] = mapped_column(String(16))
+    length: Mapped[str | None] = mapped_column(String(32))  # ISO 8601 duration
+    value_time_at: Mapped[str | None] = mapped_column(String(8))  # start | end
+    # --MM-DD, inclusive ("start"/"end" are SQL keywords, hence the names).
+    start: Mapped[str | None] = mapped_column("span_start", String(8))
+    end: Mapped[str | None] = mapped_column("span_end", String(8))
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class Variable(Base):
+    """What is measured; values of it are stored in its canonical unit."""
+
+    __tablename__ = "variables"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name"),
+        _public_unique("variables", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(_fk("projects"))
+    name: Mapped[str] = mapped_column(String(60))
+    canonical_unit: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str | None] = mapped_column(Text)
 
 
 class Run(Base):

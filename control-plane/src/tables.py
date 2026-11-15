@@ -27,11 +27,19 @@ from pyiceberg.exceptions import (
 from pyiceberg.expressions import AlwaysTrue, BooleanExpression
 from pyiceberg.expressions.parser import parse
 from pyiceberg.expressions.visitors import bind
+from pyiceberg.partitioning import (
+    UNPARTITIONED_PARTITION_SPEC,
+    PartitionField,
+    PartitionSpec,
+)
 from pyiceberg.schema import Schema
+from pyiceberg.table.sorting import UNSORTED_SORT_ORDER, SortField, SortOrder
+from pyiceberg.transforms import IdentityTransform, MonthTransform, YearTransform
 from pyiceberg.types import (
     BinaryType,
     BooleanType,
     DateType,
+    DecimalType,
     DoubleType,
     FloatType,
     IcebergType,
@@ -57,6 +65,7 @@ COLUMN_TYPES: dict[str, IcebergType] = {
     "timestamp": TimestampType(),  # no time zone
     "timestamptz": TimestamptzType(),  # UTC
     "binary": BinaryType(),
+    "decimal(5,4)": DecimalType(5, 4),  # quantiles (4 decimal places)
 }
 
 
@@ -88,7 +97,19 @@ class DataMismatch(ValueError):
     """Submitted data (or a filter) doesn't fit the dataset's declared columns."""
 
 
-WriteMode = Literal["append", "overwrite"]
+WriteMode = Literal["append", "overwrite", "upsert"]
+PartitionTransform = Literal["month", "year"]
+
+
+@dataclass(frozen=True)
+class Layout:
+    """How a new table is laid out: partitioned by a time transform of one
+    column, sorted by others, with table properties (metadata mirrored from the
+    registry)."""
+
+    partition: tuple[str, PartitionTransform] | None = None
+    sort: tuple[str, ...] = ()
+    properties: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +148,44 @@ def iceberg_schema(
     return Schema(
         *fields, identifier_field_ids=[ids[name] for name in key_columns or ()]
     )
+
+
+def _partition_spec(
+    schema: Schema, partition: tuple[str, PartitionTransform] | None
+) -> PartitionSpec:
+    if partition is None:
+        return UNPARTITIONED_PARTITION_SPEC
+    column, transform = partition
+    field = schema.find_field(column)
+    return PartitionSpec(
+        PartitionField(
+            source_id=field.field_id,
+            field_id=1000,
+            transform=MonthTransform() if transform == "month" else YearTransform(),
+            name=f"{column}_{transform}",
+        )
+    )
+
+
+def _sort_order(schema: Schema, columns: tuple[str, ...]) -> SortOrder:
+    if not columns:
+        return UNSORTED_SORT_ORDER
+    return SortOrder(
+        *(
+            SortField(
+                source_id=schema.find_field(c).field_id, transform=IdentityTransform()
+            )
+            for c in columns
+        )
+    )
+
+
+def duplicate_keys(data: pa.Table, key_columns: list[str]) -> int:
+    """How many key values occur more than once in ``data``."""
+    if not key_columns or data.num_rows == 0:
+        return 0
+    counts = data.group_by(key_columns).aggregate([([], "count_all")])
+    return pc.sum(pc.greater(counts.column("count_all"), 1)).as_py() or 0
 
 
 _HAS_OFFSET = r"(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$"
@@ -208,7 +267,20 @@ def conform(
                 hint = " (or pass timezone=...)" if field.type.tz else ""
                 raise DataMismatch(f"column '{field.name}' must be {kind}{hint}")
         try:
-            arrays.append(column.cast(field.type, safe=True))
+            converted = column.cast(field.type, safe=True)
+            if pa.types.is_decimal(field.type) and pa.types.is_floating(source):
+                # Arrow rounds floats to the scale; refuse rather than round.
+                back = converted.cast(pa.float64())
+                if not pc.all(
+                    pc.or_kleene(
+                        pc.equal(back, column.cast(pa.float64())), pc.is_null(column)
+                    )
+                ).as_py():
+                    raise DataMismatch(
+                        f"column '{field.name}': values must have at most "
+                        f"{field.type.scale} decimal places"
+                    )
+            arrays.append(converted)
         except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
             if is_text:
                 raise DataMismatch(
@@ -242,6 +314,7 @@ class Tables(Protocol):
         name: str,
         columns: list[dict],
         key_columns: list[str] | None = None,
+        layout: Layout | None = None,
     ) -> str:
         """Create the table as the caller; returns its storage location."""
 
@@ -312,10 +385,17 @@ class PolarisTables:
         name: str,
         columns: list[dict],
         key_columns: list[str] | None = None,
+        layout: Layout | None = None,
     ) -> str:
+        schema = iceberg_schema(columns, key_columns)
+        layout = layout or Layout()
         try:
             table = self._catalog(token).create_table(
-                (namespace, name), schema=iceberg_schema(columns, key_columns)
+                (namespace, name),
+                schema=schema,
+                partition_spec=_partition_spec(schema, layout.partition),
+                sort_order=_sort_order(schema, layout.sort),
+                properties=layout.properties or {},
             )
         except (ForbiddenError, UnauthorizedError) as exc:
             raise TableForbidden(str(exc)) from exc
@@ -340,6 +420,8 @@ class PolarisTables:
             table = self._catalog(token).load_table((namespace, name))
             if mode == "append":
                 table.append(data)
+            elif mode == "upsert":  # on the table's identifier fields
+                table.upsert(data)
             else:
                 table.overwrite(data, overwrite_filter=overwrite_filter or AlwaysTrue())
             snapshot = table.current_snapshot()

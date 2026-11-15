@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from src.auth import Identity
 from src.config import Settings
+from src.domains import lookup
 from src.errors import APIError
 from src.formats import (
     ARROW_STREAM,
@@ -47,7 +48,15 @@ from src.formats import (
     json_rows,
     negotiate,
 )
-from src.models import Dataset, DatasetWrite, Project, ProjectStatus, Role
+from src.models import (
+    Dataset,
+    DatasetWrite,
+    Period,
+    Project,
+    ProjectStatus,
+    Role,
+    Variable,
+)
 from src.paging import BadCursor, decode_cursor, encode_cursor, fingerprint
 from src.routes.projects import (
     IdentityDep,
@@ -62,10 +71,13 @@ from src.schemas import (
     DataPageOut,
     DatasetCreate,
     DatasetOut,
+    DatasetRegistration,
+    TimeseriesCreate,
     WriteOut,
 )
 from src.tables import (
     DataMismatch,
+    Layout,
     NamespaceMissing,
     SnapshotGone,
     TableError,
@@ -75,6 +87,7 @@ from src.tables import (
     Tables,
     WriteConflict,
     conform,
+    duplicate_keys,
     get_tables,
     parse_filter,
 )
@@ -87,7 +100,8 @@ DatasetName = Annotated[
 ]
 
 TOKEN_REFRESH = "token_refresh_required"
-DATASET_KIND = "table"  # typed datasets (timeseries, series, ...) come later
+TABLE, TIMESERIES, SERIES = "table", "timeseries", "series"
+TYPED = (TIMESERIES, SERIES)
 
 
 def _dataset(session: Session, project: Project, name: str) -> Dataset:
@@ -148,54 +162,31 @@ def _authorize_dataset_op(
     return project, my_role
 
 
-@router.post(
-    "",
-    status_code=status.HTTP_201_CREATED,
-    operation_id="create_dataset",
-    responses=_errors(401, 403, 404, 409, 502, 503),
-)
-def create_dataset(
-    name: ProjectName,
-    body: DatasetCreate,
-    session: SessionDep,
-    identity: IdentityDep,
-    settings: SettingsDep,
-    tables: TablesDep,
-) -> DatasetOut:
-    """Register a dataset: creates its Iceberg table, as the caller.
-
-    Datasets are untyped (`table`) for now, a test path until typed kinds
-    (timeseries, ...) exist: only platform admins may register them, unless
-    UNTYPED_DATASETS_FOR_MEMBERS is on.
-    """
-    project, my_role = _authorize_dataset_op(
-        session, name, identity, settings, Role.WRITE
+def _exists(session: Session, project: Project, name: str) -> bool:
+    return (
+        session.scalar(
+            select(Dataset.id).where(
+                Dataset.project_id == project.id, Dataset.name == name
+            )
+        )
+        is not None
     )
-    if not (
-        settings.untyped_datasets_for_members
-        or identity.has_any_role(settings.admin_roles)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Untyped datasets are limited to platform admins until typed "
-                "datasets (timeseries, ...) are available"
-            ),
-        )
-    tables = _require_tables(tables)
-    if session.scalar(
-        select(Dataset.id).where(
-            Dataset.project_id == project.id, Dataset.name == body.name
-        )
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Dataset '{body.name}' already exists",
-        )
-    columns = [col.model_dump() for col in body.columns]
+
+
+def _create_table(
+    tables: Tables,
+    identity: Identity,
+    project: Project,
+    my_role: Role | None,
+    name: str,
+    columns: list[dict],
+    key_columns: list[str] | None,
+    layout: Layout | None = None,
+) -> None:
+    """Create a dataset's table as the caller, as an HTTP error on failure."""
     try:
         tables.create_table(
-            identity.token, project.name, body.name, columns, body.key_columns
+            identity.token, project.name, name, columns, key_columns, layout
         )
     except TableForbidden as exc:
         raise _forbidden(project, my_role, Role.WRITE) from exc
@@ -208,7 +199,7 @@ def create_dataset(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"A table '{body.name}' already exists in '{project.name}' "
+                f"A table '{name}' already exists in '{project.name}' "
                 "but isn't a registered dataset"
             ),
         ) from exc
@@ -218,27 +209,281 @@ def create_dataset(
             detail="The catalog could not create the table",
         ) from exc
 
-    dataset = Dataset(
-        project_id=project.id,
-        name=body.name,
-        kind=DATASET_KIND,
-        description=body.description,
-        columns=columns,
-        key_columns=body.key_columns,
-        table_identifier=f"{project.name}.{body.name}",
-        created_by=identity.subject,
-    )
-    session.add(dataset)
+
+def _commit_new(session: Session, *datasets: Dataset) -> None:
+    session.add_all(datasets)
     try:
         session.commit()
     except IntegrityError as exc:  # registered concurrently
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Dataset '{body.name}' already exists",
+            detail=f"Dataset '{datasets[-1].name}' already exists",
         ) from exc
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_dataset",
+    responses=_errors(401, 403, 404, 409, 502, 503),
+)
+def create_dataset(
+    name: ProjectName,
+    body: DatasetRegistration,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    tables: TablesDep,
+) -> DatasetOut:
+    """Register a dataset: creates its Iceberg table(s), as the caller.
+
+    `type: timeseries` (warehouse data model v1) builds the columns, key and
+    layout from the dataset's metadata, and a `<name>_series` series table unless
+    `series_table` names an existing one. Untyped datasets (`type: table`, the
+    default) are a test path: only platform admins may register them, unless
+    UNTYPED_DATASETS_FOR_MEMBERS is on.
+    """
+    project, my_role = _authorize_dataset_op(
+        session, name, identity, settings, Role.WRITE
+    )
+    if isinstance(body, TimeseriesCreate):
+        return _create_timeseries(
+            body, project, my_role, session, identity, _require_tables(tables)
+        )
+    if not (
+        settings.untyped_datasets_for_members
+        or identity.has_any_role(settings.admin_roles)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Untyped datasets are limited to platform admins",
+        )
+    return _create_table_dataset(body, project, my_role, session, identity, tables)
+
+
+def _create_table_dataset(
+    body: DatasetCreate,
+    project: Project,
+    my_role: Role | None,
+    session: Session,
+    identity: Identity,
+    tables: Tables | None,
+) -> DatasetOut:
+    tables = _require_tables(tables)
+    if _exists(session, project, body.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dataset '{body.name}' already exists",
+        )
+    columns = [col.model_dump() for col in body.columns]
+    _create_table(
+        tables, identity, project, my_role, body.name, columns, body.key_columns
+    )
+    dataset = Dataset(
+        project_id=project.id,
+        name=body.name,
+        kind=TABLE,
+        description=body.description,
+        columns=columns,
+        key_columns=body.key_columns,
+        table_identifier=f"{project.name}.{body.name}",
+        created_by=identity.subject,
+    )
+    _commit_new(session, dataset)
     session.refresh(dataset)
     return DatasetOut.model_validate(dataset)
+
+
+def _col(name: str, type_: str, required: bool, doc: str) -> dict:
+    return {"name": name, "type": type_, "required": required, "doc": doc}
+
+
+def timeseries_columns(
+    optional: list[str], period_form: str, extra: list[dict]
+) -> tuple[list[dict], list[str]]:
+    """A timeseries dataset's columns and key (warehouse data model v1)."""
+    on = set(optional)
+    columns = [_col("series_key", "string", True, "The series a value belongs to")]
+    if "reference_time" in on:
+        columns.append(_col("reference_time", "timestamptz", True, "Issue time"))
+    columns.append(_col("value_time", "timestamptz", True, "When the value applies"))
+    if "member" in on:
+        columns.append(_col("member", "string", True, "Ensemble member"))
+    if "quantile" in on:
+        columns.append(_col("quantile", "decimal(5,4)", True, "Quantile, 0 to 1"))
+    columns.append(_col("value", "float64", False, "Null: a missing value"))
+    if "quality" in on:
+        columns.append(_col("quality", "string", False, "The source's code(s)"))
+    if period_form == "absolute":
+        columns.append(_col("period_start", "timestamptz", True, "Window start"))
+        columns.append(_col("period_end", "timestamptz", True, "Window end"))
+    columns.extend(extra)
+    key = [
+        c
+        for c in ("series_key", "reference_time", "value_time", "member", "quantile")
+        if any(col["name"] == c for col in columns)
+    ]
+    return columns, key
+
+
+def series_columns(attributes: list[dict]) -> list[dict]:
+    """A series table's columns: one row per series_key (ADR-0010)."""
+    return [
+        _col("series_key", "string", True, "Unique series id"),
+        _col("location_key", "string", False, "Where the series is"),
+        _col("location_layer", "string", False, "Layer of location_key"),
+        _col("period", "string", False, "Overrides the dataset's period"),
+        _col("resolution", "string", False, "How often values recur (ISO 8601)"),
+        *attributes,
+    ]
+
+
+def _timeseries_metadata(
+    body: TimeseriesCreate, project: Project, session: Session
+) -> tuple[dict, str]:
+    """Check the metadata against the project's domains; returns the stored
+    metadata and the period's form."""
+    variable = lookup(session, Variable, body.variable, project.id)
+    if variable is None:
+        raise _unprocessable(f"unknown variable '{body.variable}'")
+    if body.unit is not None and body.unit != variable.canonical_unit:
+        raise _unprocessable(
+            f"'{body.variable}' is stored in {variable.canonical_unit}; register "
+            "with that unit (writes in other units are converted)"
+        )
+    period_name = body.period or ("instant" if body.statistic == "inst" else None)
+    if period_name is None:
+        raise _unprocessable(f"statistic '{body.statistic}' needs a period")
+    period = lookup(session, Period, period_name, project.id)
+    if period is None:
+        raise _unprocessable(f"unknown period '{period_name}'")
+    if (period.form == "instant") != (body.statistic == "inst"):
+        raise _unprocessable(
+            "an instant period goes with statistic inst, and only with it"
+        )
+    metadata = {
+        "role": body.role,
+        "variable": variable.name,
+        "unit": variable.canonical_unit,
+        "statistic": body.statistic,
+        "period": period.name,
+        "optional_columns": body.optional_columns,
+        "series_table": body.series_table or f"{body.name}_series",
+        "location_layer": body.location_layer,
+        "time_partition": body.time_partition,
+        "source": body.source,
+    }
+    return metadata, period.form
+
+
+def _create_timeseries(
+    body: TimeseriesCreate,
+    project: Project,
+    my_role: Role | None,
+    session: Session,
+    identity: Identity,
+    tables: Tables,
+) -> DatasetOut:
+    metadata, period_form = _timeseries_metadata(body, project, session)
+    if _exists(session, project, body.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dataset '{body.name}' already exists",
+        )
+    series_name = metadata["series_table"]
+    new_series = None
+    if body.series_table:
+        shared = session.scalar(
+            select(Dataset).where(
+                Dataset.project_id == project.id, Dataset.name == series_name
+            )
+        )
+        if shared is None or shared.kind != SERIES:
+            raise _unprocessable(f"'{series_name}' is not a series table here")
+    else:
+        if _exists(session, project, series_name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Dataset '{series_name}' already exists",
+            )
+        columns = series_columns([c.model_dump() for c in body.series_attributes])
+        _create_table(
+            tables,
+            identity,
+            project,
+            my_role,
+            series_name,
+            columns,
+            ["series_key"],
+            Layout(sort=("series_key",), properties={"teehr.type": SERIES}),
+        )
+        new_series = Dataset(
+            project_id=project.id,
+            name=series_name,
+            kind=SERIES,
+            description=f"Series of {body.name}",
+            columns=columns,
+            key_columns=["series_key"],
+            table_identifier=f"{project.name}.{series_name}",
+            created_by=identity.subject,
+        )
+
+    columns, key = timeseries_columns(
+        metadata["optional_columns"],
+        period_form,
+        [c.model_dump() for c in body.extra_columns],
+    )
+    time_column = (
+        "reference_time"
+        if "reference_time" in metadata["optional_columns"]
+        else "value_time"
+    )
+    partition = (
+        None if body.time_partition == "none" else (time_column, body.time_partition)
+    )
+    sort = tuple(c for c in ("series_key", "reference_time", "value_time") if c in key)
+    properties = {"teehr.type": TIMESERIES} | {
+        f"teehr.{k}": ",".join(v) if isinstance(v, list) else str(v)
+        for k, v in metadata.items()
+        if v not in (None, [])
+    }
+    try:
+        _create_table(
+            tables,
+            identity,
+            project,
+            my_role,
+            body.name,
+            columns,
+            key,
+            Layout(partition=partition, sort=sort, properties=properties),
+        )
+    except HTTPException:
+        if new_series is not None:  # don't leave an orphan series table
+            _drop_quietly(tables, identity, project, series_name)
+        raise
+    dataset = Dataset(
+        project_id=project.id,
+        name=body.name,
+        kind=TIMESERIES,
+        description=body.description,
+        columns=columns,
+        key_columns=key,
+        properties=metadata,
+        table_identifier=f"{project.name}.{body.name}",
+        created_by=identity.subject,
+    )
+    _commit_new(session, *(d for d in (new_series, dataset) if d is not None))
+    session.refresh(dataset)
+    return DatasetOut.model_validate(dataset)
+
+
+def _drop_quietly(tables: Tables, identity: Identity, project: Project, name: str):
+    try:
+        tables.drop_table(identity.token, project.name, name)
+    except TableError:
+        pass
 
 
 @router.get("", operation_id="list_datasets", responses=_errors(401, 404, 503))
@@ -278,24 +523,62 @@ def delete_dataset(
     settings: SettingsDep,
     tables: TablesDep,
 ) -> Response:
-    """Delete a dataset: drops its table and data files, as the caller."""
+    """Delete a dataset: drops its table and data files, as the caller.
+
+    Deleting a timeseries also deletes its series table once no other timeseries
+    uses it; a series table still in use can't be deleted on its own.
+    """
     project, my_role = _authorize_dataset_op(
         session, name, identity, settings, Role.ADMIN
     )
     tables = _require_tables(tables)
     record = _dataset(session, project, dataset)
-    try:
-        tables.drop_table(identity.token, project.name, record.name)
-    except TableForbidden as exc:
-        raise _forbidden(project, my_role, Role.ADMIN) from exc
-    except TableError as exc:
+    users = _series_users(session, project)
+    if record.kind == SERIES and users.get(record.name):
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="The catalog could not drop the table",
-        ) from exc
-    session.delete(record)
-    session.commit()
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"'{record.name}' is the series table of "
+                f"{', '.join(sorted(users[record.name]))}; delete those first"
+            ),
+        )
+    doomed = [record]
+    if record.kind == TIMESERIES:
+        series_name = (record.properties or {}).get("series_table")
+        if users.get(series_name) == {record.name}:
+            series = session.scalar(
+                select(Dataset).where(
+                    Dataset.project_id == project.id, Dataset.name == series_name
+                )
+            )
+            if series is not None:
+                doomed.append(series)
+    for target in doomed:
+        try:
+            tables.drop_table(identity.token, project.name, target.name)
+        except TableForbidden as exc:
+            raise _forbidden(project, my_role, Role.ADMIN) from exc
+        except TableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The catalog could not drop the table",
+            ) from exc
+        session.delete(target)
+        session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _series_users(session: Session, project: Project) -> dict[str, set[str]]:
+    """Series table name -> the timeseries datasets that use it."""
+    users: dict[str, set[str]] = {}
+    for ts in session.scalars(
+        select(Dataset).where(
+            Dataset.project_id == project.id, Dataset.kind == TIMESERIES
+        )
+    ):
+        series = (ts.properties or {}).get("series_table")
+        users.setdefault(series, set()).add(ts.name)
+    return users
 
 
 async def _payload(request: Request, settings: SettingsDep) -> tuple[str, bytes]:
@@ -358,9 +641,15 @@ def write_dataset(
     settings: SettingsDep,
     tables: TablesDep,
     mode: Annotated[
-        Literal["append", "overwrite"],
-        Query(description="append (default), or overwrite rows"),
-    ] = "append",
+        Literal["append", "overwrite", "upsert"] | None,
+        Query(
+            description=(
+                "upsert (replace rows with the same key, add the rest; the default "
+                "for timeseries and series tables), append (the default for "
+                "untyped datasets; not allowed on typed ones), or overwrite"
+            )
+        ),
+    ] = None,
     filter: Annotated[
         str | None,
         Query(
@@ -390,6 +679,14 @@ def write_dataset(
     )
     tables = _require_tables(tables)
     record = _dataset(session, project, dataset)
+    typed = record.kind in TYPED
+    mode = mode or ("upsert" if typed else "append")
+    if typed and mode == "append":
+        raise _unprocessable(
+            f"{record.kind} datasets take upsert or overwrite, not append"
+        )
+    if mode == "upsert" and not record.key_columns:
+        raise _unprocessable("upsert needs a dataset with key_columns")
     if filter is not None and mode != "overwrite":
         raise _unprocessable("filter only applies to mode=overwrite")
     if timezone is not None:
@@ -404,6 +701,13 @@ def write_dataset(
             raise _unprocessable("No rows to write")
         data = conform(data, columns, timezone)
         expression = parse_filter(filter, columns) if filter else None
+        if mode == "upsert" or typed:
+            repeated = duplicate_keys(data, record.key_columns or [])
+            if repeated:
+                raise DataMismatch(
+                    f"{repeated} key values ({', '.join(record.key_columns)}) "
+                    "occur more than once in this batch"
+                )
     except DataMismatch as exc:
         raise _unprocessable(str(exc)) from exc
     except UnsupportedMediaType as exc:

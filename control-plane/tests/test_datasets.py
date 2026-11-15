@@ -30,9 +30,12 @@ class FakeTables:
         self.calls: list[tuple[str, str, str, str]] = []  # (op, token, ns, name)
         self.fail_with: Exception | None = None
 
-    def create_table(self, token, namespace, name, columns, key_columns=None):
+    def create_table(
+        self, token, namespace, name, columns, key_columns=None, layout=None
+    ):
         self.calls.append(("create", token, namespace, name))
         self.keys = key_columns
+        self.layouts = {**getattr(self, "layouts", {}), name: (key_columns, layout)}
         if self.fail_with:
             raise self.fail_with
         if (namespace, name) in self.tables:

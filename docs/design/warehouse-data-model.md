@@ -16,7 +16,7 @@ wherever no ratified TEEHR ADR decides otherwise (ADR-0011); the differences are
   kind in the API is a test path (platform admins only), not part of the model.
 - **Metadata at the dataset, values in the rows.** Role, variable, unit, statistic and period are
   dataset-level (fixed for the dataset); rows hold only what varies per value.
-- **Controlled vocabularies.** Units, periods and variables are registries; a dataset's metadata must
+- **Domains.** Units, periods and variables are domain tables; a dataset's metadata must
   name registered entries.
 - **Canonical units.** Values are stored in the variable's canonical unit (ADR-0005).
 - **One write path enforces it.** The API and its load jobs validate every write (ADR-0004);
@@ -26,9 +26,9 @@ wherever no ratified TEEHR ADR decides otherwise (ADR-0011); the differences are
 
 - **Data:** one Iceberg table per dataset, in its project's namespace (ADR-0001). The system
   project `public` holds open input data; `platform` holds platform-owned evaluations.
-- **Dataset registry and vocabularies:** the control-plane Postgres (`control_plane` schema), the
+- **Dataset registry and domains:** the control-plane Postgres (`control_plane` schema), the
   authority; each dataset's metadata is mirrored into its Iceberg table properties.
-- **Vocabulary rows:** public rows (managed by platform admins) plus each project's own rows
+- **Domain rows:** public rows (managed by platform admins) plus each project's own rows
   (added by its writers). A name is defined once across both, so it means the same everywhere.
 
 ## Dataset types
@@ -42,7 +42,7 @@ wherever no ratified TEEHR ADR decides otherwise (ADR-0011); the differences are
 Each `timeseries` dataset has a companion **series table** (its series catalog), not a dataset type
 of its own.
 
-## Vocabularies
+## Domains
 
 | Registry | Columns | Notes |
 | --- | --- | --- |
@@ -53,9 +53,9 @@ of its own.
 Code enums, not tables: `role` (`observed` \| `simulated` \| `forecast`), `statistic`
 (`inst` \| `mean` \| `sum` \| `min` \| `max`), period `form`.
 
-There is **no `configuration` vocabulary**: a dataset's name identifies its source/configuration
+There is **no `configuration` domain**: a dataset's name identifies its source/configuration
 (`usgs_observations`, `nwm30_retrospective`), and `role` says what kind it is. There is **no
-`quality` vocabulary** in v1 (see below).
+`quality` domain** in v1 (see below).
 
 ## `timeseries`
 
@@ -168,5 +168,5 @@ Specs mean the same on both because every unit-bearing spec parameter carries it
 ## Deferred
 
 - Partition/sort tuning (storage spike, real query shapes).
-- A quality vocabulary (per-source codes, multiple qualifiers per value).
+- A quality domain (per-source codes, multiple qualifiers per value).
 - Multiple `layer` geometries per location, and gridded data.
