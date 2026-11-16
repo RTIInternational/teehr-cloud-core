@@ -36,6 +36,7 @@ spec:
   manifestTemplates:
     - manifests/configmap.yaml.tpl
     - manifests/deployment.yaml.tpl
+    - manifests/access-reconcile-cronjob.yaml.tpl
     - manifests/ingress.yaml.tpl
 
   defaultTarget:

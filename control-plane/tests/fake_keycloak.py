@@ -64,6 +64,16 @@ class FakeKeycloak:
                 return httpx.Response(409)
             self.roles[body["name"]] = f"id-{body['name']}"
             return httpx.Response(201)
+        if path.startswith(f"{root}/roles/") and path.endswith("/users"):
+            name = path.removeprefix(f"{root}/roles/").removesuffix("/users")
+            if name not in self.roles:
+                return httpx.Response(404)
+            first = int(request.url.params.get("first", 0))
+            size = int(request.url.params.get("max", 100))
+            holders = sorted(u for u, held in self.user_roles.items() if name in held)
+            return httpx.Response(
+                200, json=[self.users[u] for u in holders[first : first + size]]
+            )
         if path.startswith(f"{root}/roles/"):
             name = path.removeprefix(f"{root}/roles/")
             if name not in self.roles:

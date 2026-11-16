@@ -176,3 +176,62 @@ def test_keycloak_rejects_wrong_client_secret():
     )
     with pytest.raises(KeycloakError, match="token request failed"):
         admin.ensure_realm_role("x")
+
+
+# --- reconcile: the membership table wins ----------------------------------------
+
+
+def reconcile(db_url, polaris, keycloak):
+    from src.db import make_engine
+    from src.provisioning import reconcile_access
+
+    return reconcile_access(make_engine(db_url), polaris.admin(), keycloak.admin())
+
+
+def test_reconcile_restores_roles_a_keycloak_import_stripped(
+    client, project, polaris, keycloak, db_url
+):
+    add(client, "bob", "write")
+    # What keycloak-config-cli does to the local users on import.
+    keycloak.user_roles["alice"].clear()
+    keycloak.user_roles["bob"].clear()
+    counts = reconcile(db_url, polaris, keycloak)
+    assert counts == {"projects": 1, "failed": 0, "removed": 0}
+    assert keycloak.user_roles["alice"] == {ADMIN}
+    assert keycloak.user_roles["bob"] == {WRITE}
+
+
+def test_reconcile_removes_roles_from_non_members(
+    client, project, polaris, keycloak, db_url
+):
+    # Given by hand in Keycloak and Polaris, not through membership.
+    keycloak.user_roles["carol"].add(READ)
+    polaris.principals.add("carol")
+    polaris.bindings["carol"] = {READ}
+    counts = reconcile(db_url, polaris, keycloak)
+    assert counts["removed"] == 1
+    assert READ not in keycloak.user_roles["carol"]
+    assert READ not in polaris.bindings["carol"]
+    assert keycloak.user_roles["alice"] == {ADMIN}  # members untouched
+
+
+def test_reconcile_carries_on_past_a_failing_project(
+    client, project, polaris, keycloak, db_url
+):
+    client.post("/v1/projects", json={"name": "drought"}, headers=ALICE)
+    keycloak.user_roles["alice"].clear()
+    keycloak.fail_paths.add("teehr-project-drought")
+    counts = reconcile(db_url, polaris, keycloak)
+    assert counts["failed"] == 1
+    assert ADMIN in keycloak.user_roles["alice"]  # flood still repaired
+    status = client.get("/v1/projects/drought", headers=ALICE).json()["status"]
+    assert status == "ready"  # a reconcile failure doesn't mark the project failed
+
+
+def test_reconcile_without_keycloak_does_nothing(client, polaris, db_url):
+    from src.db import make_engine
+    from src.provisioning import reconcile_access
+
+    assert reconcile_access(make_engine(db_url), polaris.admin(), None) == {
+        "projects": 0, "failed": 0, "removed": 0,
+    }  # fmt: skip

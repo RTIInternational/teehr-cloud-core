@@ -100,6 +100,26 @@ class KeycloakAdmin:
     def _role(self, name: str) -> dict:
         return self._call("GET", f"/roles/{name}", (200,)).json()
 
+    def role_holders(self, name: str) -> dict[str, str]:
+        """Users the realm role is mapped to directly: id -> username. A missing
+        role has none."""
+        holders: dict[str, str] = {}
+        first, page = 0, 500
+        while True:
+            resp = self._call(
+                "GET",
+                f"/roles/{name}/users",
+                (200, 404),
+                params={"first": first, "max": page},
+            )
+            if resp.status_code == 404:
+                return holders
+            users = resp.json()
+            holders.update({u["id"]: u["username"] for u in users})
+            if len(users) < page:
+                return holders
+            first += page
+
     # --- users ----------------------------------------------------------------
 
     def get_user(self, user_id: str) -> dict | None:

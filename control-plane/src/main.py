@@ -17,7 +17,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from src import errors
 from src.config import Settings, get_settings
 from src.db import get_engine
-from src.provisioning import get_keycloak, get_polaris, reconcile
+from src.provisioning import (
+    get_keycloak,
+    get_polaris,
+    reconcile,
+    reconcile_access,
+)
 from src.routes import datasets, domains, job_grants, projects, uploads
 
 logging.basicConfig(
@@ -37,6 +42,14 @@ def _reconcile_on_start() -> None:
             )
     except Exception:  # never take the service down over this
         logger.exception("Startup reconcile failed")
+    try:
+        # Memberships -> Keycloak and Polaris, after a restart (e.g. a Keycloak
+        # import reset users' roles). Also run on a schedule by a CronJob.
+        counts = reconcile_access(get_engine(), get_polaris(), get_keycloak())
+        if counts["removed"] or counts["failed"]:
+            logger.warning("Startup access reconcile: %s", counts)
+    except Exception:
+        logger.exception("Startup access reconcile failed")
 
 
 @asynccontextmanager
