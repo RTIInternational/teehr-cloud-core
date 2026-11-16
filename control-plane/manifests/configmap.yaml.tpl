@@ -9,10 +9,10 @@ data:
   # Same identity settings as teehr-api (api/manifests/configmap.yaml.tpl).
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"
   KEYCLOAK_JWKS_URL: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/certs"
-  # teehr-control-plane: tokens a job acts as its caller with (token exchange,
-  # ADR-0014) are issued to the control plane's client.
-  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,teehr-frontend-local-dev,jupyterhub,teehr-control-plane-docs,teehr-control-plane"
-  # Public client the /docs page signs in with (realm config, local only).
+  # teehr-control-plane-jobs: tokens a job acts as its caller with (token
+  # exchange, ADR-0014) are issued to the exchange client.
+  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,teehr-frontend-local-dev,jupyterhub,teehr-control-plane-docs,teehr-control-plane-jobs"
+  # Public client the /docs page signs in with.
   KEYCLOAK_DOCS_CLIENT_ID: "teehr-control-plane-docs"
   # Realm roles with full rights on every project (very few people), and roles that
   # can see every project and its members but change nothing.
@@ -20,6 +20,12 @@ data:
   CONTROL_PLANE_VIEWER_ROLES: "control-plane-viewer"
   # The control plane's own Keycloak client; the secret is in control-plane-secrets.
   CONTROL_PLANE_CLIENT_ID: "teehr-control-plane"
+  # A separate client used only for token exchange (load jobs act as their caller);
+  # its secret is control-plane-secrets jobs-client-secret.
+  CONTROL_PLANE_EXCHANGE_CLIENT_ID: "teehr-control-plane-jobs"
+  # Who may create projects (realm roles). Empty = any signed-in user; a dark launch
+  # sets the platform admin role (var.controlPlane.projectCreatorRoles).
+  PROJECT_CREATOR_ROLES: "${var.controlPlane.projectCreatorRoles || ''}"
   # Polaris management API, for provisioning project namespaces and roles. The
   # token comes from Keycloak; Polaris maps it to the named principal
   # service-account-teehr-control-plane (polaris-bootstrap acl-config).
@@ -42,9 +48,10 @@ data:
   # access.
   KEYCLOAK_ADMIN_URL: "http://keycloak-service:8080"
   KEYCLOAK_REALM: "teehr"
-  # Upload staging (Phase 3): a bucket only the control plane reaches. Local only
-  # until the remote bucket and IAM role exist (#171); empty = uploads disabled.
-  STAGING_BUCKET: "${environment.name == 'local' ? 'uploads' : ''}"
+  # Upload staging (Phase 3): a bucket only the control plane reaches. On local,
+  # RustFS; on AWS, var.controlPlane.stagingBucket, reached with the service
+  # account's IAM role. Empty = uploads disabled.
+  STAGING_BUCKET: "${environment.name == 'local' ? 'uploads' : (var.controlPlane.stagingBucket || '')}"
   STAGING_S3_ENDPOINT: "${environment.name == 'local' ? 'http://local-s3:9000' : ''}"
   # Upload URLs are signed for the address clients use: on local, the S3 ingress
   # (so a laptop can PUT); on AWS, S3 itself.

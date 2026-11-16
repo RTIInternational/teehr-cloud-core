@@ -542,3 +542,18 @@ def test_location_keys_need_a_layer(client, staging, jobs):
     )
     places = [".".join(e["loc"][1:]) for e in resp.json()["errors"]]
     assert "dataset.location_layer" in places
+
+
+def test_exchange_uses_its_own_client_when_configured():
+    import dataclasses
+
+    from src.config import Settings
+    from src.delegation import KeycloakDelegation
+
+    base = Settings(database_url="sqlite://", keycloak_token_url="http://kc/token",
+                    client_id="cp", client_secret="s1")  # fmt: skip
+    assert KeycloakDelegation(base)._client == ("cp", "s1")
+    split = dataclasses.replace(
+        base, exchange_client_id="cp-jobs", exchange_client_secret="s2"
+    )
+    assert KeycloakDelegation(split)._client == ("cp-jobs", "s2")

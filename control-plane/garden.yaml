@@ -1,8 +1,9 @@
-# Project control plane (Phase 1, epic #148).
+# Project control plane (epic #148).
 #
-# Local only until the Phase 1 gate (#157). It is a separate deployable that keeps
-# its tables in its own Postgres schema on app-pg, so it can be paused or removed
-# without touching teehr-api.
+# Always on local; on remote only where the deployment sets var.controlPlane.enabled
+# (with the IRSA role, staging bucket and control-plane-secrets it needs: #171). It
+# is a separate deployable that keeps its tables in its own Postgres schema on
+# app-pg, so it can be paused or removed without touching teehr-api.
 kind: Build
 type: container
 name: teehr-control-plane
@@ -12,6 +13,8 @@ spec:
 
 environments:
   - local
+  - remote
+disabled: ${environment.name == 'remote' && !(var.controlPlane.enabled || false)}
 
 ---
 
@@ -20,6 +23,8 @@ type: kubernetes
 name: teehr-control-plane
 environments:
   - local
+  - remote
+disabled: ${environment.name == 'remote' && !(var.controlPlane.enabled || false)}
 
 dependencies:
   - build.teehr-control-plane
@@ -31,9 +36,9 @@ dependencies:
 spec:
   manifestFiles:
     - manifests/service.yaml
-    - manifests/rbac.yaml
 
   manifestTemplates:
+    - manifests/rbac.yaml.tpl
     - manifests/configmap.yaml.tpl
     - manifests/deployment.yaml.tpl
     - manifests/access-reconcile-cronjob.yaml.tpl

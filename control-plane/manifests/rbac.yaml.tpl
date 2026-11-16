@@ -1,4 +1,5 @@
-# The control plane's own service account. It starts the Kubernetes Jobs that run
+# The control plane's own service account. On remote it also carries the IAM role
+# for the upload staging bucket. It starts the Kubernetes Jobs that run
 # work users start through the API (uploads now, evaluation runs later; ADR-0014):
 # Jobs only, and reading their pods (why a job failed), in this namespace.
 apiVersion: v1
@@ -8,6 +9,11 @@ metadata:
   labels:
     app: teehr-control-plane
     component: control-plane
+  ${if environment.name == "remote" && (var.irsa.controlPlaneRoleArn || "") != ""}
+  # The upload staging bucket only (teehr-cloud-platform control-plane-irsa.tf).
+  annotations:
+    eks.amazonaws.com/role-arn: ${var.irsa.controlPlaneRoleArn}
+  ${endif}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

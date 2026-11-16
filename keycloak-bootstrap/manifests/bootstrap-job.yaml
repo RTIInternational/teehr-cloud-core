@@ -53,12 +53,19 @@ spec:
                 secretKeyRef:
                   name: prefect-polaris-secrets
                   key: client-secret
-            # Local only (the client is disabled elsewhere), so optional.
+            # Only where the control plane is (local; var.controlPlane.enabled), so
+            # optional.
             - name: CONTROL_PLANE_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: control-plane-secrets
                   key: client-secret
+                  optional: true
+            - name: CONTROL_PLANE_JOBS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: control-plane-secrets
+                  key: jobs-client-secret
                   optional: true
             - name: SMTP_HOST
               valueFrom:

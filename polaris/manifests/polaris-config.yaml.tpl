@@ -57,11 +57,12 @@ data:
     polaris.oidc.principal-roles-mapper.mappings[0].replacement=PRINCIPAL_ROLE:iceberg-catalog-admin
     polaris.oidc.principal-roles-mapper.mappings[1].regex=^teehr-(.+)$
     polaris.oidc.principal-roles-mapper.mappings[1].replacement=PRINCIPAL_ROLE:teehr-$1
-    # Local only: the control plane's service account acts as service_admin. Polaris
-    # activates a role only if the token carries it AND the named principal is bound
-    # to it (polaris-bootstrap acl-config), so the realm role alone isn't enough.
-    ${environment.name == 'local' ? 'polaris.oidc.principal-roles-mapper.mappings[2].regex=^polaris-service-admin$' : '# (service_admin mapping: local only)'}
-    ${environment.name == 'local' ? 'polaris.oidc.principal-roles-mapper.mappings[2].replacement=PRINCIPAL_ROLE:service_admin' : '# (service_admin mapping: local only)'}
+    # Where the control plane is (local; var.controlPlane.enabled): its service
+    # account acts as service_admin. Polaris activates a role only if the token
+    # carries it AND the named principal is bound to it (polaris-bootstrap
+    # acl-config), so the realm role alone isn't enough.
+    ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? 'polaris.oidc.principal-roles-mapper.mappings[2].regex=^polaris-service-admin$' : '# (service_admin mapping: no control plane)'}
+    ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? 'polaris.oidc.principal-roles-mapper.mappings[2].replacement=PRINCIPAL_ROLE:service_admin' : '# (service_admin mapping: no control plane)'}
 
     # Storage Properties Integration
     polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3","GCS","AZURE","FILE"]
