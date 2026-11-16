@@ -149,6 +149,21 @@ def with_geoparquet(table: pa.Table) -> pa.Table:
     return table.replace_schema_metadata(metadata)
 
 
+def with_geoarrow(table: pa.Table) -> pa.Table:
+    """The table with its geometry column marked as GeoArrow WKB (EPSG:4326), so
+    Arrow readers that know GeoArrow see geometry rather than plain binary."""
+    if "geometry" not in table.column_names:
+        return table
+    index = table.schema.get_field_index("geometry")
+    field = table.schema.field(index).with_metadata(
+        {
+            b"ARROW:extension:name": b"geoarrow.wkb",
+            b"ARROW:extension:metadata": json.dumps({"crs": "OGC:CRS84"}).encode(),
+        }
+    )
+    return table.cast(table.schema.set(index, field))
+
+
 def bbox_filter(text: str) -> str:
     """A ``bbox=minx,miny,maxx,maxy`` parameter as a filter on the bounds columns:
     the geometries whose bounds overlap it."""
