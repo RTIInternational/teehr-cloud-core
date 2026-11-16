@@ -26,6 +26,8 @@ dependencies = [
     # reprojection to EPSG:4326.
     "pyogrio>=0.10",
     "pyproj>=3.6",
+    # /data filters: the shared expression language (teehr-shared-eval-spec).
+    "sqlglot>=26",
 ]
 
 [project.optional-dependencies]

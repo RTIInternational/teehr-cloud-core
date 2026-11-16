@@ -149,8 +149,15 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   column out is refused rather than wiping it. A series-table upsert changes only
   the columns sent; the rest keep their values.
 - **Reads**: `GET .../datasets/{dataset}/data`, as the caller, a page at a time:
-  `columns` (comma-separated), `filter` (same syntax as writes), `limit`, `cursor`,
-  `count=true`. JSON `{rows, next_cursor, total}` by default; Arrow or Parquet when
+  `columns` (comma-separated), `filter`, `limit`, `cursor`, `count=true`. A
+  `filter` is the shared expression language (teehr-shared-eval-spec
+  `spec/expressions.md`): a SQL subset checked against an allow-list (comparisons,
+  `AND`/`OR`/`NOT`, `IN`, `BETWEEN`, `IS NULL`, `LIKE`, arithmetic, `CASE`, and
+  functions such as `hour`, `date_trunc`, `ln`, `log10`, `coalesce`; no bare `log`).
+  Comparisons of a column with values go to the scan, so Iceberg skips files; the
+  rest is evaluated on the rows the scan returns (which then reads every matching
+  row, so keep a cheap condition alongside an expensive one). Numbers are in the
+  column's stored unit. JSON `{rows, next_cursor, total}` by default; Arrow or Parquet when
   `Accept` asks, with `X-Next-Cursor` / `X-Total-Rows` headers. The cursor pins the
   snapshot the first page read, so a read isn't disturbed by writes landing
   meanwhile; every page says which in `X-Snapshot-Id`. Pages are capped per format
