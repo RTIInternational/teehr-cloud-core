@@ -225,6 +225,26 @@ def locations() -> None:
     )
 
 
+def contract() -> None:
+    """Shared upload contract samples (18-19)."""
+    # 18. Wide: one value column per gauge, no key column (layout wide).
+    write(
+        "18_wide_obs.csv",
+        "datetime," + ",".join(SITES),
+        [
+            f"{T0 + timedelta(hours=i):%Y-%m-%dT%H:%M:%SZ},"
+            + ",".join(str(flow(i, k)) for k in range(len(SITES)))
+            for i in range(24)
+        ],
+    )
+    # 19. Times that aren't ISO 8601: needs mapping.time_format (and timezone).
+    write(
+        "19_non_iso_times.csv",
+        "site_no,datetime,discharge",
+        [f"{SITES[0]},{T0 + timedelta(hours=i):%m/%d/%Y %H:%M},{flow(i, 0)}" for i in range(24)],
+    )
+
+
 def big() -> None:
     """8. ~12 MB, past inspect's 1 MiB CSV window (not committed)."""
     with (HERE / "08_big_obs.csv").open("w") as f:
@@ -239,5 +259,6 @@ def big() -> None:
 if __name__ == "__main__":
     small()
     locations()
+    contract()
     if "--small" not in sys.argv:
         big()

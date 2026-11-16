@@ -665,7 +665,7 @@ class UploadOut(BaseModel):
     kind: str
     status: str = Field(
         description=(
-            "staged | inspected | queued | running | succeeded | failed | cancelled"
+            "awaiting_file | inspected | queued | running | succeeded | failed | cancelled"
         )
     )
     size_bytes: int | None
@@ -730,6 +730,21 @@ class IngestMapping(StrictInput):
         default=None,
         max_length=64,
         description="IANA zone of times without an offset, e.g. America/Denver",
+    )
+    layout: Literal["long", "wide"] | None = Field(
+        default=None,
+        description=(
+            "long: one row per value (series_key, value columns); wide: one value "
+            "column per series (series_columns), named by its series key"
+        ),
+    )
+    series_columns: list[str] | None = Field(
+        default=None, max_length=10_000, description="Wide: the value columns"
+    )
+    time_format: str | None = Field(
+        default=None,
+        max_length=100,
+        description="strptime format for times stored as text that aren't ISO 8601",
     )
     # Layers
     name: str | None = Field(default=None, description="Layer: column with names")

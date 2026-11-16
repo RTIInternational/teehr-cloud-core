@@ -200,7 +200,7 @@ class Job(Base):
 
 
 class UploadStatus(StrEnum):
-    STAGED = "staged"  # created; the file may or may not be there yet
+    AWAITING_FILE = "awaiting_file"  # created; the file may or may not be there yet
     INSPECTED = "inspected"  # read, mapping proposed
     QUEUED = "queued"  # load job accepted
     RUNNING = "running"
@@ -223,7 +223,7 @@ class Upload(Base):
     # Where the file is staged: a key in the staging bucket.
     object_key: Mapped[str] = mapped_column(String(512))
     status: Mapped[UploadStatus] = mapped_column(
-        _enum(UploadStatus), default=UploadStatus.STAGED
+        _enum(UploadStatus), default=UploadStatus.AWAITING_FILE
     )
     # The load job (the latest, if retried).
     job_id: Mapped[uuid.UUID | None] = mapped_column(

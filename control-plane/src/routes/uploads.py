@@ -18,6 +18,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import pyarrow as pa
+import pyarrow.compute as pc
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
@@ -307,7 +309,14 @@ OPTIONAL = ("reference_time", "member", "quantile", "quality")
 
 # Which ingest fields each kind of upload takes.
 MAPPING_FIELDS = {
-    "timeseries": {*TARGETS, "series_key_value", "timezone"},
+    "timeseries": {
+        *TARGETS,
+        "series_key_value",
+        "timezone",
+        "layout",
+        "series_columns",
+        "time_format",
+    },  # fmt: skip
     "layer": {
         "location_key",
         "name",
@@ -489,19 +498,82 @@ def _existing(session: Session, project: Project, dataset: dict) -> Dataset | No
     )
 
 
+def _wide_problems(mapping: dict, columns: set[str], bad) -> None:
+    """A wide file: one value column per series, named by its key."""
+    series = mapping.get("series_columns") or []
+    if not series:
+        bad(
+            ("mapping", "series_columns"), "required for layout wide: the value columns"
+        )
+    for name in ("series_key", "series_key_value", "value", "location_key"):
+        if mapping.get(name):
+            bad(
+                ("mapping", name),
+                "doesn't apply to layout wide (each value column is one series, "
+                "its header the series key)",
+            )
+    used = {mapping.get(t) for t in TARGETS} - {None}
+    for i, column in enumerate(series):
+        if column not in columns:
+            bad(
+                ("mapping", "series_columns", str(i)),
+                f"no column '{column}' in the file",
+            )
+        elif column in used:
+            bad(("mapping", "series_columns", str(i)), f"'{column}' is already mapped")
+    if len(set(series)) != len(series):
+        bad(("mapping", "series_columns"), "a column is listed twice")
+
+
+def _time_format_problems(preview: dict, mapping: dict, bad) -> None:
+    """The time format parses the sample's times (as the load will)."""
+    fmt = mapping.get("time_format")
+    if not fmt:
+        if "mapping.time_format" in preview.get("needed", []):
+            bad(
+                ("mapping", "time_format"),
+                "the file's times aren't ISO 8601; give their strptime format",
+            )
+        return
+    text = {
+        c["name"]
+        for c in preview.get("columns", [])
+        if c.get("type") in ("string", "large_string")
+    }
+    for target in ("value_time", "reference_time"):
+        column = mapping.get(target)
+        if column not in text:
+            continue  # typed times (Parquet) aren't parsed
+        values = [r.get(column) for r in preview.get("sample", [])]
+        values = [v for v in values if isinstance(v, str) and v]
+        if not values:
+            continue
+        try:
+            pc.strptime(pa.array(values), format=fmt, unit="us")
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
+            bad(("mapping", "time_format"), f"doesn't parse '{column}': {exc}")
+            return
+
+
 def _timeseries_problems(
     session, project, preview, body, mapping, dataset, columns, bad
 ) -> None:
     if body.dataset.unit is None:
         bad(("dataset", "unit"), "required: the unit of the file's values")
-    for target in ("value_time", "value"):
-        if not mapping.get(target):
-            bad(("mapping", target), "required: the column with this")
-    if bool(mapping.get("series_key")) == bool(mapping.get("series_key_value")):
-        bad(
-            ("mapping", "series_key"),
-            "give series_key (a column) or series_key_value, not both",
-        )
+    wide = mapping.get("layout") == "wide"
+    if not mapping.get("value_time"):
+        bad(("mapping", "value_time"), "required: the column with this")
+    if wide:
+        _wide_problems(mapping, columns, bad)
+    else:
+        if not mapping.get("value"):
+            bad(("mapping", "value"), "required: the column with this")
+        if bool(mapping.get("series_key")) == bool(mapping.get("series_key_value")):
+            bad(
+                ("mapping", "series_key"),
+                "give series_key (a column) or series_key_value, not both",
+            )
+    _time_format_problems(preview, mapping, bad)
     for target in TARGETS:
         column = mapping.get(target)
         if column and column not in columns:

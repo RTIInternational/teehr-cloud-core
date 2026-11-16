@@ -542,3 +542,81 @@ def test_location_keys_need_a_layer(client, staging, jobs):
     )
     places = [".".join(e["loc"][1:]) for e in resp.json()["errors"]]
     assert "dataset.location_layer" in places
+
+
+# --- the shared upload contract: wide files, time_format, GeoArrow ---------------
+
+WIDE = b"""datetime,01010000,01010500
+2026-01-01T00:00:00Z,100,50
+2026-01-01T01:00:00Z,110,
+"""
+
+
+def test_inspect_proposes_wide_for_value_columns_without_a_key(client, staging, jobs):
+    upload = create(client, "wide.csv").json()
+    staged(staging, upload, WIDE)
+    preview = client.post(f"{UPLOADS}/{upload['id']}/inspect", headers=ALICE).json()[
+        "preview"
+    ]
+    mapping = preview["mapping"]
+    assert mapping["layout"] == "wide"
+    assert mapping["series_columns"] == ["01010000", "01010500"]
+    assert mapping["series_key"] is None and mapping["value"] is None
+    assert not any("series_key" in n or n == "mapping.value" for n in preview["needed"])
+
+
+def test_load_a_wide_file(client, staging, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    upload_id = inspected(client, staging, WIDE, "wide.csv")
+    resp = ingest(client, upload_id, {**OBS, "unit": "m3/s"})
+    assert resp.status_code == 202, resp.text
+    result = run_load(client, staging, kube)
+    assert result["rows"] == 4 and result["series_added"] == 2
+    _, _, data = tables.writes[-1]
+    rows = sorted(zip(data["series_key"].to_pylist(), data["value"].to_pylist(),
+                      strict=True), key=lambda r: (r[0], r[1] is None))  # fmt: skip
+    assert rows == [("01010000", 100.0), ("01010000", 110.0),
+                    ("01010500", 50.0), ("01010500", None)]  # fmt: skip
+
+
+def test_wide_mapping_problems(client, staging, jobs):
+    upload_id = inspected(client, staging, WIDE, "wide.csv")
+    resp = ingest(
+        client,
+        upload_id,
+        mapping={"series_columns": ["01010000", "nope"], "location_key": "datetime"},
+    )
+    places = [".".join(e["loc"][1:]) for e in resp.json()["errors"]]
+    assert "mapping.series_columns.1" in places and "mapping.location_key" in places
+
+
+NON_ISO = b"""site_no,datetime,discharge
+A,01/02/2026 13:00,1.0
+A,01/02/2026 14:00,2.0
+"""
+
+
+def test_non_iso_times_need_a_time_format(client, staging, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    upload = create(client, "obs.csv").json()
+    staged(staging, upload, NON_ISO)
+    preview = client.post(f"{UPLOADS}/{upload['id']}/inspect", headers=ALICE).json()[
+        "preview"
+    ]
+    assert "mapping.time_format" in preview["needed"]
+    mapping = {"timezone": "UTC"}
+    resp = ingest(client, upload["id"], OBS, mapping)
+    assert "mapping.time_format" in [
+        ".".join(e["loc"][1:]) for e in resp.json()["errors"]
+    ]
+    resp = ingest(client, upload["id"], OBS, {**mapping, "time_format": "%Y-%m-%d"})
+    assert resp.status_code == 422 and "doesn't parse 'datetime'" in resp.text
+    resp = ingest(
+        client, upload["id"], OBS, {**mapping, "time_format": "%m/%d/%Y %H:%M"}
+    )
+    assert resp.status_code == 202, resp.text
+    run_load(client, staging, kube)
+    _, _, data = tables.writes[-1]
+    assert [t.isoformat() for t in data["value_time"].to_pylist()] == [
+        "2026-01-02T13:00:00+00:00", "2026-01-02T14:00:00+00:00"
+    ]  # fmt: skip

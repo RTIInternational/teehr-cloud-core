@@ -127,6 +127,58 @@ def read_file(path: str, fmt: str, layer: str | None = None) -> pa.Table:
         return read_csv_text(f.read())
 
 
+def parse_times(data: pa.Table, mapping: dict) -> pa.Table:
+    """Times stored as text in ``mapping.time_format`` (strptime), parsed; with
+    ``%z`` they're UTC, without it they're local times for ``mapping.timezone``."""
+    fmt = mapping.get("time_format")
+    if not fmt:
+        return data
+    for target in ("value_time", "reference_time"):
+        source = mapping.get(target)
+        if not source:
+            continue
+        column = data[source]
+        if not (
+            pa.types.is_string(column.type) or pa.types.is_large_string(column.type)
+        ):
+            continue
+        try:
+            parsed = pc.strptime(column, format=fmt, unit="us")
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
+            raise LoadFailed([f"column '{source}': {exc} (time_format {fmt})"]) from exc
+        data = data.set_column(data.column_names.index(source), source, parsed)
+    return data
+
+
+def unpivot(data: pa.Table, mapping: dict) -> pa.Table:
+    """A wide file as long rows: one row per (row, value column), the column's
+    header as the series key. Empty cells are missing values (null)."""
+    series = mapping["series_columns"]
+    columns = [data[c] for c in series]
+    if any(
+        pa.types.is_string(c.type) or pa.types.is_large_string(c.type) for c in columns
+    ):
+        target = pa.string()  # CSV text: typed later, like any value column
+    else:
+        target = pa.float64()
+    shared = [t for t in ("reference_time", "value_time", "member", "quantile",
+                          "quality") if mapping.get(t)]  # fmt: skip
+    parts = []
+    for name, column in zip(series, columns, strict=True):
+        part = {"series_key": pa.array([name] * data.num_rows, pa.string())}
+        for target_name in shared:
+            part[target_name] = data[mapping[target_name]]
+        part["value"] = column.cast(target)
+        parts.append(pa.table(part))
+    long = pa.concat_tables(parts)
+    for name in ("member", "quality"):
+        if name in long.column_names and not pa.types.is_string(long[name].type):
+            long = long.set_column(
+                long.column_names.index(name), name, long[name].cast(pa.string())
+            )
+    return long
+
+
 def apply_mapping(data: pa.Table, mapping: dict) -> pa.Table:
     """The file's columns under the timeseries column names; keys and codes as
     text (a numeric site number from Parquet becomes its digits)."""
@@ -415,7 +467,12 @@ def load_upload(client: GrantClient, task: dict) -> dict:
             raise LoadFailed([f"can't read the file: {exc}"]) from exc
     if dataset.get("kind", "timeseries") != "timeseries":
         return load_other(client, project, upload, data)
-    mapped = apply_mapping(data, mapping)
+    data = parse_times(data, mapping)
+    mapped = (
+        unpivot(data, mapping)
+        if mapping.get("layout") == "wide"
+        else apply_mapping(data, mapping)
+    )
     pairs = locations(data, mapping)
     typed = check(
         mapped, target_columns(client, project, dataset), mapping.get("timezone")

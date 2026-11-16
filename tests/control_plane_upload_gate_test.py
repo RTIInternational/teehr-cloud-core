@@ -327,6 +327,19 @@ def timeseries_gate(p):
     count = len(rows(p, "obs"))
     check("…and write nothing", count == 12, count)
 
+    wide = ("datetime," + ",".join(g[0] for g in GAUGES) + "\n"
+            + "".join(f"2026-01-02T{h:02d}:00:00Z," + ",".join(str(10 + k + h) for k in
+                      range(len(GAUGES))) + "\n" for h in range(2))).encode()  # fmt: skip
+    preview, u = load(p, "wide.csv", "timeseries", wide,
+                      {"dataset": {"name": "obs", "unit": "m3/s"}})  # fmt: skip
+    check("a wide file is proposed as one series per column",
+          preview["mapping"].get("layout") == "wide"
+          and preview["mapping"].get("series_columns") == [g[0] for g in GAUGES],
+          preview["mapping"])
+    check("…and loads into the existing dataset",
+          u["status"] == "succeeded" and (u.get("result") or {}).get("rows") == 6,
+          u.get("problems") or u.get("result"))
+
 
 def crosswalk_gate(p):
     print("\n🔗 Crosswalk")

@@ -707,6 +707,22 @@
             "description": "Layer: point y column",
             "title": "Latitude"
           },
+          "layout": {
+            "anyOf": [
+              {
+                "enum": [
+                  "long",
+                  "wide"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "long: one row per value (series_key, value columns); wide: one value column per series (series_columns), named by its series key",
+            "title": "Layout"
+          },
           "left_key": {
             "anyOf": [
               {
@@ -811,6 +827,22 @@
             "description": "Crosswalk: right keys",
             "title": "Right Key"
           },
+          "series_columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wide: the value columns",
+            "title": "Series Columns"
+          },
           "series_key": {
             "anyOf": [
               {
@@ -848,6 +880,19 @@
             ],
             "description": "Layer: which layer of a GeoPackage",
             "title": "Source Layer"
+          },
+          "time_format": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "strptime format for times stored as text that aren't ISO 8601",
+            "title": "Time Format"
           },
           "timezone": {
             "anyOf": [
@@ -2025,7 +2070,7 @@
             "title": "Started At"
           },
           "status": {
-            "description": "staged | inspected | queued | running | succeeded | failed | cancelled",
+            "description": "awaiting_file | inspected | queued | running | succeeded | failed | cancelled",
             "title": "Status",
             "type": "string"
           },

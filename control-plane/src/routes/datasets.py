@@ -72,6 +72,7 @@ from src.geometry import (
     feature_collection,
     json_geometry,
     prepare_layer,
+    with_geoarrow,
     with_geoparquet,
 )
 from src.models import (
@@ -1321,6 +1322,8 @@ def read_dataset(
         headers[TOTAL_ROWS] = str(total)
     if has_geometry and media_type == PARQUET:
         rows = with_geoparquet(rows)
+    elif has_geometry and media_type == ARROW_STREAM:
+        rows = with_geoarrow(rows)
     return Response(
         encode_binary(rows, media_type), media_type=media_type, headers=headers
     )
