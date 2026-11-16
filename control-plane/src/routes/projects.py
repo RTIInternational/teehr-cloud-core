@@ -179,16 +179,25 @@ def _admin_count(session: Session, project: Project) -> int:
     "",
     status_code=status.HTTP_201_CREATED,
     operation_id="create_project",
-    responses=_errors(401, 409, 503),
+    responses=_errors(401, 403, 409, 503),
 )
 def create_project(
     body: ProjectCreate,
     session: SessionDep,
     identity: IdentityDep,
+    settings: SettingsDep,
     polaris: PolarisDep,
     keycloak: KeycloakDep,
 ) -> ProjectOut:
     """Create a project; the response's ``status`` says whether provisioning worked."""
+    creators = settings.project_creator_roles
+    if creators and not (
+        identity.has_any_role(creators) or identity.has_any_role(settings.admin_roles)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Creating projects is limited to platform admins for now",
+        )
     if body.name in RESERVED_PROJECT_NAMES:
         raise _conflict(f"'{body.name}' is a reserved project name")
     project = Project(

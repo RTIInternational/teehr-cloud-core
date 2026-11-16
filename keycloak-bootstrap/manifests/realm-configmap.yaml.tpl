@@ -40,7 +40,7 @@ data:
           { "name": "teehr-platform-write", "description": "Write the public and platform system projects (ingest)" },
           { "name": "control-plane-admin", "description": "Edit every project in the control plane. Very few people." },
           { "name": "control-plane-viewer", "description": "See every project and its members in the control plane; change nothing" },
-          { "name": "polaris-service-admin", "description": "Polaris service_admin via token (with a named-principal binding). The control plane's service account, local only." },
+          { "name": "polaris-service-admin", "description": "Polaris service_admin via token (with a named-principal binding). The control plane's service account only." },
           { "name": "icechunk-read-only" },
         ]
       },
@@ -127,12 +127,12 @@ data:
           },
           "protocolMappers": [
             {
-              "name": "audience-teehr-control-plane",
+              "name": "audience-teehr-control-plane-jobs",
               "protocol": "openid-connect",
               "protocolMapper": "oidc-audience-mapper",
               "consentRequired": false,
               "config": {
-                "included.custom.audience": "teehr-control-plane",
+                "included.custom.audience": "teehr-control-plane-jobs",
                 "id.token.claim": "false",
                 "access.token.claim": "true"
               }
@@ -142,18 +142,46 @@ data:
         {
           "clientId": "teehr-control-plane",
           "name": "Project control plane (service account)",
-          "description": "The control plane's own identity, for the Keycloak admin API and Polaris. Local only until the dark launch (#171).",
-          "enabled": ${environment.name == 'local' ? "true" : "false"},
+          "description": "The control plane's own identity, for the Keycloak admin API and Polaris. On where the control plane is (local; var.controlPlane.enabled).",
+          "enabled": ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? "true" : "false"},
           "protocol": "openid-connect",
           "publicClient": false,
           "serviceAccountsEnabled": true,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "secret": "${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? '$(env:CONTROL_PLANE_CLIENT_SECRET)' : ''}",
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        },
+        {
+          "clientId": "teehr-control-plane-jobs",
+          "name": "Project control plane (load jobs act as their caller)",
+          "description": "Token exchange only (ADR-0014): turns a caller's token into a refresh token a job acts as them with. Separate from teehr-control-plane so one secret isn't both the admin identity and the act-as-users identity.",
+          "enabled": ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? "true" : "false"},
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": false,
           "standardFlowEnabled": false,
           "directAccessGrantsEnabled": false,
           "attributes": {
             "standard.token.exchange.enabled": "true",
             "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
           },
-          "secret": "${environment.name == 'local' ? '$(env:CONTROL_PLANE_CLIENT_SECRET)' : ''}",
+          "secret": "${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? '$(env:CONTROL_PLANE_JOBS_CLIENT_SECRET)' : ''}",
           "protocolMappers": [
             {
               "name": "realm-roles",
@@ -174,7 +202,7 @@ data:
         {
           "clientId": "teehr-control-plane-docs",
           "name": "Control plane API docs (Swagger login)",
-          "enabled": ${environment.name == 'local' ? "true" : "false"},
+          "enabled": ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? "true" : "false"},
           "protocol": "openid-connect",
           "publicClient": true,
           "standardFlowEnabled": true,
@@ -190,12 +218,12 @@ data:
           },
           "protocolMappers": [
             {
-              "name": "audience-teehr-control-plane",
+              "name": "audience-teehr-control-plane-jobs",
               "protocol": "openid-connect",
               "protocolMapper": "oidc-audience-mapper",
               "consentRequired": false,
               "config": {
-                "included.custom.audience": "teehr-control-plane",
+                "included.custom.audience": "teehr-control-plane-jobs",
                 "id.token.claim": "false",
                 "access.token.claim": "true"
               }
@@ -220,12 +248,12 @@ data:
           },
           "protocolMappers": [
             {
-              "name": "audience-teehr-control-plane",
+              "name": "audience-teehr-control-plane-jobs",
               "protocol": "openid-connect",
               "protocolMapper": "oidc-audience-mapper",
               "consentRequired": false,
               "config": {
-                "included.custom.audience": "teehr-control-plane",
+                "included.custom.audience": "teehr-control-plane-jobs",
                 "id.token.claim": "false",
                 "access.token.claim": "true"
               }
@@ -292,12 +320,12 @@ data:
               }
             },
             {
-              "name": "audience-teehr-control-plane",
+              "name": "audience-teehr-control-plane-jobs",
               "protocol": "openid-connect",
               "protocolMapper": "oidc-audience-mapper",
               "consentRequired": false,
               "config": {
-                "included.custom.audience": "teehr-control-plane",
+                "included.custom.audience": "teehr-control-plane-jobs",
                 "id.token.claim": "false",
                 "access.token.claim": "true"
               }
@@ -401,9 +429,9 @@ data:
           "username": "service-account-teehr-control-plane",
           "enabled": true,
           "serviceAccountClientId": "teehr-control-plane",
-          "realmRoles": ${environment.name == 'local' ? '["polaris-service-admin"]' : '[]'},
+          "realmRoles": ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? '["polaris-service-admin"]' : '[]'},
           "clientRoles": {
-            "realm-management": ${environment.name == 'local' ? '["manage-realm", "view-realm", "manage-users", "view-users", "query-users"]' : '[]'}
+            "realm-management": ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? '["manage-realm", "view-realm", "manage-users", "view-users", "query-users"]' : '[]'}
           }
         },
         {

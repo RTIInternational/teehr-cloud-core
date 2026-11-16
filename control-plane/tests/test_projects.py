@@ -192,3 +192,21 @@ def test_removing_unknown_member_is_404(client):
         ).status_code
         == 404
     )
+
+
+def test_project_creation_can_be_limited_to_some_roles(client):
+    import dataclasses
+
+    from src.config import get_settings
+    from src.main import app
+
+    limited = dataclasses.replace(
+        app.dependency_overrides[get_settings](), project_creator_roles=("creator",)
+    )
+    app.dependency_overrides[get_settings] = lambda: limited
+    resp = client.post("/v1/projects", json={"name": "nope"}, headers=auth("alice"))
+    assert resp.status_code == 403
+    resp = client.post(
+        "/v1/projects", json={"name": "yes"}, headers=auth("bob", roles=("creator",))
+    )
+    assert resp.status_code == 201

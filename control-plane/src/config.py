@@ -30,6 +30,14 @@ class Settings:
     # Polaris, where it maps to the control plane's named principal.
     client_id: str | None = None
     client_secret: str | None = None
+    # A separate confidential client used only for token exchange (load jobs act as
+    # their caller, ADR-0014), so the admin identity above and the "act as users"
+    # identity aren't one secret. None = exchange with client_id / client_secret.
+    exchange_client_id: str | None = None
+    exchange_client_secret: str | None = None
+    # Who may create projects: realm roles (any of them). Empty = any signed-in
+    # user. A dark launch sets the platform admin role.
+    project_creator_roles: tuple[str, ...] = ()
     # Polaris management access for provisioning. None = provisioning disabled.
     polaris_url: str | None = None
     polaris_realm: str = "teehr"
@@ -146,6 +154,10 @@ def get_settings() -> Settings:
         or os.getenv("POLARIS_REALM", "teehr"),
         client_id=os.getenv("CONTROL_PLANE_CLIENT_ID") or None,
         client_secret=os.getenv("CONTROL_PLANE_CLIENT_SECRET") or None,
+        exchange_client_id=os.getenv("CONTROL_PLANE_EXCHANGE_CLIENT_ID") or None,
+        exchange_client_secret=os.getenv("CONTROL_PLANE_EXCHANGE_CLIENT_SECRET")
+        or None,
+        project_creator_roles=_csv(os.getenv("PROJECT_CREATOR_ROLES")),
         polaris_token_url=os.getenv("POLARIS_TOKEN_URL") or None,
         polaris_warehouse=os.getenv("POLARIS_WAREHOUSE") or None,
         storage_endpoint=os.getenv("STORAGE_S3_ENDPOINT") or None,

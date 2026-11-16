@@ -103,6 +103,12 @@ spec:
             secretKeyRef:
               name: control-plane-secrets
               key: client-secret
+        - name: CONTROL_PLANE_EXCHANGE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: control-plane-secrets
+              key: jobs-client-secret
+              optional: true
         envFrom:
         - configMapRef:
             name: teehr-control-plane-config

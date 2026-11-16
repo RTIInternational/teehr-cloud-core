@@ -48,7 +48,11 @@ class Delegation(Protocol):
 class KeycloakDelegation:
     def __init__(self, settings: Settings):
         self._url = settings.keycloak_token_url
-        self._client = (settings.client_id, settings.client_secret)
+        self._client = (
+            (settings.exchange_client_id, settings.exchange_client_secret)
+            if settings.exchange_client_id
+            else (settings.client_id, settings.client_secret)
+        )
 
     def _post(self, data: dict) -> Tokens:
         client_id, secret = self._client
@@ -111,9 +115,12 @@ class Sealer:
 def get_delegation() -> Delegation | None:
     """Token exchange with Keycloak, or None when it isn't configured."""
     settings = get_settings()
-    if not (
-        settings.keycloak_token_url and settings.client_id and settings.client_secret
-    ):
+    client = (
+        (settings.exchange_client_id, settings.exchange_client_secret)
+        if settings.exchange_client_id
+        else (settings.client_id, settings.client_secret)
+    )
+    if not (settings.keycloak_token_url and all(client)):
         return None
     return KeycloakDelegation(settings)
 
