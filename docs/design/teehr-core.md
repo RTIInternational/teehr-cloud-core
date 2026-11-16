@@ -1,6 +1,6 @@
 # teehr-core (Phase 4)
 
-- **Status:** draft 2026-11-16, for review before the repo is created.
+- **Status:** agreed 2026-11-16.
 - **Builds on:** ADR-0002 (metric engine), ADR-0007 (package decomposition), ADR-0008 (repo
   topology), ADR-0011 (VeriRace parity); teehr-shared-eval-spec (`standards/metrics.md`,
   `metric-state.md`, `bootstrap.md`, `units.md`, `spec/`).
@@ -94,7 +94,8 @@ Python ≥ 3.12. Base dependencies: numpy, pyarrow, pydantic, sqlglot. Extra `en
 
 1. **Repo and packaging:** scaffold (pyproject, ruff, pytest, CI, PyPI trusted publishing), MIT.
 2. **Kernels, state, bootstrap** from VeriRace with the agreed names; add the teehr-only metrics
-   and options; a numpy state merge. Golden vectors pass.
+   and options; a numpy state merge. Golden vectors pass, and the teehr/VeriRace formula
+   comparison is done (Decided, 3).
 3. **Data model and units** from the control plane and VeriRace.
 4. **Spec schema and expressions** (the decided v1), JSON Schema.
 5. **Conformance cases** (shared spec) and the runner; both systems run them in CI.
@@ -105,13 +106,12 @@ Python ≥ 3.12. Base dependencies: numpy, pyarrow, pydantic, sqlglot. Extra `en
 
 Steps 2–5 are the release that matters to both systems; 6–7 follow.
 
-## Open
+## Decided (2026-11-16)
 
-1. **Publishing VeriRace's code.** VeriRace is MIT (its `pyproject.toml`) but private
-   (`mgdenno/verirace`); most of steps 2, 4 and 6 is its code, made public here. OK to publish?
-2. **Who maintains it:** TEEHR (final say, as for the shared spec) with VeriRace as a second
-   maintainer?
-3. **Formula drift:** before step 2 ships, compare every shared metric between teehr and VeriRace
-   on the same inputs (ddof, undefined cases, KGE variants), and record any differences as
-   decisions in the shared spec.
-4. **teehr's `LICENSE` (MIT) and `pyproject.toml` ("GNU v3") disagree;** fix in teehr.
+1. **VeriRace's code is published here,** with acknowledgement: the README credits VeriRace, and
+   files ported from it say so in their docstring.
+2. **Maintainer: TEEHR** (final say, as for the shared spec).
+3. **Formula comparison before release:** every shared metric is computed by teehr and VeriRace
+   on the same inputs (including undefined cases: zero variance, all-null, a single pair) before
+   step 2 ships; any difference becomes a decision in the shared spec, and the core follows it.
+4. **MIT everywhere:** teehr's `pyproject.toml` is corrected to match its `LICENSE`.
