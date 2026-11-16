@@ -13,6 +13,7 @@ import pyogrio
 import pytest
 import shapely
 
+from tests.conftest import auth
 from tests.test_datasets import ALICE
 from tests.test_datasets import tables as tables  # noqa: F401  (fixture)
 from tests.test_ingest import jobs as jobs  # noqa: F401  (fixture)
@@ -74,8 +75,13 @@ def inspect(client, upload_id, **params):
     return resp.json()["preview"]
 
 
+# A token that carries alice's project role, as a real one issued after the
+# project was created does.
+ALICE_NOW = auth("alice", roles=("teehr-project-flood-admin",))
+
+
 def ingest(client, upload_id, body):
-    return client.post(f"{UPLOADS}/{upload_id}/ingest", json=body, headers=ALICE)
+    return client.post(f"{UPLOADS}/{upload_id}/ingest", json=body, headers=ALICE_NOW)
 
 
 def problems_at(resp) -> list[str]:
