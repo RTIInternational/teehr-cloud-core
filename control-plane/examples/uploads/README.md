@@ -54,7 +54,10 @@ Optional third argument: the Keycloak user (default `user`, password = username)
 
 ## Loading (ingest)
 
-After inspecting, `POST /v1/projects/{name}/uploads/{id}/ingest` (in /docs). The
+After inspecting, `POST /v1/projects/{name}/uploads/{id}/ingest` (in /docs). Inspect's
+`preview.ingest` is a body to start from: replace its `<...>` placeholders (ingest
+refuses any left) and send it. The `dataset.name` it proposes comes from the file
+name; change it to load into a dataset you already have. The
 `dataset.unit` is the unit of the file's values; they're stored in the variable's
 unit. For a new dataset give `role`, `variable` and `statistic`; for an existing one,
 just its `name` and `unit`. `mapping` changes what inspect proposed.

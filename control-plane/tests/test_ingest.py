@@ -171,6 +171,29 @@ def test_ingest_reports_what_is_wrong(client, staging, jobs, dataset, mapping, w
     assert kube.created == []
 
 
+def test_inspects_ingest_body_works_once_its_placeholders_are_replaced(
+    client, staging, jobs
+):
+    upload = create(client, "obs.csv").json()
+    staged(staging, upload, CSV.replace(b"Z,", b","))
+    preview = client.post(f"{UPLOADS}/{upload['id']}/inspect", headers=ALICE).json()[
+        "preview"
+    ]
+    body = preview["ingest"]
+    assert body["dataset"]["name"] == "obs"
+    assert set(body["mapping"]) == {"timezone"}
+    resp = client.post(f"{UPLOADS}/{upload['id']}/ingest", json=body, headers=ALICE)
+    assert resp.status_code == 422
+    msg = resp.json()["errors"][0]["msg"]
+    for where in ("dataset.unit", "dataset.role", "dataset.variable",
+                  "dataset.statistic", "mapping.timezone"):  # fmt: skip
+        assert where in msg
+    body["dataset"] |= {k: v for k, v in OBS.items() if k != "name"}
+    body["mapping"]["timezone"] = "America/New_York"
+    resp = client.post(f"{UPLOADS}/{upload['id']}/ingest", json=body, headers=ALICE)
+    assert resp.status_code == 202, resp.text
+
+
 def test_times_without_a_zone_need_one(client, staging, jobs):
     upload_id = inspected(client, staging, CSV.replace(b"Z,", b","))
     resp = ingest(client, upload_id)

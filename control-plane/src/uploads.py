@@ -198,7 +198,39 @@ class Preview:
             "dataset": self.dataset,
             "needed": self.needed,
             "notes": self.notes,
+            "ingest": ingest_body(self.dataset["name"], self.needed),
         }
+
+
+_PLACEHOLDERS = {
+    "mapping.timezone": ("mapping", "timezone", "<IANA zone of the times, e.g. UTC>"),
+    "mapping.value_time": ("mapping", "value_time", "<column with the value times>"),
+    "mapping.value": ("mapping", "value", "<column with the values>"),
+}
+
+
+def ingest_body(name: str, needed: list[str]) -> dict:
+    """An ingest request to edit: the proposed name, and a ``<...>`` placeholder for
+    everything the uploader still has to say (ingest refuses unreplaced ones)."""
+    mapping: dict = {}
+    for need in needed:
+        if need in _PLACEHOLDERS:
+            _, key, text = _PLACEHOLDERS[need]
+            mapping[key] = text
+        elif need.startswith("mapping.series_key"):
+            mapping["series_key_value"] = "<one series key for every row>"
+    body: dict = {
+        "dataset": {
+            "name": name,
+            "unit": "<unit of the file's values (UCUM), e.g. m3/s or [cft_i]/s>",
+            "role": "<observed | simulated | forecast>",
+            "variable": "<e.g. streamflow; see GET /v1/domains/variables>",
+            "statistic": "<inst | mean | sum | min | max>",
+        }
+    }
+    if mapping:
+        body["mapping"] = mapping
+    return body
 
 
 def inspect(head: pa.Table, rows: int | None, filename: str) -> Preview:

@@ -1541,7 +1541,7 @@
                 "type": "null"
               }
             ],
-            "description": "From inspect: columns, sample rows, row count (when known), the proposed mapping and dataset, what's still needed, and notes",
+            "description": "From inspect: columns, sample rows, row count (when known), the proposed mapping and dataset, what's still needed, notes, and an ingest body to edit (replace its <...> placeholders)",
             "title": "Preview"
           },
           "problems": {
