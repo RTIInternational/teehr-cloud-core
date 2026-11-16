@@ -637,11 +637,20 @@ class UploadCreate(StrictInput):
     filename: str = Field(
         min_length=1, max_length=255, pattern=r"^[^/\\]+$", description="No paths"
     )
-    format: Literal["csv", "parquet"] | None = Field(
-        default=None, description="Default: from the file name's extension"
+    format: Literal["csv", "parquet", "geojson", "shapefile", "geopackage"] | None = (
+        Field(
+            default=None,
+            description=(
+                "Default: from the file name's extension (.csv, .parquet, .geojson, "
+                ".zip for a zipped Shapefile, .gpkg)"
+            ),
+        )
     )
-    kind: Literal["timeseries"] = Field(
-        description="What the file holds (layers and crosswalks come later)"
+    kind: Literal["timeseries", "layer", "crosswalk"] = Field(
+        description=(
+            "What the file holds. timeseries and crosswalk: csv or parquet; layer: "
+            "any format (csv with longitude/latitude or WKT)"
+        )
     )
 
 
@@ -683,6 +692,20 @@ class UploadOut(BaseModel):
     upload_url_expires_at: datetime | None = None
 
 
+class AttributeMapping(StrictInput):
+    """A file column kept as a layer attribute."""
+
+    column: str = Field(description="The file's column")
+    name: str | None = Field(
+        default=None,
+        pattern=COLUMN_NAME_PATTERN,
+        description="The attribute's name (default: the column's, made valid)",
+    )
+    type: ColumnType | None = Field(
+        default=None, description="Default: what inspect proposed"
+    )
+
+
 class IngestMapping(StrictInput):
     """Changes to the mapping inspect proposed (a field left out keeps it)."""
 
@@ -708,17 +731,44 @@ class IngestMapping(StrictInput):
         max_length=64,
         description="IANA zone of times without an offset, e.g. America/Denver",
     )
+    # Layers
+    name: str | None = Field(default=None, description="Layer: column with names")
+    geometry: str | None = Field(
+        default=None, description="Layer: column with WKB or WKT geometry"
+    )
+    longitude: str | None = Field(default=None, description="Layer: point x column")
+    latitude: str | None = Field(default=None, description="Layer: point y column")
+    crs: str | None = Field(
+        default=None,
+        max_length=2000,
+        description=(
+            "Layer: the file's coordinate system (e.g. EPSG:26918), when it doesn't "
+            "say; reprojected to EPSG:4326 on load"
+        ),
+    )
+    source_layer: str | None = Field(
+        default=None, max_length=255, description="Layer: which layer of a GeoPackage"
+    )
+    attributes: list[AttributeMapping] | None = Field(
+        default=None,
+        max_length=200,
+        description="Layer: the columns to keep as attributes (default: all others)",
+    )
+    # Crosswalks
+    left_key: str | None = Field(default=None, description="Crosswalk: left keys")
+    right_key: str | None = Field(default=None, description="Crosswalk: right keys")
 
 
 class IngestDataset(StrictInput):
-    """The dataset to load into: an existing timeseries, or a new one."""
+    """The dataset to load into: an existing one, or a new one."""
 
     name: str | None = Field(
         default=None, pattern=PROJECT_NAME_PATTERN, description="Default: proposed"
     )
-    unit: str = Field(
+    unit: str | None = Field(
+        default=None,
         pattern=UNIT_SYMBOL_PATTERN,
-        description="The unit of the file's values (UCUM); converted on load",
+        description="Timeseries: the unit of the file's values (UCUM); converted",
     )
     role: TimeseriesRole | None = Field(default=None, description="New datasets")
     variable: str | None = Field(default=None, description="New datasets")
@@ -728,6 +778,12 @@ class IngestDataset(StrictInput):
     source: str | None = Field(default=None, max_length=2000)
     location_layer: str | None = Field(default=None, pattern=DATASET_REF_PATTERN)
     time_partition: TimePartition = "month"
+    left: str | None = Field(
+        default=None, pattern=DATASET_REF_PATTERN, description="New crosswalks"
+    )
+    right: str | None = Field(
+        default=None, pattern=DATASET_REF_PATTERN, description="New crosswalks"
+    )
 
 
 _PLACEHOLDER = re.compile(r"^<.*>$", re.DOTALL)

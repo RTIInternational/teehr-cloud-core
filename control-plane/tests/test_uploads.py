@@ -37,6 +37,16 @@ class FakeStaging:
     def open(self, key):
         return pa.BufferReader(self.objects[key])
 
+    def gdal_url(self, key):
+        """A local copy, as GDAL would read the object in place."""
+        import os
+        import tempfile
+
+        path = os.path.join(tempfile.mkdtemp(), key.rsplit("/", 1)[-1])
+        with open(path, "wb") as f:
+            f.write(self.objects[key])
+        return path
+
     def delete(self, key):
         self.deleted.append(key)
         self.objects.pop(key, None)
