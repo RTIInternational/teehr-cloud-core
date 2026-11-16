@@ -17,7 +17,7 @@ from src.jobs.load import GrantClient, LoadFailed, load_upload
 from src.kube import KubeError, get_kube
 from src.main import app
 from src.models import Job
-from tests.conftest import make_token
+from tests.conftest import auth, make_token
 from tests.test_datasets import ALICE, add_member
 from tests.test_datasets import tables as tables  # noqa: F401  (fixture)
 from tests.test_uploads import BOB, UPLOADS, create, staged
@@ -103,7 +103,12 @@ def inspected(client, staging, data=CSV, filename="obs.csv"):
     return upload["id"]
 
 
-def ingest(client, upload_id, dataset=None, mapping=None, headers=ALICE):
+# A token issued after alice got her project role (as in real use: the job acts
+# with the roles this token carries).
+ALICE_NOW = auth("alice", roles=("teehr-project-flood-admin",))
+
+
+def ingest(client, upload_id, dataset=None, mapping=None, headers=ALICE_NOW):
     body = {"dataset": dataset or OBS, "mapping": mapping or {}}
     return client.post(f"{UPLOADS}/{upload_id}/ingest", json=body, headers=headers)
 
@@ -131,7 +136,7 @@ def test_ingest_starts_a_job_acting_as_the_caller(client, staging, jobs):
     assert body["dataset"]["optional_columns"] == ["quality"]
     assert body["mapping"]["series_key"] == "site_no"
     # The caller's own token was exchanged.
-    assert delegation.exchanged == [ALICE["Authorization"].removeprefix("Bearer ")]
+    assert delegation.exchanged == [ALICE_NOW["Authorization"].removeprefix("Bearer ")]
     manifest = kube.created[0]
     pod = manifest["spec"]["template"]["spec"]
     assert pod["automountServiceAccountToken"] is False
@@ -182,7 +187,7 @@ def test_inspects_ingest_body_works_once_its_placeholders_are_replaced(
     body = preview["ingest"]
     assert body["dataset"]["name"] == "obs"
     assert set(body["mapping"]) == {"timezone"}
-    resp = client.post(f"{UPLOADS}/{upload['id']}/ingest", json=body, headers=ALICE)
+    resp = client.post(f"{UPLOADS}/{upload['id']}/ingest", json=body, headers=ALICE_NOW)
     assert resp.status_code == 422
     msg = resp.json()["errors"][0]["msg"]
     for where in ("dataset.unit", "dataset.role", "dataset.variable",
@@ -190,7 +195,7 @@ def test_inspects_ingest_body_works_once_its_placeholders_are_replaced(
         assert where in msg
     body["dataset"] |= {k: v for k, v in OBS.items() if k != "name"}
     body["mapping"]["timezone"] = "America/New_York"
-    resp = client.post(f"{UPLOADS}/{upload['id']}/ingest", json=body, headers=ALICE)
+    resp = client.post(f"{UPLOADS}/{upload['id']}/ingest", json=body, headers=ALICE_NOW)
     assert resp.status_code == 202, resp.text
 
 
@@ -318,6 +323,16 @@ def test_unknown_grants_and_user_tokens_are_refused(client, staging, jobs):
     assert grant_call(client, "tjg_nope", "GET", "task").status_code == 401
     user_token = ALICE["Authorization"].removeprefix("Bearer ")
     assert grant_call(client, user_token, "GET", "task").status_code == 401
+
+
+def test_a_token_without_the_project_role_is_refused_up_front(client, staging, jobs):
+    kube, delegation = jobs
+    upload_id = inspected(client, staging)
+    resp = ingest(client, upload_id, headers=ALICE)  # from before the project
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "token_refresh_required"
+    assert kube.created == [] and delegation.exchanged == []
+    assert ingest(client, upload_id).status_code == 202
 
 
 def test_session_ended(client, staging, jobs):

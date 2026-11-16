@@ -23,6 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.access import project_roles
 from src.dataset_types import (
     CROSSWALK,
     CROSSWALK_COLUMNS,
@@ -38,6 +39,7 @@ from src.delegation import (
     get_sealer,
 )
 from src.domains import lookup
+from src.errors import APIError
 from src.geofiles import (
     GEO_FORMATS,
     GeoFileError,
@@ -608,7 +610,21 @@ def ingest_upload(
     """Confirm (or change) the mapping and say which dataset to load into, then
     start the load. Everything wrong is reported at once (422) before anything
     starts; the load itself checks the whole file before writing any of it."""
-    project, _ = _authorize(session, name, identity, settings, Role.WRITE)
+    project, my_role = _authorize(session, name, identity, settings, Role.WRITE)
+    if (
+        my_role is not None
+        and not identity.has_any_role(settings.admin_roles)
+        and project_roles(project.name)[my_role] not in identity.roles
+    ):
+        # The job acts with this token's roles (token exchange can't add any), so a
+        # token from before the caller's project role would fail inside the job.
+        raise APIError(
+            status.HTTP_403_FORBIDDEN,
+            f"Your access token predates your {my_role.value} role in "
+            f"'{project.name}'; the load would run without it. Get a new token "
+            "and retry.",
+            code="token_refresh_required",
+        )
     if kube is None or delegation is None or sealer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
