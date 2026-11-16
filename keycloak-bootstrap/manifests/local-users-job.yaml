@@ -38,8 +38,12 @@ spec:
               value: "300s"
             - name: KEYCLOAK_SSLVERIFY
               value: "false"
+            # Import only when the users file changes: every import resets each
+            # listed user's realm roles to the file's (none), which strips the
+            # project roles the control plane gives them. The control plane's
+            # access reconcile restores those after a real change.
             - name: IMPORT_CACHE_ENABLED
-              value: "false"
+              value: "true"
           volumeMounts:
             - name: keycloak-local-users-config
               mountPath: /config

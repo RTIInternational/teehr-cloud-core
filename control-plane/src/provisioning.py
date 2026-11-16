@@ -16,7 +16,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.access import AccessError, ensure_project_roles, sync_member
+from src.access import (
+    AccessError,
+    ensure_project_roles,
+    project_roles,
+    sync_member,
+)
 from src.config import Settings, get_settings
 from src.keycloak_admin import KeycloakAdmin, KeycloakError
 from src.models import Project, ProjectKind, ProjectStatus, Role
@@ -243,3 +248,58 @@ def reconcile(
             )
             for project in projects
         )
+
+
+def reconcile_access(
+    engine: Engine, admin: PolarisAdmin | None, keycloak: KeycloakAdmin | None
+) -> dict[str, int]:
+    """Make Keycloak and Polaris match the membership table, the source of truth:
+    every member of a ready project gets exactly their role, and anyone else holding
+    one of the project's roles loses it.
+
+    Repairs drift: a Keycloak import that reset users' roles, a role edited by
+    hand, a sync that failed halfway. Each project is done under its row lock, so it
+    never races a membership change; one project failing doesn't stop the rest, and
+    a project's status isn't changed (a transient error isn't a broken project).
+    Returns counts: projects checked, failed, and stale holders removed.
+    """
+    counts = {"projects": 0, "failed": 0, "removed": 0}
+    if admin is None or keycloak is None:
+        return counts
+    with Session(engine) as session:
+        ids = session.scalars(
+            select(Project.id)
+            .where(Project.status == ProjectStatus.READY)
+            .order_by(Project.name)
+        ).all()
+        for project_id in ids:
+            project = session.get(Project, project_id)
+            session.refresh(project, with_for_update=True)
+            counts["projects"] += 1
+            try:
+                if project.status == ProjectStatus.READY:
+                    counts["removed"] += _reconcile_project(project, admin, keycloak)
+                session.commit()
+            except (KeycloakError, PolarisError, AccessError) as exc:
+                session.rollback()
+                counts["failed"] += 1
+                logger.error("Access reconcile of '%s' failed: %s", project.name, exc)
+    return counts
+
+
+def _reconcile_project(
+    project: Project, admin: PolarisAdmin, keycloak: KeycloakAdmin
+) -> int:
+    _grant_members(project, admin, keycloak)
+    members = {m.subject for m in project.members}
+    removed = 0
+    for name in project_roles(project.name).values():
+        for subject, username in keycloak.role_holders(name).items():
+            if subject not in members:
+                sync_member(keycloak, admin, project.name, subject, None, username)
+                logger.warning(
+                    "Removed '%s' from %s: not a member of '%s'",
+                    username, name, project.name,
+                )  # fmt: skip
+                removed += 1
+    return removed
