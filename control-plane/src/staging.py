@@ -30,6 +30,9 @@ class Staging(Protocol):
     def download_url(self, key: str, ttl_seconds: int) -> str:
         """A URL to GET one object from, valid for ``ttl_seconds``."""
 
+    def gdal_url(self, key: str) -> str:
+        """A path GDAL reads the object from in place (by byte range)."""
+
     def size(self, key: str) -> int:
         """The object's size in bytes; raises StagedMissing if there's none."""
 
@@ -95,6 +98,9 @@ class S3Staging:
             Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=ttl_seconds,
         )
+
+    def gdal_url(self, key: str) -> str:
+        return "/vsicurl/" + self.download_url(key, 3600)
 
     def size(self, key: str) -> int:
         try:

@@ -22,6 +22,10 @@ dependencies = [
     "boto3>=1.34",
     # Layer geometry: WKB/GeoJSON parsing, validity and bounds.
     "shapely>=2.0",
+    # Layer uploads: GeoJSON, zipped Shapefile, GeoPackage (GDAL, bundled) and
+    # reprojection to EPSG:4326.
+    "pyogrio>=0.10",
+    "pyproj>=3.6",
 ]
 
 [project.optional-dependencies]

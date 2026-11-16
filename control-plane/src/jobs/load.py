@@ -18,11 +18,15 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+import shapely
 
-from src.dataset_types import timeseries_columns
+from src.dataset_types import crosswalk_columns, layer_columns, timeseries_columns
+from src.geofiles import GEO_FORMATS, SUFFIX, WGS84, points, read_geo, to_wgs84
+from src.geometry import prepare_layer
 from src.tables import DataMismatch, conform, duplicate_keys
 from src.uploads import read_csv_text
 
@@ -114,7 +118,9 @@ def _problem(resp: httpx.Response) -> str:
     return body.get("detail") or f"HTTP {resp.status_code}"
 
 
-def read_file(path: str, fmt: str) -> pa.Table:
+def read_file(path: str, fmt: str, layer: str | None = None) -> pa.Table:
+    if fmt in GEO_FORMATS:
+        return read_geo(fmt, path, layer)[0]
     if fmt == "parquet":
         return pq.read_table(path)
     with open(path, "rb") as f:
@@ -255,12 +261,16 @@ def write(client: GrantClient, project: str, dataset: dict, typed: pa.Table) -> 
     path = f"/projects/{project}/datasets/{dataset['name']}/data"
     done = added = 0
     snapshot = None
+    notes: list[str] = []
+    params = {"mode": "upsert"}
+    if dataset.get("unit"):
+        params["unit"] = dataset["unit"]
     for chunk in chunks(typed):
         for attempt in range(4):
             resp = client.api(
                 "POST",
                 path,
-                params={"mode": "upsert", "unit": dataset["unit"]},
+                params=params,
                 content=arrow_bytes(chunk),
                 headers={"Content-Type": ARROW},
             )
@@ -273,20 +283,138 @@ def write(client: GrantClient, project: str, dataset: dict, typed: pa.Table) -> 
         done += chunk.num_rows
         added += body.get("series_added") or 0
         snapshot = body.get("snapshot_id")
+        notes += [n for n in body.get("notes") or [] if n not in notes]
         client.progress(done)
-    return {"rows": done, "series_added": added, "snapshot_id": snapshot}
+    out = {"rows": done, "snapshot_id": snapshot}
+    if dataset.get("kind", "timeseries") == "timeseries":
+        out["series_added"] = added
+    if notes:
+        out["notes"] = notes[:20]
+    return out
+
+
+def layer_table(data: pa.Table, mapping: dict, fmt: str) -> pa.Table:
+    """The file as a layer: key and name as text, geometry as WKB in EPSG:4326
+    (from a geometry column or longitude/latitude), attributes renamed."""
+    columns: dict[str, Any] = {
+        "location_key": data[mapping["location_key"]].cast(pa.string())
+    }
+    if mapping.get("name"):
+        columns["name"] = data[mapping["name"]].cast(pa.string())
+    if mapping.get("geometry"):
+        geometry = data[mapping["geometry"]]
+        if pa.types.is_string(geometry.type) or pa.types.is_large_string(geometry.type):
+            parsed = shapely.from_wkt(
+                np.asarray(geometry.to_pylist(), dtype=object), on_invalid="ignore"
+            )
+            geometry = pa.array(shapely.to_wkb(parsed).tolist(), pa.binary())
+        crs = mapping.get("crs") or WGS84
+        columns["geometry"] = to_wgs84(geometry, crs)
+    else:
+        columns["geometry"] = points(
+            data[mapping["longitude"]], data[mapping["latitude"]]
+        )
+    for attribute in mapping.get("attributes") or []:
+        columns[attribute["name"]] = data[attribute["column"]]
+    return pa.table(columns)
+
+
+def check_layer(table: pa.Table, columns: list[dict]) -> pa.Table:
+    """The whole layer, checked (geometry, types, repeated keys) and typed."""
+    try:
+        typed = conform(prepare_layer(table), columns)
+    except DataMismatch as exc:
+        raise LoadFailed([str(exc)]) from exc
+    repeated = duplicate_keys(typed, ["location_key"])
+    if repeated:
+        raise LoadFailed([f"{repeated} location keys occur more than once in the file"])
+    return typed
+
+
+def crosswalk_table(data: pa.Table, mapping: dict) -> pa.Table:
+    columns: dict[str, Any] = {
+        "left_key": data[mapping["left_key"]].cast(pa.string()),
+        "right_key": data[mapping["right_key"]].cast(pa.string()),
+    }
+    for extra in mapping.get("attributes") or []:
+        columns[extra["name"]] = data[extra["column"]]
+    return pa.table(columns)
+
+
+def check_crosswalk(table: pa.Table, columns: list[dict]) -> pa.Table:
+    try:
+        typed = conform(table, columns)
+    except DataMismatch as exc:
+        raise LoadFailed([str(exc)]) from exc
+    repeated = duplicate_keys(typed, ["left_key", "right_key"])
+    if repeated:
+        raise LoadFailed(
+            [f"{repeated} (left_key, right_key) pairs occur more than once in the file"]
+        )
+    return typed
+
+
+def _declared(mapping: dict) -> list[dict]:
+    return [
+        {"name": a["name"], "type": a["type"], "required": False}
+        for a in mapping.get("attributes") or []
+    ]
+
+
+def existing_columns(client: GrantClient, project: str, dataset: dict) -> list[dict]:
+    resp = client.api("GET", f"/projects/{project}/datasets/{dataset['name']}")
+    if resp.status_code != 200:
+        raise LoadFailed([f"dataset '{dataset['name']}': {_problem(resp)}"])
+    return resp.json()["columns"]
+
+
+def register_other(client: GrantClient, project: str, dataset: dict, mapping: dict):
+    """Register a new layer or crosswalk with the file's attribute columns."""
+    body: dict = {"type": dataset["kind"], "name": dataset["name"]}
+    for key in ("description", "source", "left", "right"):
+        if dataset.get(key):
+            body[key] = dataset[key]
+    extras = [{"name": a["name"], "type": a["type"]} for a in mapping["attributes"]]
+    body["attributes" if dataset["kind"] == "layer" else "extra_columns"] = extras
+    resp = client.api("POST", f"/projects/{project}/datasets", json=body)
+    if resp.status_code != 201:
+        raise LoadFailed([f"registering '{dataset['name']}': {_problem(resp)}"])
+
+
+def load_other(client: GrantClient, project: str, upload: dict, data) -> dict:
+    """Load a layer or crosswalk upload."""
+    mapping, dataset = upload["mapping"], upload["dataset"]
+    kind = dataset["kind"]
+    if dataset.get("existing"):
+        columns = existing_columns(client, project, dataset)
+    elif kind == "layer":
+        columns = layer_columns(_declared(mapping))
+    else:
+        columns = crosswalk_columns(_declared(mapping))
+    if kind == "layer":
+        typed = check_layer(layer_table(data, mapping, upload["format"]), columns)
+    else:
+        typed = check_crosswalk(crosswalk_table(data, mapping), columns)
+    created = not dataset.get("existing")
+    if created:
+        register_other(client, project, dataset, mapping)
+    return {"dataset": dataset["name"], "created": created,
+            **write(client, project, dataset, typed)}  # fmt: skip
 
 
 def load_upload(client: GrantClient, task: dict) -> dict:
     upload, project = task["upload"], task["project"]
     mapping, dataset = upload["mapping"], upload["dataset"]
-    with tempfile.NamedTemporaryFile() as tmp:
+    suffix = SUFFIX.get(upload["format"], "")
+    with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
         client.download(upload["download_url"], tmp)
         tmp.flush()
         try:
-            data = read_file(tmp.name, upload["format"])
+            data = read_file(tmp.name, upload["format"], mapping.get("source_layer"))
         except (pa.ArrowInvalid, OSError, ValueError) as exc:
             raise LoadFailed([f"can't read the file: {exc}"]) from exc
+    if dataset.get("kind", "timeseries") != "timeseries":
+        return load_other(client, project, upload, data)
     mapped = apply_mapping(data, mapping)
     pairs = locations(data, mapping)
     typed = check(

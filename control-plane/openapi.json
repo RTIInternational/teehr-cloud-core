@@ -1,6 +1,60 @@
 {
   "components": {
     "schemas": {
+      "AttributeMapping": {
+        "additionalProperties": false,
+        "description": "A file column kept as a layer attribute.",
+        "properties": {
+          "column": {
+            "description": "The file's column",
+            "title": "Column",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The attribute's name (default: the column's, made valid)",
+            "title": "Name"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "string",
+                  "int32",
+                  "int64",
+                  "float32",
+                  "float64",
+                  "boolean",
+                  "date",
+                  "timestamp",
+                  "timestamptz",
+                  "binary",
+                  "decimal(5,4)"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default: what inspect proposed",
+            "title": "Type"
+          }
+        },
+        "required": [
+          "column"
+        ],
+        "title": "AttributeMapping",
+        "type": "object"
+      },
       "CrosswalkCreate": {
         "additionalProperties": false,
         "description": "A `crosswalk` dataset: links the series of two timeseries datasets' series\ntables (`left_key` -> `right_key`), plus optional extra columns.",
@@ -433,7 +487,7 @@
       },
       "IngestDataset": {
         "additionalProperties": false,
-        "description": "The dataset to load into: an existing timeseries, or a new one.",
+        "description": "The dataset to load into: an existing one, or a new one.",
         "properties": {
           "description": {
             "anyOf": [
@@ -446,6 +500,19 @@
               }
             ],
             "title": "Description"
+          },
+          "left": {
+            "anyOf": [
+              {
+                "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New crosswalks",
+            "title": "Left"
           },
           "location_layer": {
             "anyOf": [
@@ -482,6 +549,19 @@
               }
             ],
             "title": "Period"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New crosswalks",
+            "title": "Right"
           },
           "role": {
             "anyOf": [
@@ -542,10 +622,17 @@
             "type": "string"
           },
           "unit": {
-            "description": "The unit of the file's values (UCUM); converted on load",
-            "pattern": "^[!-~]{1,64}$",
-            "title": "Unit",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timeseries: the unit of the file's values (UCUM); converted",
+            "title": "Unit"
           },
           "variable": {
             "anyOf": [
@@ -560,9 +647,6 @@
             "title": "Variable"
           }
         },
-        "required": [
-          "unit"
-        ],
         "title": "IngestDataset",
         "type": "object"
       },
@@ -570,6 +654,71 @@
         "additionalProperties": false,
         "description": "Changes to the mapping inspect proposed (a field left out keeps it).",
         "properties": {
+          "attributes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AttributeMapping"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: the columns to keep as attributes (default: all others)",
+            "title": "Attributes"
+          },
+          "crs": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: the file's coordinate system (e.g. EPSG:26918), when it doesn't say; reprojected to EPSG:4326 on load",
+            "title": "Crs"
+          },
+          "geometry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: column with WKB or WKT geometry",
+            "title": "Geometry"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: point y column",
+            "title": "Latitude"
+          },
+          "left_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Crosswalk: left keys",
+            "title": "Left Key"
+          },
           "location_key": {
             "anyOf": [
               {
@@ -582,6 +731,18 @@
             "description": "Column with each series' location key in the dataset's layer (may be the series key column)",
             "title": "Location Key"
           },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: point x column",
+            "title": "Longitude"
+          },
           "member": {
             "anyOf": [
               {
@@ -592,6 +753,18 @@
               }
             ],
             "title": "Member"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: column with names",
+            "title": "Name"
           },
           "quality": {
             "anyOf": [
@@ -626,6 +799,18 @@
             ],
             "title": "Reference Time"
           },
+          "right_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Crosswalk: right keys",
+            "title": "Right Key"
+          },
           "series_key": {
             "anyOf": [
               {
@@ -650,6 +835,19 @@
             ],
             "description": "One series key for every row",
             "title": "Series Key Value"
+          },
+          "source_layer": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Layer: which layer of a GeoPackage",
+            "title": "Source Layer"
           },
           "timezone": {
             "anyOf": [
@@ -1652,7 +1850,10 @@
               {
                 "enum": [
                   "csv",
-                  "parquet"
+                  "parquet",
+                  "geojson",
+                  "shapefile",
+                  "geopackage"
                 ],
                 "type": "string"
               },
@@ -1660,12 +1861,16 @@
                 "type": "null"
               }
             ],
-            "description": "Default: from the file name's extension",
+            "description": "Default: from the file name's extension (.csv, .parquet, .geojson, .zip for a zipped Shapefile, .gpkg)",
             "title": "Format"
           },
           "kind": {
-            "const": "timeseries",
-            "description": "What the file holds (layers and crosswalks come later)",
+            "description": "What the file holds. timeseries and crosswalk: csv or parquet; layer: any format (csv with longitude/latitude or WKT)",
+            "enum": [
+              "timeseries",
+              "layer",
+              "crosswalk"
+            ],
             "title": "Kind",
             "type": "string"
           }
@@ -5377,7 +5582,7 @@
     },
     "/v1/projects/{name}/uploads/{upload_id}/inspect": {
       "post": {
-        "description": "Read the start of the uploaded file and propose how it maps to a\ntimeseries. Can be repeated (e.g. after uploading a corrected file).",
+        "description": "Read the start of the uploaded file and propose how it maps to a dataset\nof the upload's kind. Can be repeated (e.g. after uploading a corrected file,\nor for another layer of a GeoPackage).",
         "operationId": "inspect_upload",
         "parameters": [
           {
@@ -5402,6 +5607,25 @@
               "format": "uuid",
               "title": "Upload Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "GeoPackage: which layer to inspect",
+            "in": "query",
+            "name": "source_layer",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "GeoPackage: which layer to inspect",
+              "title": "Source Layer"
             }
           }
         ],

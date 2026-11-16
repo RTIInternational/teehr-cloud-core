@@ -23,7 +23,13 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.dataset_types import LAYER, TIMESERIES
+from src.dataset_types import (
+    CROSSWALK,
+    CROSSWALK_COLUMNS,
+    LAYER,
+    LAYER_COLUMNS,
+    TIMESERIES,
+)
 from src.delegation import (
     Delegation,
     DelegationError,
@@ -32,6 +38,13 @@ from src.delegation import (
     get_sealer,
 )
 from src.domains import lookup
+from src.geofiles import (
+    GEO_FORMATS,
+    GeoFileError,
+    describe_crs,
+    geoparquet,
+    read_geo,
+)
 from src.jobs import ACTIVE as ACTIVE_JOBS
 from src.jobs import JobRefused, cancel, reconcile, start_job
 from src.kube import Kube, KubeError, get_kube
@@ -56,7 +69,17 @@ from src.routes.projects import (
 )
 from src.schemas import IngestRequest, UploadCreate, UploadOut
 from src.staging import StagedMissing, Staging, get_staging
-from src.uploads import UploadError, detect_format, inspect, read_head
+from src.uploads import (
+    KIND_FORMATS,
+    SAMPLE_ROWS,
+    UploadError,
+    attribute_name,
+    detect_format,
+    inspect,
+    inspect_crosswalk,
+    inspect_layer,
+    read_head,
+)
 
 router = APIRouter(prefix="/v1/projects/{name}/uploads", tags=["uploads"])
 
@@ -102,10 +125,19 @@ def create_upload(
     project, _ = _authorize(session, name, identity, settings, Role.WRITE)
     staging = _require_staging(staging)
     fmt = body.format or detect_format(body.filename)
+    allowed = KIND_FORMATS[body.kind]
     if fmt is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Say the format (csv or parquet), or use a .csv / .parquet name",
+            detail=(
+                f"Say the format ({', '.join(allowed)}), or use a file name with its "
+                "extension"
+            ),
+        )
+    if fmt not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"A {body.kind} upload is one of: {', '.join(allowed)}",
         )
     upload = Upload(
         id=uuid.uuid4(),
@@ -177,9 +209,14 @@ def inspect_upload(
     identity: IdentityDep,
     settings: SettingsDep,
     staging: StagingDep,
+    source_layer: Annotated[
+        str | None,
+        Query(max_length=255, description="GeoPackage: which layer to inspect"),
+    ] = None,
 ) -> UploadOut:
-    """Read the start of the uploaded file and propose how it maps to a
-    timeseries. Can be repeated (e.g. after uploading a corrected file)."""
+    """Read the start of the uploaded file and propose how it maps to a dataset
+    of the upload's kind. Can be repeated (e.g. after uploading a corrected file,
+    or for another layer of a GeoPackage)."""
     project, _ = _authorize(session, name, identity, settings, Role.WRITE)
     staging = _require_staging(staging)
     upload = _upload(session, project, upload_id)
@@ -203,18 +240,47 @@ def inspect_upload(
             ),
         )
     try:
-        with staging.open(upload.object_key) as file:
-            head, rows = read_head(file, upload.format)
-    except UploadError as exc:
+        preview = _inspect(staging, upload, source_layer)
+    except (UploadError, GeoFileError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     upload.size_bytes = size
-    upload.preview = inspect(head, rows, upload.filename).to_dict()
+    upload.preview = preview.to_dict()
     upload.status = UploadStatus.INSPECTED
     session.commit()
     session.refresh(upload)
     return UploadOut.model_validate(upload)
+
+
+def _inspect(staging: Staging, upload: Upload, source_layer: str | None):
+    """The preview for an upload of each kind and format."""
+    if upload.format in GEO_FORMATS:
+        path = staging.gdal_url(upload.object_key)
+        head, info = read_geo(upload.format, path, source_layer, SAMPLE_ROWS)
+        return inspect_layer(
+            head,
+            info["features"],
+            upload.filename,
+            geometry="geometry",
+            crs=info["crs"],
+            crs_known=False,
+            extra={"layers": info["layers"], "layer": info["layer"]},
+        )
+    with staging.open(upload.object_key) as file:
+        head, rows = read_head(file, upload.format)
+    if upload.kind == "crosswalk":
+        return inspect_crosswalk(head, rows, upload.filename)
+    if upload.kind == "layer":
+        if upload.format == "parquet":
+            column, crs = geoparquet(head.schema)
+            # Plain Parquet: a WKB column without a stated coordinate system.
+            return inspect_layer(
+                head, rows, upload.filename, geometry=column, crs=crs,
+                crs_known=column is not None,
+            )  # fmt: skip
+        return inspect_layer(head, rows, upload.filename, crs="EPSG:4326")
+    return inspect(head, rows, upload.filename)
 
 
 def _sync(session: Session, kube: Kube | None, upload: Upload) -> None:
@@ -237,26 +303,195 @@ TARGETS = ("series_key", "value_time", "value", "reference_time", "member",
 OPTIONAL = ("reference_time", "member", "quantile", "quality")
 
 
+# Which ingest fields each kind of upload takes.
+MAPPING_FIELDS = {
+    "timeseries": {*TARGETS, "series_key_value", "timezone"},
+    "layer": {
+        "location_key",
+        "name",
+        "geometry",
+        "longitude",
+        "latitude",
+        "crs",
+        "source_layer",
+        "attributes",
+    },  # fmt: skip
+    "crosswalk": {"left_key", "right_key", "attributes"},
+}
+DATASET_FIELDS = {
+    "timeseries": {"name", "unit", "role", "variable", "statistic", "period",
+                   "description", "source", "location_layer", "time_partition"},
+    "layer": {"name", "description", "source"},
+    "crosswalk": {"name", "description", "source", "left", "right"},
+}  # fmt: skip
+
+
 def _ingest_problems(
     session: Session, project: Project, upload: Upload, body: IngestRequest
 ) -> tuple[dict, dict, list[tuple[tuple, str]]]:
     """The mapping and dataset to load with, and everything wrong with them."""
     preview = upload.preview or {}
-    mapping = {
-        **preview.get("mapping", {}),
-        **body.mapping.model_dump(exclude_unset=True),
-    }
-    dataset = {
-        **preview.get("dataset", {}),
-        **body.dataset.model_dump(exclude_unset=True),
-    }
-    dataset["unit"] = body.dataset.unit
+    given_mapping = body.mapping.model_dump(exclude_unset=True)
+    given_dataset = body.dataset.model_dump(exclude_unset=True)
+    mapping = {**preview.get("mapping", {}), **given_mapping}
+    dataset = {**preview.get("dataset", {}), **given_dataset}
     columns = {c["name"] for c in preview.get("columns", [])}
     problems: list[tuple[tuple, str]] = []
 
     def bad(where: tuple, msg: str) -> None:
         problems.append((where, msg))
 
+    kind = upload.kind
+    for part, given, allowed in (
+        ("mapping", given_mapping, MAPPING_FIELDS[kind]),
+        ("dataset", given_dataset, DATASET_FIELDS[kind]),
+    ):
+        for key in sorted(set(given) - allowed):
+            bad((part, key), f"doesn't apply to a {kind} upload")
+    if kind == "layer":
+        _layer_problems(session, project, preview, mapping, dataset, columns, bad)
+    elif kind == "crosswalk":
+        _crosswalk_problems(session, project, preview, mapping, dataset, columns, bad)
+    else:
+        _timeseries_problems(
+            session, project, preview, body, mapping, dataset, columns, bad
+        )
+    dataset["kind"] = kind
+    return mapping, dataset, problems
+
+
+def _attributes(
+    preview: dict, mapping: dict, columns: set[str], used: set, reserved, bad
+) -> list[dict]:
+    """The file columns kept as attributes / extra columns: each with a valid,
+    distinct name and a type (inspect's proposal unless the request says)."""
+    proposed = {a["column"]: a for a in preview.get("mapping", {}).get("attributes")
+                or []}  # fmt: skip
+    out, names = [], set()
+    for i, item in enumerate(mapping.get("attributes") or []):
+        column = item.get("column")
+        if column not in columns:
+            bad(("mapping", "attributes", str(i)), f"no column '{column}' in the file")
+            continue
+        if column in used:
+            bad(("mapping", "attributes", str(i)), f"'{column}' is already mapped")
+            continue
+        base = proposed.get(column, {})
+        name = item.get("name") or base.get("name") or attribute_name(column)
+        type_ = item.get("type") or base.get("type") or "string"
+        if name.lower() in reserved or name.lower() in names:
+            bad(("mapping", "attributes", str(i)), f"name '{name}' is taken")
+            continue
+        names.add(name.lower())
+        out.append({"column": column, "name": name, "type": type_})
+    return out
+
+
+def _fits_existing(existing: Dataset, attributes: list[dict], reserved, bad) -> None:
+    have = {c["name"] for c in existing.columns or []} - set(reserved)
+    unknown = [a["name"] for a in attributes if a["name"] not in have]
+    if unknown:
+        bad(
+            ("mapping", "attributes"),
+            f"'{existing.name}' has no columns {', '.join(unknown)} "
+            f"(it has: {', '.join(sorted(have)) or 'none'})",
+        )
+
+
+def _layer_problems(session, project, preview, mapping, dataset, columns, bad):
+    if not mapping.get("location_key"):
+        bad(("mapping", "location_key"), "required: the column with location keys")
+    has_geometry = bool(mapping.get("geometry"))
+    has_points = bool(mapping.get("longitude")) or bool(mapping.get("latitude"))
+    if has_geometry == has_points:
+        bad(
+            ("mapping", "geometry"),
+            "give geometry (a column) or longitude and latitude, not both",
+        )
+    elif has_points and not (mapping.get("longitude") and mapping.get("latitude")):
+        bad(("mapping", "longitude"), "give both longitude and latitude")
+    for target in ("location_key", "name", "geometry", "longitude", "latitude"):
+        column = mapping.get(target)
+        if column and column not in columns:
+            bad(("mapping", target), f"no column '{column}' in the file")
+    crs = mapping.get("crs")
+    if crs:
+        try:
+            mapping["crs"] = describe_crs(crs)
+        except GeoFileError as exc:
+            bad(("mapping", "crs"), str(exc))
+    elif "mapping.crs" in preview.get("needed", []):
+        bad(("mapping", "crs"), "the file doesn't say its coordinate system")
+    inspected = preview.get("mapping", {}).get("source_layer")
+    if mapping.get("source_layer") != inspected:
+        bad(
+            ("mapping", "source_layer"),
+            f"inspect that layer first (POST .../inspect?source_layer=...); "
+            f"'{inspected}' was inspected",
+        )
+    used = {mapping.get(t) for t in ("location_key", "name", "geometry",
+                                     "longitude", "latitude")} - {None}  # fmt: skip
+    mapping["attributes"] = _attributes(
+        preview, mapping, columns, used, LAYER_COLUMNS, bad
+    )
+    existing = _existing(session, project, dataset)
+    if existing is not None:
+        if existing.kind != LAYER:
+            bad(("dataset", "name"), f"'{existing.name}' isn't a layer")
+        else:
+            _fits_existing(existing, mapping["attributes"], LAYER_COLUMNS, bad)
+    dataset["existing"] = existing is not None
+
+
+def _crosswalk_problems(session, project, preview, mapping, dataset, columns, bad):
+    for target in ("left_key", "right_key"):
+        column = mapping.get(target)
+        if not column:
+            bad(("mapping", target), "required: the column with these keys")
+        elif column not in columns:
+            bad(("mapping", target), f"no column '{column}' in the file")
+    if mapping.get("left_key") and mapping.get("left_key") == mapping.get("right_key"):
+        bad(("mapping", "right_key"), "left and right keys are the same column")
+    used = {mapping.get("left_key"), mapping.get("right_key")} - {None}
+    mapping["attributes"] = _attributes(
+        preview, mapping, columns, used, CROSSWALK_COLUMNS, bad
+    )
+    existing = _existing(session, project, dataset)
+    if existing is not None:
+        if existing.kind != CROSSWALK:
+            bad(("dataset", "name"), f"'{existing.name}' isn't a crosswalk")
+        else:
+            _fits_existing(existing, mapping["attributes"], CROSSWALK_COLUMNS, bad)
+            for side in ("left", "right"):
+                given = dataset.get(side)
+                have = (existing.properties or {}).get(side)
+                if given is not None and given != have:
+                    bad(("dataset", side), f"'{existing.name}' has {side} {have}")
+    else:
+        for side in ("left", "right"):
+            ref = dataset.get(side)
+            if not ref:
+                bad(("dataset", side), "required for a new crosswalk")
+                continue
+            found = resolve(session, project, ref)
+            if found is None or found.dataset.kind != TIMESERIES:
+                bad(("dataset", side), f"'{ref}' is not a timeseries dataset")
+    dataset["existing"] = existing is not None
+
+
+def _existing(session: Session, project: Project, dataset: dict) -> Dataset | None:
+    return session.scalar(
+        select(Dataset).where(
+            Dataset.project_id == project.id, Dataset.name == dataset.get("name")
+        )
+    )
+
+
+def _timeseries_problems(
+    session, project, preview, body, mapping, dataset, columns, bad
+) -> None:
+    if body.dataset.unit is None:
+        bad(("dataset", "unit"), "required: the unit of the file's values")
     for target in ("value_time", "value"):
         if not mapping.get(target):
             bad(("mapping", target), "required: the column with this")
@@ -324,9 +559,14 @@ def _ingest_problems(
             else:
                 canonical = variable.canonical_unit
         dataset["optional_columns"] = mapped_optional
-    unit = lookup(session, Unit, body.dataset.unit, project.id)
+    unit = (
+        lookup(session, Unit, body.dataset.unit, project.id)
+        if body.dataset.unit
+        else None
+    )
     if unit is None:
-        bad(("dataset", "unit"), f"unknown unit '{body.dataset.unit}'")
+        if body.dataset.unit:
+            bad(("dataset", "unit"), f"unknown unit '{body.dataset.unit}'")
     elif canonical:
         target = lookup(session, Unit, canonical, project.id)
         if target is not None and target.dimension != unit.dimension:
@@ -346,7 +586,6 @@ def _ingest_problems(
             "location keys need the dataset's location_layer (the layer they're in)",
         )
     dataset["existing"] = existing is not None
-    return mapping, dataset, problems
 
 
 @router.post(
