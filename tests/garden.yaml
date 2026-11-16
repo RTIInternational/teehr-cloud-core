@@ -276,3 +276,26 @@ spec:
   command:
     - python3
     - /app/tests/control_plane_data_gate_test.py
+
+---
+kind: Test
+name: control-plane-upload-gate
+description: >
+  Phase 3 gate: a member stages timeseries, layer (GeoJSON, zipped Shapefile,
+  GeoPackage, CSV points) and crosswalk files, inspects them and loads them as
+  Kubernetes Jobs acting as themselves (units converted, reprojected to EPSG:4326,
+  series located, crosswalk keys noted); bad files fail before writing; loads can
+  be cancelled; readers can't upload.
+dependencies:
+  - deploy.teehr-control-plane
+  - deploy.keycloak-local-users-bootstrap
+  - build.test-scripts
+environments:
+  - local
+timeout: 900
+type: container
+spec:
+  image: ${actions.build.test-scripts.outputs.deploymentImageName}:${actions.build.test-scripts.version}
+  command:
+    - python3
+    - /app/tests/control_plane_upload_gate_test.py
