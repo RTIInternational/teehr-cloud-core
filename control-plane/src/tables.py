@@ -305,11 +305,21 @@ def conform(
                     )
             arrays.append(converted)
         except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
-            if is_text:
+            if pa.types.is_decimal(field.type) and "Rescaling" in str(exc):
+                raise DataMismatch(
+                    f"column '{field.name}': values must have at most "
+                    f"{field.type.scale} decimal places"
+                ) from exc
+            if is_text and pa.types.is_timestamp(field.type):
                 raise DataMismatch(
                     f"column '{field.name}': can't parse a value as {field.type} "
                     "(timestamps with a time zone need an offset such as Z, or "
                     f"timezone=...; without one must have none) ({exc})"
+                ) from exc
+            if is_text:
+                raise DataMismatch(
+                    f"column '{field.name}': can't parse a value as {field.type} "
+                    f"({exc})"
                 ) from exc
             raise DataMismatch(
                 f"column '{field.name}': can't convert {source} to {field.type} "

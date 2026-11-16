@@ -18,6 +18,8 @@ spec:
         app: teehr-control-plane
         component: control-plane
     spec:
+      # Starts upload/evaluation Jobs (rbac.yaml, ADR-0014).
+      serviceAccountName: teehr-control-plane
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -85,6 +87,14 @@ spec:
             secretKeyRef:
               name: local-s3-secrets
               key: secretkey
+              optional: true
+        # Encrypts the refresh tokens jobs act as their callers with (ADR-0014).
+        # Absent: jobs disabled.
+        - name: JOB_TOKEN_KEY
+          valueFrom:
+            secretKeyRef:
+              name: control-plane-secrets
+              key: job-token-key
               optional: true
         # The control plane's own Keycloak client (teehr realm, client credentials).
         # Its token is used for the Keycloak admin API and for Polaris.

@@ -49,6 +49,8 @@ OPERATION_IDS = {
     "get_upload",
     "inspect_upload",
     "delete_upload",
+    "ingest_upload",
+    "cancel_upload",
 }
 
 

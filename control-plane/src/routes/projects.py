@@ -85,6 +85,7 @@ _ERROR_TEXT = {
     410: "Gone: the read's snapshot has expired; start the read again",
     413: "Request body too large",
     415: "Unsupported request body media type",
+    429: "Too many jobs running in the project; retry when one finishes",
     502: "A Keycloak or Polaris call failed",
     503: "Provisioning or user lookup isn't configured, or Keycloak is down",
 }

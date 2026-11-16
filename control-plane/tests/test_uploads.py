@@ -149,6 +149,10 @@ def test_inspect_parquet_with_zoned_times(client, staging):
     assert preview["mapping"]["series_key"] is None
     assert "mapping.timezone" not in preview["needed"]
     assert any("series_key_value" in n for n in preview["needed"])
+    assert preview["ingest"]["dataset"]["name"] == "one_gauge"
+    assert preview["ingest"]["mapping"] == {
+        "series_key_value": "<one series key for every row>"
+    }
 
 
 def test_inspect_before_the_file_is_there(client, staging):

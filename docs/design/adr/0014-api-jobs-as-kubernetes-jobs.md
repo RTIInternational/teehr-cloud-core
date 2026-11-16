@@ -75,8 +75,22 @@ Uploads first; evaluation runs (Phase 5) the same way.
 
 ## Notes
 
-- A job's lifetime is bounded by the caller's Keycloak login session (refreshing keeps an idle
-  session alive). Jobs longer than the session's maximum need another answer (e.g. offline
-  tokens) when they appear.
+- **A job lives within the caller's Keycloak login session.** The realm uses Keycloak's
+  defaults (30 minutes idle, 10 hours maximum), and both limits apply to the job:
+  - The maximum counts from when the caller signed in, not from when the job started: a load
+    started 9½ hours after signing in has about 30 minutes to finish.
+  - A pod that waits longer than the idle timeout before its first token call (e.g. for a node
+    to come up) fails with `session_ended`.
+  - A running job's token refreshes keep the caller's browser session from idling out.
+  - Signing out ends the job.
+
+  Fine for loads that take minutes. Jobs that must outlive a session (long evaluation runs)
+  need another answer when they appear, such as offline tokens, which outlive sign-out and
+  need their own revocation story.
+- **The control-plane client's secret can act as users.** With token exchange on, whoever holds
+  it can turn a captured user token (from any client that adds the `teehr-control-plane`
+  audience) into a refresh token for that user's session. It lives only in the control-plane
+  pod. When enabling on AWS (#171), consider a separate client used only for exchange, so the
+  admin-API identity and the "act as users" identity aren't lost through one secret.
 - Upload staging, inspection and the load contract follow VeriRace's upload API
   (`system-layout.md`).

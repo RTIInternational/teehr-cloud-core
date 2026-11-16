@@ -9,7 +9,9 @@ data:
   # Same identity settings as teehr-api (api/manifests/configmap.yaml.tpl).
   KEYCLOAK_ISSUER_URL: "https://auth.${var.hostname}/realms/teehr"
   KEYCLOAK_JWKS_URL: "http://keycloak-service:8080/realms/teehr/protocol/openid-connect/certs"
-  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,teehr-frontend-local-dev,jupyterhub,teehr-control-plane-docs"
+  # teehr-control-plane: tokens a job acts as its caller with (token exchange,
+  # ADR-0014) are issued to the control plane's client.
+  KEYCLOAK_ALLOWED_AUDIENCES: "teehr-api,teehr-frontend,teehr-frontend-local-dev,jupyterhub,teehr-control-plane-docs,teehr-control-plane"
   # Public client the /docs page signs in with (realm config, local only).
   KEYCLOAK_DOCS_CLIENT_ID: "teehr-control-plane-docs"
   # Realm roles with full rights on every project (very few people), and roles that
@@ -47,3 +49,9 @@ data:
   # Upload URLs are signed for the address clients use: on local, the S3 ingress
   # (so a laptop can PUT); on AWS, S3 itself.
   STAGING_S3_PUBLIC_ENDPOINT: "${environment.name == 'local' ? 'https://s3.' + var.hostname : ''}"
+  # Jobs users start through the API (upload loads now; ADR-0014): Kubernetes Jobs
+  # running the control plane's own image in this namespace. Jobs also need
+  # JOB_TOKEN_KEY (control-plane-secrets); without it, ingest says not configured.
+  JOB_IMAGE: "${actions.build.teehr-control-plane.outputs.deploymentImageId}"
+  JOB_NAMESPACE: "${environment.namespace}"
+  CONTROL_PLANE_INTERNAL_URL: "http://teehr-control-plane:8000"

@@ -5,9 +5,10 @@ pinned by a snapshot test), which is what a CLI or SDK is built from (ADR-0007,
 ADR-0011). Inputs are strict: an unknown field is an error, never silently dropped.
 """
 
+import re
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -559,7 +560,8 @@ class UploadOut(BaseModel):
     preview: dict | None = Field(
         description=(
             "From inspect: columns, sample rows, row count (when known), the proposed "
-            "mapping and dataset, what's still needed, and notes"
+            "mapping and dataset, what's still needed, notes, and an ingest body "
+            "to edit (replace its <...> placeholders)"
         )
     )
     mapping: dict | None
@@ -576,3 +578,67 @@ class UploadOut(BaseModel):
         default=None, description="Only when created: PUT the file here"
     )
     upload_url_expires_at: datetime | None = None
+
+
+class IngestMapping(StrictInput):
+    """Changes to the mapping inspect proposed (a field left out keeps it)."""
+
+    series_key: str | None = Field(default=None, description="Column with series keys")
+    series_key_value: str | None = Field(
+        default=None, max_length=255, description="One series key for every row"
+    )
+    value_time: str | None = None
+    value: str | None = None
+    reference_time: str | None = None
+    member: str | None = None
+    quantile: str | None = None
+    quality: str | None = None
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description="IANA zone of times without an offset, e.g. America/Denver",
+    )
+
+
+class IngestDataset(StrictInput):
+    """The dataset to load into: an existing timeseries, or a new one."""
+
+    name: str | None = Field(
+        default=None, pattern=PROJECT_NAME_PATTERN, description="Default: proposed"
+    )
+    unit: str = Field(
+        pattern=UNIT_SYMBOL_PATTERN,
+        description="The unit of the file's values (UCUM); converted on load",
+    )
+    role: TimeseriesRole | None = Field(default=None, description="New datasets")
+    variable: str | None = Field(default=None, description="New datasets")
+    statistic: Statistic | None = Field(default=None, description="New datasets")
+    period: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    source: str | None = Field(default=None, max_length=2000)
+    location_layer: str | None = Field(default=None, pattern=PROJECT_NAME_PATTERN)
+    time_partition: TimePartition = "month"
+
+
+_PLACEHOLDER = re.compile(r"^<.*>$", re.DOTALL)
+
+
+class IngestRequest(StrictInput):
+    dataset: IngestDataset
+    mapping: IngestMapping = Field(default_factory=IngestMapping)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_placeholders(cls, data: Any) -> Any:
+        """Refuse the ``<...>`` placeholders from inspect's ``ingest`` body."""
+        if isinstance(data, dict):
+            left = [
+                f"{part}.{key}"
+                for part in ("dataset", "mapping")
+                if isinstance(data.get(part), dict)
+                for key, value in data[part].items()
+                if isinstance(value, str) and _PLACEHOLDER.match(value)
+            ]
+            if left:
+                raise ValueError(f"replace the placeholders: {', '.join(left)}")
+        return data

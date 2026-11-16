@@ -1,7 +1,7 @@
 # Upload samples
 
 Files for trying uploads by hand on local KinD: `POST /uploads` -> PUT ->
-`POST /uploads/{id}/inspect` (the load, `ingest`, comes next; 09 and 10 are for it).
+`POST /uploads/{id}/inspect` -> `POST /uploads/{id}/ingest` (the load).
 
 The small files are committed. `08_big_obs.csv` isn't (12 MB); make it with:
 
@@ -19,8 +19,8 @@ The small files are committed. `08_big_obs.csv` isn't (12 MB); make it with:
 | 06_unrecognized_columns.csv | names it can't map (gauge, when, q_obs); **needs series key, value_time and value** (two numeric-looking columns, so no guess) |
 | 07_not_really.parquet | **422**: not a Parquet file |
 | 08_big_obs.csv | ~12 MB, 350k rows; inspect reads only the first MiB, so `rows` is null with a note |
-| 09_quantile_too_precise.csv | inspects fine; the load must refuse quantile 0.12345 |
-| 10_duplicate_keys.csv | inspects fine; the load must refuse the repeated key |
+| 09_quantile_too_precise.csv | inspects fine; the load fails: quantile 0.12345 has more than 4 decimal places |
+| 10_duplicate_keys.csv | inspects fine; the load fails on the repeated key and writes nothing |
 
 Every upload also lists `dataset.role`, `dataset.variable`, `dataset.unit` and
 `dataset.statistic` as needed (the uploader says those).
@@ -51,3 +51,42 @@ Optional third argument: the Keycloak user (default `user`, password = username)
 
 3. `POST /v1/projects/{name}/uploads/{id}/inspect`.
 4. `DELETE` the upload or the project to clean up (staged files go with them).
+
+## Loading (ingest)
+
+After inspecting, `POST /v1/projects/{name}/uploads/{id}/ingest` (in /docs). Inspect's
+`preview.ingest` is a body to start from: replace its `<...>` placeholders (ingest
+refuses any left) and send it. The `dataset.name` it proposes comes from the file
+name; change it to load into a dataset you already have. The
+`dataset.unit` is the unit of the file's values; they're stored in the variable's
+unit. For a new dataset give `role`, `variable` and `statistic`; for an existing one,
+just its `name` and `unit`. `mapping` changes what inspect proposed.
+
+02_usgs_obs_utc.csv into a new dataset:
+
+    {"dataset": {"name": "obs", "unit": "[cft_i]/s", "role": "observed",
+                 "variable": "streamflow", "statistic": "inst"}}
+
+01_usgs_obs_local_times.csv into the same dataset (times are New York local):
+
+    {"dataset": {"name": "obs", "unit": "[cft_i]/s"},
+     "mapping": {"timezone": "America/New_York"}}
+
+03_single_gauge.parquet (no key column):
+
+    {"dataset": {"name": "gauge", "unit": "m3/s", "role": "observed",
+                 "variable": "streamflow", "statistic": "inst"},
+     "mapping": {"series_key_value": "my-gauge"}}
+
+05_rfc_quantile_forecast.csv:
+
+    {"dataset": {"name": "rfc", "unit": "[cft_i]/s", "role": "forecast",
+                 "variable": "streamflow", "statistic": "inst"}}
+
+Then `GET .../uploads/{id}` until `status` is `succeeded` or `failed` (`rows_done`
+shows progress; `problems` says what was wrong), and read the data with
+`GET .../datasets/{name}/data`.
+
+The load runs as a Kubernetes Job (`kubectl -n teehr-hub get jobs -l app=teehr-job`;
+its pod's log has what it did). If reads say `token_refresh_required`, your token
+predates your role in the project: get a new one.

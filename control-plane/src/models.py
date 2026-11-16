@@ -157,6 +157,46 @@ class DatasetWrite(Base):
     )
 
 
+class JobStatus(StrEnum):
+    QUEUED = "queued"  # created; its pod hasn't reported in
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class Job(Base):
+    """Work a user started through the API, run as a Kubernetes Job (ADR-0014).
+
+    The pod acts as the caller with a job grant: an opaque token (stored hashed)
+    it exchanges here for access tokens minted from ``refresh_token`` (the
+    caller's, from token exchange, stored encrypted).
+    """
+
+    __tablename__ = "jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(32))
+    project_id: Mapped[uuid.UUID] = mapped_column(_fk("projects"))
+    created_by: Mapped[str] = mapped_column(String(255))
+    status: Mapped[JobStatus] = mapped_column(
+        _enum(JobStatus), default=JobStatus.QUEUED
+    )
+    # The Kubernetes Job running it.
+    k8s_name: Mapped[str | None] = mapped_column(String(128))
+    grant_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    grant_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    refresh_token: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class UploadStatus(StrEnum):
     STAGED = "staged"  # created; the file may or may not be there yet
     INSPECTED = "inspected"  # read, mapping proposed
@@ -182,6 +222,10 @@ class Upload(Base):
     object_key: Mapped[str] = mapped_column(String(512))
     status: Mapped[UploadStatus] = mapped_column(
         _enum(UploadStatus), default=UploadStatus.STAGED
+    )
+    # The load job (the latest, if retried).
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.jobs.id", ondelete="SET NULL")
     )
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     preview: Mapped[dict | None] = mapped_column(JSON)
