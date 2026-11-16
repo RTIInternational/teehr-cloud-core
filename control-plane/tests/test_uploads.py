@@ -95,7 +95,7 @@ def test_create_returns_an_upload_url(client, staging):
     resp = create(client)
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["status"] == "staged" and body["format"] == "csv"
+    assert body["status"] == "awaiting_file" and body["format"] == "csv"
     assert body["upload_url"].startswith(
         f"https://staging.test/flood/{body['id']}/USGS obs.csv"
     )
@@ -124,6 +124,9 @@ def test_inspect_csv_proposes_a_mapping(client, staging):
         "quality": "qualifiers",
         "series_key_value": None,
         "timezone": None,
+        "layout": "long",
+        "series_columns": None,
+        "time_format": None,
     }
     assert preview["dataset"] == {"name": "usgs_obs"}
     assert "mapping.timezone" in preview["needed"]

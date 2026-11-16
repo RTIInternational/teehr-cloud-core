@@ -327,6 +327,11 @@ _PLACEHOLDERS = {
     "mapping.timezone": ("mapping", "timezone", "<IANA zone of the times, e.g. UTC>"),
     "mapping.value_time": ("mapping", "value_time", "<column with the value times>"),
     "mapping.value": ("mapping", "value", "<column with the values>"),
+    "mapping.time_format": (
+        "mapping",
+        "time_format",
+        "<strptime format of the times, e.g. %m/%d/%Y %H:%M>",
+    ),
 }
 
 
@@ -492,6 +497,20 @@ def inspect_crosswalk(head: pa.Table, rows: int | None, filename: str) -> Previe
     )
 
 
+def _wide_columns(head: pa.Table, mapping: dict) -> list[str] | None:
+    """A file with times, no key column and several numeric columns: each numeric
+    column is one series (wide). None otherwise."""
+    if mapping["series_key"] is not None or mapping["value_time"] is None:
+        return None
+    used = {mapping[t] for t in ("value_time", "reference_time", "member",
+                                 "quantile", "quality")} - {None}  # fmt: skip
+    numeric = [
+        n for n in head.column_names
+        if n not in used and looks_like(head[n]) in ("integer", "number")
+    ]  # fmt: skip
+    return numeric if len(numeric) >= 2 else None
+
+
 def inspect(head: pa.Table, rows: int | None, filename: str) -> Preview:
     """What the file holds, and a proposed mapping to a timeseries."""
     names = head.column_names
@@ -504,15 +523,38 @@ def inspect(head: pa.Table, rows: int | None, filename: str) -> Preview:
         }
         for n in names
     ]
-    mapping: dict = {**_guess(names, head), "series_key_value": None, "timezone": None}
+    mapping: dict = {
+        **_guess(names, head),
+        "series_key_value": None,
+        "timezone": None,
+        "layout": "long",
+        "series_columns": None,
+        "time_format": None,
+    }
     needed, notes = [], []
-    if mapping["series_key"] is None:
+    wide = _wide_columns(head, mapping)
+    if wide:
+        mapping |= {"layout": "wide", "series_columns": wide, "value": None}
+        notes.append(
+            f"no key column, {len(wide)} value columns: read as wide, one series per "
+            "column, named by its header (set mapping.layout to long otherwise)"
+        )
+    elif mapping["series_key"] is None:
         needed.append(
             "mapping.series_key (a column) or mapping.series_key_value (one series)"
         )
-    for target in ("value_time", "value"):
+    for target in ("value_time",) if wide else ("value_time", "value"):
         if mapping[target] is None:
             needed.append(f"mapping.{target}")
+    for target in ("value_time", "reference_time"):
+        column = mapping[target]
+        if column and looks_like(head[column]) == "text":
+            needed.append("mapping.time_format")
+            notes.append(
+                f"'{column}' doesn't look like ISO 8601 times; set mapping.time_format "
+                "(strptime, e.g. %m/%d/%Y %H:%M)"
+            )
+            break
     for target in ("value_time", "reference_time"):
         column = mapping[target]
         if column and _has_zone(head[column]) is False:

@@ -36,6 +36,8 @@ Layers (`kind: layer`) and crosswalks (`kind: crosswalk`), with the three sites 
 | 15_gauge_points.csv | layer | points from dec_long_va / dec_lat_va; huc_cd proposed as `string` (leading zeros) |
 | 16_usgs_nwm_crosswalk.csv | crosswalk | primary_location_id -> left_key, secondary_location_id -> right_key, weight extra; **needs dataset.left and dataset.right** |
 | 17_projected_points.csv | layer | inspects fine; the load fails: 01010500's coordinates aren't longitude/latitude |
+| 18_wide_obs.csv | timeseries | wide: one column per gauge, no key column; proposes `layout: wide` with the three gauges as `series_columns` |
+| 19_non_iso_times.csv | timeseries | times like `01/01/2026 00:00`: **needs mapping.time_format** (`%m/%d/%Y %H:%M`) and **mapping.timezone** |
 
 ## Before you start
 
