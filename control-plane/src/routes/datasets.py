@@ -53,6 +53,7 @@ from src.dataset_types import (
 )
 from src.domains import convert, lookup
 from src.errors import APIError
+from src.expressions import compile_filter
 from src.formats import (
     ARROW_STREAM,
     JSON,
@@ -118,7 +119,6 @@ from src.tables import (
     conform,
     duplicate_keys,
     get_tables,
-    parse_filter,
 )
 
 router = APIRouter(prefix="/v1/projects/{name}/datasets", tags=["datasets"])
@@ -730,8 +730,9 @@ def write_dataset(
             max_length=2000,
             description=(
                 "overwrite only: replace only rows matching this filter, e.g. "
-                "location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'"
-                "; without it the whole table is replaced"
+                "series_key = 'usgs-01' AND value_time >= '2026-01-01T00:00:00Z' "
+                "(comparisons, IN, BETWEEN, IS NULL, AND/OR/NOT only); without it "
+                "the whole table is replaced"
             ),
         ),
     ] = None,
@@ -808,7 +809,15 @@ def write_dataset(
                     " (null where there's no value)"
                 )
         data = conform(data, columns, timezone)
-        expression = parse_filter(filter, columns) if filter else None
+        expression = None
+        if filter:
+            compiled = compile_filter(filter, columns)
+            if compiled.residual is not None:
+                raise DataMismatch(
+                    "an overwrite filter must compare columns with values (=, <, IN, "
+                    "BETWEEN, IS NULL, AND/OR/NOT), so the table can apply it"
+                )
+            expression = compiled.pushdown
         if mode == "upsert" or typed:
             repeated = duplicate_keys(data, record.key_columns or [])
             if repeated:
@@ -1149,8 +1158,11 @@ def read_dataset(
         Query(
             max_length=2000,
             description=(
-                "Rows to return, e.g. location_id = 'usgs-01' and "
-                "value_time >= '2026-01-01T00:00:00+00:00'"
+                "Rows to return, in the shared expression language (a SQL subset: "
+                "comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, "
+                "CASE, and allow-listed functions such as hour(), date_trunc(), "
+                "ln(), coalesce()), e.g. series_key = 'usgs-01' AND "
+                "hour(value_time) = 0. Numbers are in the column's stored unit."
             ),
         ),
     ] = None,
@@ -1196,9 +1208,16 @@ def read_dataset(
         if bbox is not None:
             spatial = bbox_filter(bbox)
             filter = f"({filter}) and {spatial}" if filter else spatial
-        expression = parse_filter(filter, declared) if filter else None
+        compiled = compile_filter(filter, declared) if filter else None
     except DataMismatch as exc:
         raise _unprocessable(str(exc)) from exc
+    expression = compiled.pushdown if compiled else None
+    # What the scan can't apply is applied to the rows it returns, so the read
+    # takes every row the scan matches (and the columns the rest needs).
+    residual = compiled is not None and compiled.residual is not None
+    read_columns = selected
+    if residual and selected:
+        read_columns = tuple(dict.fromkeys([*selected, *compiled.residual_columns]))
 
     media_type = JSON if geojson else negotiate(accept)
     cap = (
@@ -1222,22 +1241,28 @@ def read_dataset(
             identity.token,
             project.name,
             record.name,
-            columns=selected,
+            columns=read_columns,
             row_filter=expression,
             snapshot_id=snapshot_id,
-            limit=offset + page + 1,
+            limit=None if residual else offset + page + 1,
         )
-        total = (
-            tables.count(
+        matched = result.rows
+        if residual:
+            matched = compiled.apply(matched)
+            if selected:
+                matched = matched.select(list(selected))
+        if not count:
+            total = None
+        elif residual:
+            total = matched.num_rows
+        else:
+            total = tables.count(
                 identity.token,
                 project.name,
                 record.name,
                 expression,
                 result.snapshot_id,
             )
-            if count
-            else None
-        )
     except TableForbidden as exc:
         raise _forbidden(project, my_role, Role.READ) from exc
     except TableMissing as exc:
@@ -1250,14 +1275,16 @@ def read_dataset(
             status_code=status.HTTP_410_GONE,
             detail="This read's snapshot has expired; start the read again",
         ) from exc
+    except DataMismatch as exc:  # the filter's rest, evaluated on the rows
+        raise _unprocessable(str(exc)) from exc
     except TableError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The catalog could not read the table",
         ) from exc
 
-    rows = result.rows.slice(offset, page)
-    more = result.rows.num_rows > offset + page
+    rows = matched.slice(offset, page)
+    more = matched.num_rows > offset + page
     next_cursor = (
         encode_cursor(result.snapshot_id, offset + page, query)
         if more and result.snapshot_id is not None

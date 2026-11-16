@@ -3794,7 +3794,7 @@
             }
           },
           {
-            "description": "Rows to return, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'",
+            "description": "Rows to return, in the shared expression language (a SQL subset: comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, CASE, and allow-listed functions such as hour(), date_trunc(), ln(), coalesce()), e.g. series_key = 'usgs-01' AND hour(value_time) = 0. Numbers are in the column's stored unit.",
             "in": "query",
             "name": "filter",
             "required": false,
@@ -3808,7 +3808,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Rows to return, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'",
+              "description": "Rows to return, in the shared expression language (a SQL subset: comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, CASE, and allow-listed functions such as hour(), date_trunc(), ln(), coalesce()), e.g. series_key = 'usgs-01' AND hour(value_time) = 0. Numbers are in the column's stored unit.",
               "title": "Filter"
             }
           },
@@ -4061,7 +4061,7 @@
             }
           },
           {
-            "description": "overwrite only: replace only rows matching this filter, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'; without it the whole table is replaced",
+            "description": "overwrite only: replace only rows matching this filter, e.g. series_key = 'usgs-01' AND value_time >= '2026-01-01T00:00:00Z' (comparisons, IN, BETWEEN, IS NULL, AND/OR/NOT only); without it the whole table is replaced",
             "in": "query",
             "name": "filter",
             "required": false,
@@ -4075,7 +4075,7 @@
                   "type": "null"
                 }
               ],
-              "description": "overwrite only: replace only rows matching this filter, e.g. location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'; without it the whole table is replaced",
+              "description": "overwrite only: replace only rows matching this filter, e.g. series_key = 'usgs-01' AND value_time >= '2026-01-01T00:00:00Z' (comparisons, IN, BETWEEN, IS NULL, AND/OR/NOT only); without it the whole table is replaced",
               "title": "Filter"
             }
           },

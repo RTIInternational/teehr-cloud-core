@@ -25,8 +25,6 @@ from pyiceberg.exceptions import (
     UnauthorizedError,
 )
 from pyiceberg.expressions import AlwaysTrue, BooleanExpression, In
-from pyiceberg.expressions.parser import parse
-from pyiceberg.expressions.visitors import bind
 from pyiceberg.partitioning import (
     UNPARTITIONED_PARTITION_SPEC,
     PartitionField,
@@ -329,17 +327,6 @@ def conform(
                 f"without losing values ({exc})"
             ) from exc
     return pa.Table.from_arrays(arrays, schema=target)
-
-
-def parse_filter(text: str, columns: list[dict]) -> BooleanExpression:
-    """A row filter in PyIceberg's expression syntax, checked against the columns,
-    e.g. ``location_id = 'usgs-01' and value_time >= '2026-01-01T00:00:00+00:00'``."""
-    try:
-        expression = parse(text)
-        bind(iceberg_schema(columns), expression, case_sensitive=True)
-    except Exception as exc:
-        raise DataMismatch(f"invalid filter: {exc}") from exc
-    return expression
 
 
 class Tables(Protocol):
