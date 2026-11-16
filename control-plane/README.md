@@ -166,7 +166,7 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
 Files go straight to staging storage, not through the API
 (`/v1/projects/{name}/uploads`, the same contract as VeriRace's uploads):
 
-1. `POST .../uploads` `{filename, kind: timeseries, format?}` returns `upload_url`, a
+1. `POST .../uploads` `{filename, kind, format?}` returns `upload_url`, a
    presigned URL (an hour) to `PUT` the file to: one object in the staging bucket
    (`STAGING_BUCKET`), which only the control plane otherwise reaches.
 2. `POST .../uploads/{id}/inspect` reads the start of the file (a Parquet file's footer
@@ -174,6 +174,14 @@ Files go straight to staging storage, not through the API
    `01010000`) and proposes a mapping to the timeseries columns, a dataset name, what
    each column looks like, and what's still needed (role, variable, unit, statistic;
    a time zone when times have none; a series key when the file has no key column).
+   - `kind: layer`: GeoJSON, zipped Shapefile, GeoPackage (read in place by GDAL,
+     range requests; `?source_layer=` picks a GeoPackage layer), GeoParquet, or CSV
+     with longitude/latitude or WKT. Proposes the key, name, geometry, CRS (needed
+     when the file doesn't say) and the other columns as typed attributes (codes
+     with leading zeros stay text). Other CRSs are reprojected to EPSG:4326 on load.
+   - `kind: crosswalk`: CSV or Parquet; proposes `left_key`, `right_key` (teehr's
+     `primary_location_id` / `secondary_location_id` too) and extra columns; the
+     ingest names the two timeseries datasets (`left`, `right`).
 3. `POST .../uploads/{id}/ingest` `{dataset: {name, unit, role, variable, statistic,
    ...}, mapping: {...}}` confirms or changes the mapping and names the dataset (an
    existing timeseries, or a new one), reporting everything wrong at once (422).
@@ -185,8 +193,8 @@ Files go straight to staging storage, not through the API
 4. `GET .../uploads[/{id}]` lists or shows uploads; `DELETE` removes one and its staged
    file.
 
-Uploading and inspecting need the write role; listing and reading need read. CSV and
-Parquet, up to `MAX_UPLOAD_BYTES` (5 GiB). Staging is configured on local only until
+Uploading and inspecting need the write role; listing and reading need read. Up to
+`MAX_UPLOAD_BYTES` (5 GiB). Staging is configured on local only until
 the remote bucket and role exist (#171). Files are staged under `<project>/<upload id>/`; deleting a
 project removes its staged files (and is refused while one of its uploads is loading).
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Usage: ./upload.sh <project> <file> [username]
+# Usage: ./upload.sh <project> <file> [username] [kind]
+# kind: timeseries (default), layer or crosswalk.
 # Creates an upload, PUTs the file to its URL, inspects it, prints the result.
 # Local KinD users have password = username (user, admin, poweruser, noaccess).
 set -uo pipefail
 H=teehr.local.app.garden
-P=$1; F=$2; USER_NAME=${3:-user}
+P=$1; F=$2; USER_NAME=${3:-user}; KIND=${4:-timeseries}
 BODY=$(mktemp); trap 'rm -f "$BODY"' EXIT
 
 fail() { echo "✗ $1"; [ -s "$BODY" ] && { cat "$BODY"; echo; }; exit 1; }
@@ -26,7 +27,7 @@ AUTH=(-H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json")
 CP=https://control-plane.$H/v1/projects/$P
 
 call "create the upload in $P" 201 "${AUTH[@]}" -X POST "$CP/uploads" \
-  -d "{\"filename\":\"$(basename "$F")\",\"kind\":\"timeseries\"}"
+  -d "{\"filename\":\"$(basename "$F")\",\"kind\":\"$KIND\"}"
 ID=$(field id); URL=$(field upload_url)
 echo "✓ upload $ID"
 call "PUT the file to staging (s3.$H)" 200 -X PUT --upload-file "$F" "$URL"

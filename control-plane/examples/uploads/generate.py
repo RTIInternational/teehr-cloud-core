@@ -3,7 +3,8 @@
     python generate.py          # the small files (committed) and 08_big_obs.csv
     python generate.py --small  # only the small files
 
-Needs pyarrow (the control-plane venv has it). Output is the same every run.
+Needs pyarrow, pyogrio and shapely (the control-plane venv has them). Output is the
+same every run, except the GeoPackage, which records when it was written.
 """
 
 import math
@@ -14,6 +15,8 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyogrio
+import shapely
 
 HERE = Path(__file__).resolve().parent
 T0 = datetime(2026, 1, 1)
@@ -127,6 +130,101 @@ def small() -> None:
     )
 
 
+# The three sites of the timeseries samples, where they are.
+GAUGES = [
+    ("01010000", "St. John River at Ninemile Bridge, ME", -69.7156, 46.7006, 1341.0),
+    ("01010500", "St. John River at Dickey, ME", -69.0884, 47.1131, 2700.0),
+    ("02087500", "Neuse River near Clayton, NC", -78.4058, 35.6473, 1150.0),
+]
+HUCS = ["01010001", "01010002", "03020201"]
+
+
+def gauges(crs: str = "EPSG:4326") -> pa.Table:
+    import pyproj
+
+    xy = [(lon, lat) for _, _, lon, lat, _ in GAUGES]
+    if crs != "EPSG:4326":
+        move = pyproj.Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+        xy = [move.transform(x, y) for x, y in xy]
+    return pa.table(
+        {
+            "site_no": [g[0] for g in GAUGES],
+            "station_nm": [g[1] for g in GAUGES],
+            "drain_mi2": [g[4] for g in GAUGES],
+            "huc_cd": HUCS,
+            "geometry": pa.array(
+                [shapely.Point(round(x, 4), round(y, 4)).wkb for x, y in xy]
+            ),
+        }
+    )
+
+
+def shapefile_zip(name: str, table: pa.Table, crs: str | None) -> None:
+    """A zipped Shapefile (fixed timestamps, so the zip is the same every run)."""
+    import tempfile
+    import zipfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pyogrio.write_arrow(table, f"{tmp}/gauges.shp", geometry_name="geometry",
+                            geometry_type="Point", crs=crs)  # fmt: skip
+        with zipfile.ZipFile(HERE / name, "w") as z:
+            for ext in ("shp", "shx", "dbf", "prj", "cpg"):
+                part = Path(tmp) / f"gauges.{ext}"
+                if part.exists() and not (ext == "prj" and crs is None):
+                    info = zipfile.ZipInfo(f"gauges.{ext}", (2026, 1, 1, 0, 0, 0))
+                    z.writestr(info, part.read_bytes())
+
+
+def locations() -> None:
+    """Layer and crosswalk samples (11-17)."""
+    for old in ("11_gauges.geojson", "14_gauges_and_basins.gpkg"):
+        (HERE / old).unlink(missing_ok=True)  # GDAL won't overwrite
+    # 11. GeoJSON: always EPSG:4326.
+    pyogrio.write_arrow(gauges(), HERE / "11_gauges.geojson", driver="GeoJSON",
+                        geometry_name="geometry", geometry_type="Point",
+                        crs="EPSG:4326")  # fmt: skip
+    # 12. Zipped Shapefile in CONUS Albers: reprojected on load.
+    shapefile_zip("12_gauges_albers.zip", gauges("EPSG:5070"), "EPSG:5070")
+    # 13. Zipped Shapefile with no .prj: needs mapping.crs (EPSG:5070).
+    shapefile_zip("13_gauges_no_prj.zip", gauges("EPSG:5070"), None)
+    # 14. GeoPackage with two layers: gauges (points) and basins (polygons).
+    gpkg = HERE / "14_gauges_and_basins.gpkg"
+    pyogrio.write_arrow(gauges(), gpkg, layer="gauges", geometry_name="geometry",
+                        geometry_type="Point", crs="EPSG:4326")  # fmt: skip
+    basins = pa.table(
+        {
+            "huc8": HUCS,
+            "name": ["St. John", "Allagash", "Upper Neuse"],
+            "geometry": pa.array(
+                [
+                    shapely.box(lon - 0.5, lat - 0.3, lon + 0.5, lat + 0.3).wkb
+                    for _, _, lon, lat, _ in GAUGES
+                ]
+            ),
+        }
+    )
+    pyogrio.write_arrow(basins, gpkg, layer="basins", geometry_name="geometry",
+                        geometry_type="Polygon", crs="EPSG:4326")  # fmt: skip
+    # 15. CSV of points (NWIS site-file columns); HUC codes keep their zeros.
+    write(
+        "15_gauge_points.csv",
+        "site_no,station_nm,dec_lat_va,dec_long_va,huc_cd",
+        [f'{g[0]},"{g[1]}",{g[3]},{g[2]},{h}' for g, h in zip(GAUGES, HUCS)],
+    )
+    # 16. Crosswalk USGS site -> NWM feature id (teehr's column names).
+    write(
+        "16_usgs_nwm_crosswalk.csv",
+        "primary_location_id,secondary_location_id,weight",
+        ["01010000,724696,1.0", "01010500,724838,1.0", "02087500,8731016,1.0"],
+    )
+    # 17. Points whose coordinates are projected, not longitude/latitude.
+    write(
+        "17_projected_points.csv",
+        "site_no,lat,lon",
+        ["01010000,46.7006,-69.7156", "01010500,2860000.0,2040000.0"],
+    )
+
+
 def big() -> None:
     """8. ~12 MB, past inspect's 1 MiB CSV window (not committed)."""
     with (HERE / "08_big_obs.csv").open("w") as f:
@@ -140,5 +238,6 @@ def big() -> None:
 
 if __name__ == "__main__":
     small()
+    locations()
     if "--small" not in sys.argv:
         big()
