@@ -1,6 +1,120 @@
 {
   "components": {
     "schemas": {
+      "CrosswalkCreate": {
+        "additionalProperties": false,
+        "description": "A `crosswalk` dataset: links the series of two timeseries datasets' series\ntables (`left_key` -> `right_key`), plus optional extra columns.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "extra_columns": {
+            "description": "e.g. weight (float64) for many-to-one aggregation",
+            "items": {
+              "$ref": "#/components/schemas/DatasetColumn"
+            },
+            "maxItems": 100,
+            "title": "Extra Columns",
+            "type": "array"
+          },
+          "left": {
+            "description": "A timeseries dataset (`<name>` or `public.<name>`): left side",
+            "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
+            "title": "Left",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique within the project",
+            "pattern": "^[a-z][a-z0-9_]{0,59}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "right": {
+            "description": "A timeseries dataset (`<name>` or `public.<name>`): right side",
+            "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
+            "title": "Right",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "type": {
+            "const": "crosswalk",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "left",
+          "right"
+        ],
+        "title": "CrosswalkCreate",
+        "type": "object"
+      },
+      "CrosswalkOut": {
+        "description": "A crosswalk's dataset-level metadata.",
+        "properties": {
+          "left": {
+            "description": "The left timeseries dataset",
+            "title": "Left",
+            "type": "string"
+          },
+          "left_series_table": {
+            "description": "Where left keys are series keys",
+            "title": "Left Series Table",
+            "type": "string"
+          },
+          "right": {
+            "description": "The right timeseries dataset",
+            "title": "Right",
+            "type": "string"
+          },
+          "right_series_table": {
+            "description": "Where right keys are series keys",
+            "title": "Right Series Table",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "required": [
+          "left",
+          "right",
+          "left_series_table",
+          "right_series_table"
+        ],
+        "title": "CrosswalkOut",
+        "type": "object"
+      },
       "DataPageOut": {
         "description": "A page of rows (JSON). Arrow and Parquet pages carry ``next_cursor`` and\n``total`` in the ``X-Next-Cursor`` and ``X-Total-Rows`` headers instead.",
         "properties": {
@@ -181,6 +295,17 @@
             ],
             "title": "Created By"
           },
+          "crosswalk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CrosswalkOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a crosswalk: its metadata"
+          },
           "description": {
             "anyOf": [
               {
@@ -207,9 +332,20 @@
             "title": "Key Columns"
           },
           "kind": {
-            "description": "table | timeseries | series",
+            "description": "table | timeseries | series | layer | crosswalk",
             "title": "Kind",
             "type": "string"
+          },
+          "layer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LayerOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a layer: its metadata"
           },
           "name": {
             "title": "Name",
@@ -314,7 +450,7 @@
           "location_layer": {
             "anyOf": [
               {
-                "pattern": "^[a-z][a-z0-9_]{0,59}$",
+                "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
                 "type": "string"
               },
               {
@@ -434,6 +570,18 @@
         "additionalProperties": false,
         "description": "Changes to the mapping inspect proposed (a field left out keeps it).",
         "properties": {
+          "location_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Column with each series' location key in the dataset's layer (may be the series key column)",
+            "title": "Location Key"
+          },
           "member": {
             "anyOf": [
               {
@@ -556,6 +704,80 @@
           "dataset"
         ],
         "title": "IngestRequest",
+        "type": "object"
+      },
+      "LayerCreate": {
+        "additionalProperties": false,
+        "description": "A `layer` dataset: locations keyed by `location_key`, with WKB geometry in\nEPSG:4326 and attribute columns.",
+        "properties": {
+          "attributes": {
+            "description": "Attribute columns",
+            "items": {
+              "$ref": "#/components/schemas/DatasetColumn"
+            },
+            "maxItems": 200,
+            "title": "Attributes",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "description": "Unique within the project",
+            "pattern": "^[a-z][a-z0-9_]{0,59}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "type": {
+            "const": "layer",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name"
+        ],
+        "title": "LayerCreate",
+        "type": "object"
+      },
+      "LayerOut": {
+        "description": "A layer's dataset-level metadata.",
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "title": "LayerOut",
         "type": "object"
       },
       "MemberAdd": {
@@ -1064,14 +1286,14 @@
           "location_layer": {
             "anyOf": [
               {
-                "pattern": "^[a-z][a-z0-9_]{0,59}$",
+                "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Default layer for this dataset's series",
+            "description": "Default layer for this dataset's series (`<name>` or `public.<name>`)",
             "title": "Location Layer"
           },
           "name": {
@@ -1846,6 +2068,21 @@
           "mode": {
             "title": "Mode",
             "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was written but may be wrong, e.g. crosswalk keys or location keys not found where they point",
+            "title": "Notes"
           },
           "rows": {
             "title": "Rows",
@@ -2991,6 +3228,12 @@
                   },
                   {
                     "$ref": "#/components/schemas/TimeseriesCreate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LayerCreate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CrosswalkCreate"
                   }
                 ],
                 "title": "Body"
@@ -3412,11 +3655,34 @@
               "title": "Count",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Layers: minx,miny,maxx,maxy (longitude/latitude); the locations whose bounds overlap it",
+            "in": "query",
+            "name": "bbox",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Layers: minx,miny,maxx,maxy (longitude/latitude); the locations whose bounds overlap it",
+              "title": "Bbox"
+            }
           }
         ],
         "responses": {
           "200": {
             "content": {
+              "application/geo+json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DataPageOut"

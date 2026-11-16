@@ -373,7 +373,13 @@ def test_unit_is_for_timeseries_only(client, tables):
     assert resp.status_code == 422
 
 
+def register_layer(client, name):
+    resp = client.post(DATASETS, json={"type": "layer", "name": name}, headers=ALICE)
+    assert resp.status_code == 201, resp.text
+
+
 def test_new_series_keys_are_added_to_the_series_table(client, tables):
+    register_layer(client, "usgs_gauges")
     register(client, location_layer="usgs_gauges")
     resp = write(client, ROWS)
     assert resp.json()["series_added"] == 1
@@ -387,6 +393,11 @@ def test_new_series_keys_are_added_to_the_series_table(client, tables):
     # The series table is written before the data.
     ops = [c[0] for c in tables.calls]
     assert ops[-2:] == ["insert_missing", "write"]
+
+
+def test_location_layer_must_be_a_layer(client, tables):
+    resp = register(client, location_layer="nope")
+    assert resp.status_code == 422 and "'nope' is not a layer" in resp.text
 
 
 def test_family_writes_share_the_series_table(client, tables):
@@ -427,6 +438,7 @@ def test_a_revised_quality_code_replaces_the_old_one(client, tables):
 
 
 def test_series_writes_keep_columns_left_out(client, tables):
+    register_layer(client, "gauges")
     register(client, location_layer="gauges",
              series_attributes=[{"name": "basin", "type": "string"}])  # fmt: skip
     write(client, ROWS)  # adds usgs-01 with the dataset's layer

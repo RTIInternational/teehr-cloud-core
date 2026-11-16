@@ -128,6 +128,13 @@ def register_gate(p):
         "user",
         "POST",
         f"/projects/{p}/datasets",
+        json={"type": "layer", "name": "usgs_gauges"},
+    )
+    check("a member registers a layer", r.status_code == 201, r.text[:120])
+    r = api(
+        "user",
+        "POST",
+        f"/projects/{p}/datasets",
         json={
             "type": "timeseries",
             "name": "obs",
@@ -328,6 +335,8 @@ def cleanup(p):
     print("\n🧹 Cleanup")
     r = api("user", "DELETE", f"/projects/{p}/datasets/obs")
     check("the owner deletes the dataset", r.status_code == 204, str(r.status_code))
+    r = api("user", "DELETE", f"/projects/{p}/datasets/usgs_gauges")
+    check("then the layer it used", r.status_code == 204, str(r.status_code))
     left = api("user", "GET", f"/projects/{p}/datasets").json()
     check("its series table went with it", left == [], [d["name"] for d in left])
     r = api("user", "DELETE", f"/projects/{p}")

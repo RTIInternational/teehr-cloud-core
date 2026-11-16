@@ -23,7 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.dataset_types import TIMESERIES
+from src.dataset_types import LAYER, TIMESERIES
 from src.delegation import (
     Delegation,
     DelegationError,
@@ -45,6 +45,7 @@ from src.models import (
     UploadStatus,
     Variable,
 )
+from src.refs import resolve
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -232,7 +233,7 @@ def _sync(session: Session, kube: Kube | None, upload: Upload) -> None:
 
 
 TARGETS = ("series_key", "value_time", "value", "reference_time", "member",
-           "quantile", "quality")  # fmt: skip
+           "quantile", "quality", "location_key")  # fmt: skip
 OPTIONAL = ("reference_time", "member", "quantile", "quality")
 
 
@@ -330,6 +331,20 @@ def _ingest_problems(
         target = lookup(session, Unit, canonical, project.id)
         if target is not None and target.dimension != unit.dimension:
             bad(("dataset", "unit"), f"{unit.symbol} doesn't convert to {canonical}")
+    layer = (
+        (existing.properties or {}).get("location_layer")
+        if existing is not None
+        else dataset.get("location_layer")
+    )
+    if existing is None and layer:
+        found = resolve(session, project, layer)
+        if found is None or found.dataset.kind != LAYER:
+            bad(("dataset", "location_layer"), f"'{layer}' is not a layer")
+    if mapping.get("location_key") and not layer:
+        bad(
+            ("mapping", "location_key"),
+            "location keys need the dataset's location_layer (the layer they're in)",
+        )
     dataset["existing"] = existing is not None
     return mapping, dataset, problems
 

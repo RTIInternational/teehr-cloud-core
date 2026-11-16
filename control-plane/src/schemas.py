@@ -20,11 +20,14 @@ from pydantic import (
     model_validator,
 )
 
+from src.dataset_types import CROSSWALK_COLUMNS, LAYER_COLUMNS
 from src.models import ProjectKind, ProjectStatus, Role
 
 # Same rule as spec dataset references; also a valid Polaris namespace, S3 prefix
 # and Keycloak role-name fragment.
 PROJECT_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,59}$"
+# A reference to a dataset: `<name>` in the current project, or `public.<name>`.
+DATASET_REF_PATTERN = r"^(public\.)?[a-z][a-z0-9_]{0,59}$"
 
 # public / platform are the system projects (ADR-0001); teehr is today's live
 # namespace, which a new project must not collide with.
@@ -274,8 +277,8 @@ class TimeseriesCreate(StrictInput):
     )
     location_layer: str | None = Field(
         default=None,
-        pattern=PROJECT_NAME_PATTERN,
-        description="Default layer for this dataset's series",
+        pattern=DATASET_REF_PATTERN,
+        description="Default layer for this dataset's series (`<name>` or `public.<name>`)",
     )
     time_partition: TimePartition = "month"
 
@@ -313,6 +316,62 @@ class TimeseriesCreate(StrictInput):
         return self
 
 
+class LayerCreate(StrictInput):
+    """A `layer` dataset: locations keyed by `location_key`, with WKB geometry in
+    EPSG:4326 and attribute columns."""
+
+    type: Literal["layer"]
+    name: str = Field(
+        pattern=PROJECT_NAME_PATTERN, description="Unique within the project"
+    )
+    description: str | None = Field(default=None, max_length=2000)
+    source: str | None = Field(default=None, max_length=2000)
+    attributes: list[DatasetColumn] = Field(
+        default_factory=list, max_length=200, description="Attribute columns"
+    )
+
+    @field_validator("attributes")
+    @classmethod
+    def _attributes(cls, columns: list[DatasetColumn]):
+        for col in columns:
+            if col.name.lower() in LAYER_COLUMNS:
+                raise ValueError(f"'{col.name}' is a layer column")
+        return _unique_names(columns)
+
+
+class CrosswalkCreate(StrictInput):
+    """A `crosswalk` dataset: links the series of two timeseries datasets' series
+    tables (`left_key` -> `right_key`), plus optional extra columns."""
+
+    type: Literal["crosswalk"]
+    name: str = Field(
+        pattern=PROJECT_NAME_PATTERN, description="Unique within the project"
+    )
+    description: str | None = Field(default=None, max_length=2000)
+    source: str | None = Field(default=None, max_length=2000)
+    left: str = Field(
+        pattern=DATASET_REF_PATTERN,
+        description="A timeseries dataset (`<name>` or `public.<name>`): left side",
+    )
+    right: str = Field(
+        pattern=DATASET_REF_PATTERN,
+        description="A timeseries dataset (`<name>` or `public.<name>`): right side",
+    )
+    extra_columns: list[DatasetColumn] = Field(
+        default_factory=list,
+        max_length=100,
+        description="e.g. weight (float64) for many-to-one aggregation",
+    )
+
+    @field_validator("extra_columns")
+    @classmethod
+    def _extra_columns(cls, columns: list[DatasetColumn]):
+        for col in columns:
+            if col.name.lower() in CROSSWALK_COLUMNS:
+                raise ValueError(f"'{col.name}' is a crosswalk column")
+        return _unique_names(columns)
+
+
 def _dataset_type(value) -> str:
     if isinstance(value, dict):
         return value.get("type", "table")
@@ -321,7 +380,9 @@ def _dataset_type(value) -> str:
 
 DatasetRegistration = Annotated[
     Annotated[DatasetCreate, Tag("table")]
-    | Annotated[TimeseriesCreate, Tag("timeseries")],
+    | Annotated[TimeseriesCreate, Tag("timeseries")]
+    | Annotated[LayerCreate, Tag("layer")]
+    | Annotated[CrosswalkCreate, Tag("crosswalk")],
     Discriminator(_dataset_type),
 ]
 
@@ -341,18 +402,38 @@ class TimeseriesOut(BaseModel):
     source: str | None = None
 
 
+class LayerOut(BaseModel):
+    """A layer's dataset-level metadata."""
+
+    source: str | None = None
+
+
+class CrosswalkOut(BaseModel):
+    """A crosswalk's dataset-level metadata."""
+
+    left: str = Field(description="The left timeseries dataset")
+    right: str = Field(description="The right timeseries dataset")
+    left_series_table: str = Field(description="Where left keys are series keys")
+    right_series_table: str = Field(description="Where right keys are series keys")
+    source: str | None = None
+
+
 class DatasetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str
-    kind: str = Field(description="table | timeseries | series")
+    kind: str = Field(description="table | timeseries | series | layer | crosswalk")
     description: str | None
     columns: list[DatasetColumn]
     key_columns: list[str] | None
     timeseries: TimeseriesOut | None = Field(
-        default=None,
-        validation_alias="properties",
-        description="For a timeseries dataset: its metadata",
+        default=None, description="For a timeseries dataset: its metadata"
+    )
+    layer: LayerOut | None = Field(
+        default=None, description="For a layer: its metadata"
+    )
+    crosswalk: CrosswalkOut | None = Field(
+        default=None, description="For a crosswalk: its metadata"
     )
     table: str = Field(
         validation_alias="table_identifier",
@@ -360,6 +441,21 @@ class DatasetOut(BaseModel):
     )
     created_by: str | None
     created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _metadata(cls, data: Any) -> Any:
+        """A typed dataset's properties, under its kind."""
+        if isinstance(data, dict):
+            return data
+        out = {
+            name: getattr(data, name)
+            for name in ("name", "kind", "description", "columns", "key_columns",
+                         "table_identifier", "created_by", "created_at")
+        }  # fmt: skip
+        if data.kind in ("timeseries", "layer", "crosswalk"):
+            out[data.kind] = data.properties or {}
+        return out
 
 
 class WriteOut(BaseModel):
@@ -377,6 +473,13 @@ class WriteOut(BaseModel):
     )
     series_added: int | None = Field(
         default=None, description="Timeseries: new series keys this write added"
+    )
+    notes: list[str] | None = Field(
+        default=None,
+        description=(
+            "What was written but may be wrong, e.g. crosswalk keys or location keys "
+            "not found where they point"
+        ),
     )
     snapshot_id: str | None = Field(
         description="The Iceberg snapshot this write produced (a string: 64-bit id)"
@@ -593,6 +696,13 @@ class IngestMapping(StrictInput):
     member: str | None = None
     quantile: str | None = None
     quality: str | None = None
+    location_key: str | None = Field(
+        default=None,
+        description=(
+            "Column with each series' location key in the dataset's layer (may be "
+            "the series key column)"
+        ),
+    )
     timezone: str | None = Field(
         default=None,
         max_length=64,
@@ -616,7 +726,7 @@ class IngestDataset(StrictInput):
     period: str | None = None
     description: str | None = Field(default=None, max_length=2000)
     source: str | None = Field(default=None, max_length=2000)
-    location_layer: str | None = Field(default=None, pattern=PROJECT_NAME_PATTERN)
+    location_layer: str | None = Field(default=None, pattern=DATASET_REF_PATTERN)
     time_partition: TimePartition = "month"
 
 

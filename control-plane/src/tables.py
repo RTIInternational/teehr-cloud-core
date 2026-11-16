@@ -24,7 +24,7 @@ from pyiceberg.exceptions import (
     TableAlreadyExistsError,
     UnauthorizedError,
 )
-from pyiceberg.expressions import AlwaysTrue, BooleanExpression
+from pyiceberg.expressions import AlwaysTrue, BooleanExpression, In
 from pyiceberg.expressions.parser import parse
 from pyiceberg.expressions.visitors import bind
 from pyiceberg.partitioning import (
@@ -97,6 +97,9 @@ class WriteConflict(TableError):
 class DataMismatch(ValueError):
     """Submitted data (or a filter) doesn't fit the dataset's declared columns."""
 
+
+# Above this many keys, existing_keys reads the whole column instead.
+_IN_FILTER_MAX = 5000
 
 WriteMode = Literal["append", "overwrite", "upsert"]
 PartitionTransform = Literal["month", "year"]
@@ -393,6 +396,11 @@ class Tables(Protocol):
         """Upsert where only the ``provided`` columns change: a matched row keeps
         its current values in the others, as the caller."""
 
+    def existing_keys(
+        self, token: str, namespace: str, name: str, column: str, values: list[str]
+    ) -> set[str]:
+        """Which of ``values`` are in the table's ``column``, as the caller."""
+
     def drop_table(self, token: str, namespace: str, name: str) -> None:
         """Drop the table and its files, as the caller. A missing table is fine."""
 
@@ -590,6 +598,24 @@ class PolarisTables:
                 token, namespace, name, None, row_filter, snapshot_id, None
             )
             return 0 if scan is None else scan.count()
+
+        return self._guard(run)
+
+    def existing_keys(
+        self, token: str, namespace: str, name: str, column: str, values: list[str]
+    ) -> set[str]:
+        def run() -> set[str]:
+            table = self._catalog(token).load_table((namespace, name))
+            if table.current_snapshot() is None:
+                return set()
+            wanted = set(values)
+            # A few keys: filter the scan by them. Many: read the column once.
+            row_filter = (
+                In(column, wanted) if len(wanted) <= _IN_FILTER_MAX else AlwaysTrue()
+            )
+            found = table.scan(row_filter=row_filter, selected_fields=(column,))
+            present = set(pc.unique(found.to_arrow()[column]).to_pylist())
+            return present & wanted
 
         return self._guard(run)
 

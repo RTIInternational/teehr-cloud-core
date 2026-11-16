@@ -15,6 +15,7 @@ registering and writing need write; deleting needs admin. Platform admins may ac
 anywhere.
 """
 
+import json
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -38,10 +39,15 @@ from sqlalchemy.orm import Session
 from src.auth import Identity
 from src.config import Settings
 from src.dataset_types import (
+    BBOX,
+    CROSSWALK,
+    LAYER,
     SERIES,
     TABLE,
     TIMESERIES,
     TYPED,
+    crosswalk_columns,
+    layer_columns,
     series_columns,
     timeseries_columns,
 )
@@ -58,6 +64,15 @@ from src.formats import (
     json_rows,
     negotiate,
 )
+from src.geometry import (
+    GEOJSON,
+    as_geojson,
+    bbox_filter,
+    feature_collection,
+    json_geometry,
+    prepare_layer,
+    with_geoparquet,
+)
 from src.models import (
     Dataset,
     DatasetWrite,
@@ -69,6 +84,7 @@ from src.models import (
     Variable,
 )
 from src.paging import BadCursor, decode_cursor, encode_cursor, fingerprint
+from src.refs import qualify, referrers, resolve
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -79,10 +95,12 @@ from src.routes.projects import (
 )
 from src.schemas import (
     PROJECT_NAME_PATTERN,
+    CrosswalkCreate,
     DataPageOut,
     DatasetCreate,
     DatasetOut,
     DatasetRegistration,
+    LayerCreate,
     TimeseriesCreate,
     WriteOut,
 )
@@ -260,6 +278,10 @@ def create_dataset(
         return _create_timeseries(
             body, project, my_role, session, identity, _require_tables(tables)
         )
+    if isinstance(body, LayerCreate | CrosswalkCreate):
+        return _create_layer_or_crosswalk(
+            body, project, my_role, session, identity, _require_tables(tables)
+        )
     if not (
         settings.untyped_datasets_for_members
         or identity.has_any_role(settings.admin_roles)
@@ -327,6 +349,8 @@ def _timeseries_metadata(
         raise _unprocessable(
             "an instant period goes with statistic inst, and only with it"
         )
+    if body.location_layer:
+        _layer(session, project, body.location_layer)
     metadata = {
         "role": body.role,
         "variable": variable.name,
@@ -444,6 +468,80 @@ def _create_timeseries(
     return DatasetOut.model_validate(dataset)
 
 
+def _layer(session: Session, project: Project, ref: str):
+    """The layer a reference names, or 422."""
+    found = resolve(session, project, ref)
+    if found is None or found.dataset.kind != LAYER:
+        raise _unprocessable(f"'{ref}' is not a layer (use <name> or public.<name>)")
+    return found
+
+
+def _create_layer_or_crosswalk(
+    body: LayerCreate | CrosswalkCreate,
+    project: Project,
+    my_role: Role | None,
+    session: Session,
+    identity: Identity,
+    tables: Tables,
+) -> DatasetOut:
+    """A layer (keyed by location_key) or a crosswalk (keyed by left_key and
+    right_key, between two timeseries datasets' series tables)."""
+    if isinstance(body, LayerCreate):
+        kind, key = LAYER, ["location_key"]
+        columns = layer_columns([c.model_dump() for c in body.attributes])
+        metadata: dict = {"source": body.source}
+    else:
+        kind, key = CROSSWALK, ["left_key", "right_key"]
+        columns = crosswalk_columns([c.model_dump() for c in body.extra_columns])
+        metadata = {"left": body.left, "right": body.right}
+        for side in ("left", "right"):
+            ref = getattr(body, side)
+            found = resolve(session, project, ref)
+            if found is None or found.dataset.kind != TIMESERIES:
+                raise _unprocessable(
+                    f"{side}: '{ref}' is not a timeseries dataset "
+                    "(use <name> or public.<name>)"
+                )
+            series = (found.dataset.properties or {})["series_table"]
+            metadata[f"{side}_series_table"] = qualify(found.project, project, series)
+        metadata["source"] = body.source
+    if _exists(session, project, body.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dataset '{body.name}' already exists",
+        )
+    properties = {"teehr.type": kind} | {
+        f"teehr.{k}": str(v) for k, v in metadata.items() if v is not None
+    }
+    if kind == LAYER:
+        # GeoParquet-style: what the geometry column holds, for readers.
+        properties |= {"teehr.geometry_encoding": "WKB", "teehr.crs": "EPSG:4326"}
+    _create_table(
+        tables,
+        identity,
+        project,
+        my_role,
+        body.name,
+        columns,
+        key,
+        Layout(sort=tuple(key), properties=properties),
+    )
+    dataset = Dataset(
+        project_id=project.id,
+        name=body.name,
+        kind=kind,
+        description=body.description,
+        columns=columns,
+        key_columns=key,
+        properties=metadata,
+        table_identifier=f"{project.name}.{body.name}",
+        created_by=identity.subject,
+    )
+    _commit_new(session, dataset)
+    session.refresh(dataset)
+    return DatasetOut.model_validate(dataset)
+
+
 def _drop_quietly(tables: Tables, identity: Identity, project: Project, name: str):
     try:
         tables.drop_table(identity.token, project.name, name)
@@ -498,6 +596,15 @@ def delete_dataset(
     )
     tables = _require_tables(tables)
     record = _dataset(session, project, dataset)
+    used_by = referrers(session, project, record.name)
+    if used_by:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"'{record.name}' is referred to by {', '.join(used_by)}; "
+                "delete or change those first"
+            ),
+        )
     users = _series_users(session, project)
     if record.kind == SERIES and users.get(record.name):
         raise HTTPException(
@@ -681,10 +788,16 @@ def write_dataset(
             raise _unprocessable(f"unknown time zone '{timezone}'") from exc
     columns = record.columns or []
     try:
-        data = decode(*payload, columns)
+        data = (
+            _decode_layer(*payload, columns)
+            if record.kind == LAYER
+            else decode(*payload, columns)
+        )
         if data.num_rows == 0:
             raise _unprocessable("No rows to write")
         provided = list(data.column_names)
+        if record.kind == LAYER:
+            data = prepare_layer(data)
         if record.kind == TIMESERIES:
             # A timeseries row is a whole record from its source: leaving a column
             # out would null it (e.g. wipe a quality code), so it's refused.
@@ -714,7 +827,14 @@ def write_dataset(
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
         ) from exc
+    notes: list[str] = []
     try:
+        if record.kind == CROSSWALK:
+            notes = _crosswalk_notes(session, project, record, data, tables, identity)
+        elif record.kind == SERIES:
+            notes = _location_notes(
+                session, project, record, data, provided, tables, identity
+            )
         series_added = (
             _add_series(session, project, record, data, tables, identity)
             if record.kind == TIMESERIES
@@ -759,6 +879,7 @@ def write_dataset(
         rows=data.num_rows,
         unit=units and units[0].symbol,
         series_added=series_added,
+        notes=notes or None,
         snapshot_id=result.snapshot_id,
         written_by=identity.subject,
     )
@@ -766,6 +887,138 @@ def write_dataset(
     session.commit()
     session.refresh(write)
     return WriteOut.model_validate(write)
+
+
+def _decode_layer(media_type: str, body: bytes, columns: list[dict]) -> pa.Table:
+    """A layer write's rows. JSON carries geometry as GeoJSON geometry objects or
+    WKT; the rest of each row is read with the declared types as usual."""
+    if media_type not in (JSON, NDJSON):
+        return decode(media_type, body, columns)
+    try:
+        if media_type == JSON:
+            rows = json.loads(body)
+        else:
+            rows = [json.loads(line) for line in body.splitlines() if line.strip()]
+    except ValueError as exc:
+        raise DataMismatch(f"could not read the {media_type} body: {exc}") from exc
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        raise DataMismatch("JSON body must be an array of objects")
+    if not rows:
+        return pa.table({})
+    rest, wkt = json_geometry(rows)
+    plain = [c for c in columns if c["name"] not in ("geometry", *BBOX)]
+    data = decode(JSON, json.dumps(rest).encode(), plain)
+    if data.num_rows != len(rows):  # every row was empty apart from geometry
+        data = pa.table({"__rows": pa.nulls(len(rows))}).drop_columns(["__rows"])
+    return data.append_column("geometry", pa.array(wkt, pa.string()))
+
+
+def _missing(
+    tables: Tables,
+    identity: Identity,
+    namespace: str,
+    name: str,
+    column: str,
+    values: list[str],
+) -> list[str]:
+    """Which of ``values`` aren't in table ``name``'s ``column`` (sorted)."""
+    present = tables.existing_keys(identity.token, namespace, name, column, values)
+    return sorted(set(values) - present)
+
+
+def _note(missing: list[str], total: int, what: str, where: str) -> str:
+    examples = ", ".join(missing[:5]) + (", ..." if len(missing) > 5 else "")
+    return f"{len(missing)} of {total} {what} aren't in {where}: {examples}"
+
+
+def _crosswalk_notes(
+    session: Session,
+    project: Project,
+    record: Dataset,
+    data: pa.Table,
+    tables: Tables,
+    identity: Identity,
+) -> list[str]:
+    """Keys not (yet) in their side's series table: reported, not refused, so
+    timeseries and their crosswalk can be loaded in either order."""
+    notes = []
+    for side in ("left", "right"):
+        ref = (record.properties or {})[f"{side}_series_table"]
+        found = resolve(session, project, ref)
+        keys = pc.unique(data[f"{side}_key"]).to_pylist()
+        if found is None:
+            notes.append(f"{side} series table '{ref}' no longer exists")
+            continue
+        missing = _missing(
+            tables, identity, found.namespace, found.dataset.name, "series_key", keys
+        )
+        if missing:
+            notes.append(_note(missing, len(keys), f"{side}_key values", ref))
+    return notes
+
+
+def _default_layers(session: Session, project: Project, series: Dataset) -> set[str]:
+    """The default layers of the timeseries that use this series table."""
+    return {
+        (ts.properties or {}).get("location_layer")
+        for ts in session.scalars(
+            select(Dataset).where(
+                Dataset.project_id == project.id, Dataset.kind == TIMESERIES
+            )
+        )
+        if (ts.properties or {}).get("series_table") == series.name
+    } - {None}
+
+
+def _location_notes(
+    session: Session,
+    project: Project,
+    record: Dataset,
+    data: pa.Table,
+    provided: list[str],
+    tables: Tables,
+    identity: Identity,
+) -> list[str]:
+    """Series rows: a location_layer must name a layer (refused if not); location
+    keys not in their layer are reported. Rows that don't say their layer use the
+    timeseries' default layer, when there's exactly one."""
+    if "location_key" not in provided and "location_layer" not in provided:
+        return []
+    defaults = _default_layers(session, project, record)
+    fallback = next(iter(defaults)) if len(defaults) == 1 else None
+    layers = (
+        data["location_layer"].to_pylist()
+        if "location_layer" in provided
+        else [None] * data.num_rows
+    )
+    keys = (
+        data["location_key"].to_pylist()
+        if "location_key" in provided
+        else [None] * data.num_rows
+    )
+    by_layer: dict[str, set[str]] = {}
+    for layer, key in zip(layers, keys, strict=True):
+        layer = layer or fallback
+        if layer is not None:
+            group = by_layer.setdefault(layer, set())
+            if key is not None:
+                group.add(key)
+    notes = []
+    for ref, wanted in sorted(by_layer.items()):
+        found = _layer(session, project, ref)
+        if not wanted:
+            continue
+        missing = _missing(
+            tables,
+            identity,
+            found.namespace,
+            found.dataset.name,
+            "location_key",
+            sorted(wanted),
+        )
+        if missing:
+            notes.append(_note(missing, len(wanted), "location keys", ref))
+    return notes
 
 
 def _write_units(
@@ -874,6 +1127,7 @@ def _columns(raw: str | None, declared: list[dict]) -> tuple[str, ...] | None:
             "content": {
                 ARROW_STREAM: {"schema": {"type": "string", "format": "binary"}},
                 PARQUET: {"schema": {"type": "string", "format": "binary"}},
+                GEOJSON: {"schema": {"type": "object"}},
             },
         },
     },
@@ -909,6 +1163,15 @@ def read_dataset(
     count: Annotated[
         bool, Query(description="Also count the rows matching the filter")
     ] = False,
+    bbox: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Layers: minx,miny,maxx,maxy (longitude/latitude); the locations "
+                "whose bounds overlap it"
+            )
+        ),
+    ] = None,
 ) -> Response:
     """Read a dataset's rows, as the caller, a page at a time.
 
@@ -923,12 +1186,21 @@ def read_dataset(
     record = _dataset(session, project, dataset)
     declared = record.columns or []
     selected = _columns(columns, declared)
+    accept = request.headers.get("accept") or ""
+    geojson = GEOJSON in accept
+    if record.kind != LAYER and (bbox is not None or geojson):
+        raise _unprocessable("bbox and GeoJSON apply to layers only")
+    if geojson and selected and "geometry" not in selected:
+        selected = (*selected, "geometry")
     try:
+        if bbox is not None:
+            spatial = bbox_filter(bbox)
+            filter = f"({filter}) and {spatial}" if filter else spatial
         expression = parse_filter(filter, declared) if filter else None
     except DataMismatch as exc:
         raise _unprocessable(str(exc)) from exc
 
-    media_type = negotiate(request.headers.get("accept"))
+    media_type = JSON if geojson else negotiate(accept)
     cap = (
         settings.max_page_rows_json
         if media_type == JSON
@@ -994,8 +1266,25 @@ def read_dataset(
     headers = {}
     if result.snapshot_id is not None:
         headers[SNAPSHOT_ID] = str(result.snapshot_id)
+    has_geometry = record.kind == LAYER and "geometry" in rows.column_names
     if media_type == JSON:
-        body = {"rows": json_rows(rows), "next_cursor": next_cursor}
+        plain = rows.drop_columns(["geometry"]) if has_geometry else rows
+        out = json_rows(plain)
+        geometry = as_geojson(rows["geometry"]) if has_geometry else None
+        if geojson:
+            if next_cursor:
+                headers[NEXT_CURSOR] = next_cursor
+            if total is not None:
+                headers[TOTAL_ROWS] = str(total)
+            return JSONResponse(
+                feature_collection(out, geometry),
+                media_type=GEOJSON,
+                headers=headers,
+            )
+        if has_geometry:
+            for row, geom in zip(out, geometry, strict=True):
+                row["geometry"] = geom
+        body = {"rows": out, "next_cursor": next_cursor}
         if total is not None:
             body["total"] = total
         return JSONResponse(body, headers=headers)
@@ -1003,6 +1292,8 @@ def read_dataset(
         headers[NEXT_CURSOR] = next_cursor
     if total is not None:
         headers[TOTAL_ROWS] = str(total)
+    if has_geometry and media_type == PARQUET:
+        rows = with_geoparquet(rows)
     return Response(
         encode_binary(rows, media_type), media_type=media_type, headers=headers
     )
