@@ -620,9 +620,10 @@ def ingest_upload(
         # token from before the caller's project role would fail inside the job.
         raise APIError(
             status.HTTP_403_FORBIDDEN,
-            f"Your access token predates your {my_role.value} role in "
-            f"'{project.name}'; the load would run without it. Get a new token "
-            "and retry.",
+            f"Your access token doesn't carry your {my_role.value} role in "
+            f"'{project.name}', so the load would run without it. Get a new token "
+            "and retry; if a new token still lacks it, the role assignment is "
+            f"missing: POST /v1/projects/{project.name}/provision restores it.",
             code="token_refresh_required",
         )
     if kube is None or delegation is None or sealer is None:
