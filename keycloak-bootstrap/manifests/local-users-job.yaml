@@ -38,10 +38,11 @@ spec:
               value: "300s"
             - name: KEYCLOAK_SSLVERIFY
               value: "false"
-            # Import only when the users file changes: every import resets each
-            # listed user's realm roles to the file's (none), which strips the
-            # project roles the control plane gives them. The control plane's
-            # access reconcile restores those after a real change.
+            # Every import resets each listed user's realm roles to the file's
+            # (none), stripping the project roles the control plane gives them.
+            # The cache skips unchanged imports, but a realm import clears its
+            # checksums, so the Garden action also runs the control plane's access
+            # reconcile right after (keycloak-bootstrap/garden.yaml).
             - name: IMPORT_CACHE_ENABLED
               value: "true"
           volumeMounts:

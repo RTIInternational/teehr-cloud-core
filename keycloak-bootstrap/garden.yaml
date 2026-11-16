@@ -67,4 +67,7 @@ spec:
     - >-
       kubectl --context kind-kind -n "${environment.namespace}" delete job keycloak-local-users-bootstrap --ignore-not-found=true &&
       kubectl --context kind-kind -n "${environment.namespace}" apply -f ./manifests/local-users-job.yaml &&
-      kubectl --context kind-kind -n "${environment.namespace}" wait --for=condition=Complete job/keycloak-local-users-bootstrap --timeout=300s
+      kubectl --context kind-kind -n "${environment.namespace}" wait --for=condition=Complete job/keycloak-local-users-bootstrap --timeout=300s &&
+      { kubectl --context kind-kind -n "${environment.namespace}" get cronjob control-plane-access-reconcile >/dev/null 2>&1 &&
+        kubectl --context kind-kind -n "${environment.namespace}" create job --from=cronjob/control-plane-access-reconcile "access-reconcile-$(date +%s)" ||
+        true; }
