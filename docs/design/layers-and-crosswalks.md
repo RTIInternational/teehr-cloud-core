@@ -57,8 +57,8 @@ A crosswalk links the series of two **series tables**, named at registration:
 
 | Field | Rule |
 | --- | --- |
-| `left` | a timeseries dataset; its series table is the left side |
-| `right` | a timeseries dataset; its series table is the right side |
+| `left` | a timeseries dataset (`<name>` or `public.<name>`); its series table is the left side |
+| `right` | a timeseries dataset (`<name>` or `public.<name>`); its series table is the right side |
 | extra columns | optional, declared (e.g. `weight` float64 for many-to-one aggregation) |
 
 | Column | Type |
@@ -87,9 +87,17 @@ A crosswalk links the series of two **series tables**, named at registration:
 - **Timeseries ingest gets `mapping.location_key`**: a column of the file. The common case, where
   the site number is both the series key and the location key, is `series_key` and `location_key`
   mapped to the same column. New series get it; existing series keep theirs (series writes merge).
-- **Layers in `public`:** a reference without a project resolves in the dataset's own project;
-  `public.<name>` points at a public layer (e.g. `public.usgs_gauges`), so every project can use
-  the shared ones without copying.
+
+## Referring to datasets
+
+One rule for every place a dataset names another (a series' `location_layer`, a crosswalk's sides,
+a spec's inputs):
+
+- `<name>`: a dataset in the current project.
+- `public.<name>`: a dataset in `public` (e.g. `public.usgs_gauges`), so every project can use the
+  shared ones without copying.
+- `<project>.<name>` for any other project the caller can read may come later; the dotted form
+  leaves room for it. Not in this phase.
 
 ## Uploads
 
@@ -112,6 +120,7 @@ To add to `standards/timeseries.md` ("Other dataset types"), once VeriRace agree
 - Layer geometry is exchanged as WKB in Arrow and Parquet (GeoParquet metadata) and as GeoJSON in
   JSON, always EPSG:4326, longitude/latitude order.
 - A crosswalk names its two sides.
+- Dataset references in specs: `<name>` (the evaluation's project) or `public.<name>`.
 
 How each system stores them (TEEHR's bbox columns; VeriRace's per-dataset layer) stays its own.
 
@@ -134,5 +143,3 @@ How each system stores them (TEEHR's bbox columns; VeriRace's per-dataset layer)
    bundles GDAL (about 30 MB) and would read both; leaving them out keeps the image smaller.
 2. **Unknown crosswalk keys: report or refuse?** Reporting (above) allows any load order; refusing
    catches typos at the cost of ordering.
-3. **`public.<name>` for layer references:** good enough, or should any project's layer be usable
-   when the caller can read that project?
