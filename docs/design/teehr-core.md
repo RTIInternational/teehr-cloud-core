@@ -21,11 +21,13 @@ depend on (ADR-0011), so one definition of each metric gives the same numbers ev
 
 ## Where each piece comes from
 
-Both codebases were read for this (2026-11-16). In short: VeriRace's metrics package is already
-the engine-neutral design the shared spec standardized (most of the standards were written from
-it); teehr brings metrics, options and production experience VeriRace lacks, but its metric code
-can't be imported without Spark today (`metrics/models/base.py` imports pyspark and
-`teehr.querying`).
+Both codebases were read for this (2026-11-16). In short: VeriRace is the base. Its metrics package is
+already the engine-neutral design the shared spec standardized (most of the standards were
+written from it), it has the larger metric set, and its spec patterns are cleaner (skill scores,
+guards, typed fields, grouping sets). teehr brings a few metrics and options VeriRace lacks, its
+Spark path for the largest jobs, and production experience (NWM-scale runs, regression tests);
+its metric code can't be imported without Spark today (`metrics/models/base.py` imports pyspark
+and `teehr.querying`).
 
 | Piece | Start from | Bring from the other | Change |
 | --- | --- | --- | --- |
@@ -34,6 +36,10 @@ can't be imported without Spark today (`metrics/models/base.py` imports pyspark 
 | **Metric state** | VeriRace `state.py` (`group_state`, `StateStats`, `compute_from_state`, `mergeable`) and `sketch.py` | | a pure-numpy merge alongside the SQL one (VeriRace merges only in DuckDB SQL), so any engine can merge |
 | **Bootstrap** | VeriRace `bootstrap.py`: the procedure `standards/bootstrap.md` pins | teehr's vectorized `(reps, n)` evaluation was tuned on real NWM runs: compare speed on teehr's benchmarks before release | `gumboot` alias of `year_block` |
 | **Significance** | VeriRace `significance.py` (Diebold–Mariano, mergeable) | | |
+| **Skill scores** | VeriRace: a stage-level `skill` (`reference` dataset, `metrics`, `form: skill \| ratio`) giving `<metric>_skill = 1 − score / reference score` on rows matching every group key but `secondary_dataset`; metrics flagged `skill` (error scores) in the registry, and the spec refuses skill on any other | | replaces teehr's per-metric `reference_configuration` |
+| **Guards** | VeriRace stage `guards`: null a metric on too little or too flat data, with a `null_reason` | teehr's bootstrap minimums (sample size, mean, variance) as guard kinds where they aren't already covered | |
+| **Fields** (derived columns) | VeriRace's typed fields: `Exceedance`, `Events`, `Change`, `NaiveScale`, `Percentile`, `LeadTimeBins`, `Calendar`, `Conditions`, `Attribute`, `Within` | teehr's derived-field calculations (e.g. month, water year, flow categories) not covered by these | |
+| **Grouping and pairing options** | VeriRace: `rollup`, `grouping_sets`, `common_sample`, `time.exact` | | the spec's open pairing questions (`member` / `reference_time` flow, crosswalk sides) are settled with VeriRace before the schema is frozen |
 | **Data model** | the control plane's `dataset_types.py` (warehouse data model v1: timeseries, series, layer, crosswalk) | | as pyarrow schemas; the control plane then imports them from here. teehr's pandera schemas are the pre-v1 model and don't move |
 | **Units** | VeriRace `units.py` (affine conversion, dimension checks) | the control plane's UCUM unit table (domains) | conversion takes the unit table as data, so each system supplies its own registry |
 | **Spec schema** | VeriRace `spec/models.py` (Pydantic, v1) | | the decided shape (`DECISIONS.md`): `version` 1, ISO 8601 durations, bootstrap on stages, one pair of window columns, `<name>` / `public.<name>` references; JSON Schema generated from it |
