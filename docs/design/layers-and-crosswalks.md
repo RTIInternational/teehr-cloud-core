@@ -1,6 +1,6 @@
 # Layers and crosswalks (Phase 3)
 
-- **Status:** draft, 2026-11-15. For review before building.
+- **Status:** decided 2026-11-15.
 - **Builds on:** `warehouse-data-model.md` (the `layer` and `crosswalk` types), ADR-0010 (series
   identity), ADR-0014 (load jobs), teehr-shared-eval-spec `standards/timeseries.md`.
 
@@ -106,11 +106,15 @@ Same flow as timeseries (`create` → PUT → `inspect` → `ingest`), with `kin
 
 | Kind | Formats | Inspect proposes |
 | --- | --- | --- |
-| layer | GeoParquet, GeoJSON, CSV with longitude/latitude columns (points) | `location_key`, `name`, the geometry (or lon/lat columns), the CRS, the rest as attributes |
+| layer | GeoParquet, GeoJSON, zipped Shapefile, GeoPackage, CSV with longitude/latitude columns (points) | `location_key`, `name`, the geometry (or lon/lat columns), the CRS, the rest as attributes |
 | crosswalk | CSV, Parquet | `left_key`, `right_key`, the rest as extra columns |
 
-- GeoJSON is always 4326 (RFC 7946). GeoParquet says its CRS; anything other than 4326 is
-  reprojected in the load job. A CSV's lon/lat are taken as 4326.
+- Shapefile and GeoPackage are read with `pyogrio`, which bundles GDAL (about 30 MB more in the
+  control-plane image). A Shapefile is uploaded as one `.zip` of its parts. A GeoPackage with
+  several layers: inspect lists them and `mapping.source_layer` picks one.
+- GeoJSON is always 4326 (RFC 7946). GeoParquet, Shapefile (`.prj`) and GeoPackage say their CRS;
+  anything other than 4326 is reprojected in the load job (`pyproj`). A file with no CRS is
+  refused unless `mapping.crs` says it. A CSV's lon/lat are taken as 4326.
 - The load job does the checks above on the whole file before writing, as for timeseries.
 
 ## Shared spec
@@ -126,7 +130,6 @@ How each system stores them (TEEHR's bbox columns; VeriRace's per-dataset layer)
 
 ## Not in this phase
 
-- Shapefile and GeoPackage uploads (they need GDAL in the image).
 - Map tiles, several geometries per location, gridded data.
 - The spec's `within` and `attribute` field functions (Phase 4).
 
@@ -136,10 +139,3 @@ How each system stores them (TEEHR's bbox columns; VeriRace's per-dataset layer)
    checks and `mapping.location_key`.
 2. Their uploads: inspect and the load job for both kinds.
 3. The Phase 3 gate on KinD.
-
-## Open questions
-
-1. **Shapefile/GeoPackage now or later?** Hydrology users have plenty of shapefiles. `pyogrio`
-   bundles GDAL (about 30 MB) and would read both; leaving them out keeps the image smaller.
-2. **Unknown crosswalk keys: report or refuse?** Reporting (above) allows any load order; refusing
-   catches typos at the cost of ordering.
