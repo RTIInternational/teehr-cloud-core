@@ -94,6 +94,22 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   location, layer, period override, resolution, `series_attributes`) unless
   `series_table` names an existing one to share. Deleting the last timeseries
   that uses a series table deletes it too.
+- **Layers** (`type: layer`, `docs/design/layers-and-crosswalks.md`): locations
+  keyed by `location_key`, with `name`, `geometry` (WKB, EPSG:4326) and declared
+  `attributes`. Writes take WKB (Arrow, Parquet), WKT, or GeoJSON geometry objects
+  (JSON); every geometry must parse, be non-empty and valid, and lie within
+  longitude/latitude bounds (projected coordinates are refused). The bounds are
+  stored in `bbox_*` columns. Reads give GeoJSON geometry in JSON rows,
+  `Accept: application/geo+json` a FeatureCollection, Parquet with GeoParquet
+  metadata; `bbox=minx,miny,maxx,maxy` filters by bounds.
+- **Crosswalks** (`type: crosswalk`): `left_key` -> `right_key` between the series
+  tables of two timeseries datasets (`left`, `right`), plus `extra_columns`
+  (e.g. `weight`). Keys not in their side's series table are written and reported
+  in the write's `notes`, so either can be loaded first.
+- **References**: a dataset names another as `<name>` (this project) or
+  `public.<name>` (a timeseries' `location_layer`, a crosswalk's sides). A series
+  row's `location_layer` must be a layer; its `location_key` not being in it is
+  noted. A dataset others refer to can't be deleted until they're changed.
 
 - The API creates and drops tables **as the caller**: their own token goes to
   Polaris (PyIceberg, vended credentials), so Polaris enforces their project role.
@@ -141,8 +157,8 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   (`MAX_PAGE_ROWS_JSON` 10k, `MAX_PAGE_ROWS_BINARY` 1M). Each page re-scans up to
   its offset, so deep paging of big tables is slow: bulk reads belong in jobs.
 - **Lineage**: every write records who, when, mode, filter, row count, the
-  Iceberg snapshot and, for a timeseries, the unit values arrived in and how many
-  series it added; `GET .../datasets/{dataset}/writes` lists them.
+  Iceberg snapshot, its notes and, for a timeseries, the unit values arrived in and
+  how many series it added; `GET .../datasets/{dataset}/writes` lists them.
 - Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
 
 ## Uploads (Phase 3)

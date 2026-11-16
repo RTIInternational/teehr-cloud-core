@@ -86,7 +86,8 @@ A crosswalk links the series of two **series tables**, named at registration:
   `location_key` not being in that layer is reported, not refused, for the same ordering reason.
 - **Timeseries ingest gets `mapping.location_key`**: a column of the file. The common case, where
   the site number is both the series key and the location key, is `series_key` and `location_key`
-  mapped to the same column. New series get it; existing series keep theirs (series writes merge).
+  mapped to the same column. The load sets it for every series in the file (other series
+  attributes are kept) and needs the dataset to have a `location_layer`.
 
 ## Referring to datasets
 

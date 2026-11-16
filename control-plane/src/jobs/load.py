@@ -141,6 +141,49 @@ def apply_mapping(data: pa.Table, mapping: dict) -> pa.Table:
     return pa.table(columns)
 
 
+def locations(data: pa.Table, mapping: dict) -> pa.Table | None:
+    """(series_key, location_key) for each series in the file, when the mapping
+    names a location key column; one location per series."""
+    source = mapping.get("location_key")
+    if not source:
+        return None
+    keys = (
+        pa.array([mapping["series_key_value"]] * data.num_rows, pa.string())
+        if mapping.get("series_key_value")
+        else data[mapping["series_key"]].cast(pa.string())
+    )
+    pairs = (
+        pa.table({"series_key": keys, "location_key": data[source].cast(pa.string())})
+        .group_by(["series_key", "location_key"])
+        .aggregate([])
+    )
+    if pc.sum(pc.is_null(pairs["location_key"])).as_py():
+        raise LoadFailed(["some rows have no location key"])
+    if duplicate_keys(pairs, ["series_key"]):
+        raise LoadFailed(["a series has more than one location key in the file"])
+    return pairs
+
+
+def set_locations(
+    client: GrantClient, project: str, dataset: dict, pairs: pa.Table
+) -> list[str]:
+    """Write each series' location key to the dataset's series table (other
+    series attributes are kept); returns the write's notes."""
+    resp = client.api("GET", f"/projects/{project}/datasets/{dataset['name']}")
+    if resp.status_code != 200:
+        raise LoadFailed([f"dataset '{dataset['name']}': {_problem(resp)}"])
+    series = resp.json()["timeseries"]["series_table"]
+    resp = client.api(
+        "POST",
+        f"/projects/{project}/datasets/{series}/data",
+        content=arrow_bytes(pairs),
+        headers={"Content-Type": ARROW},
+    )
+    if resp.status_code != 201:
+        raise LoadFailed([f"setting location keys: {_problem(resp)}"])
+    return resp.json().get("notes") or []
+
+
 def target_columns(client: GrantClient, project: str, dataset: dict) -> list[dict]:
     """The dataset's columns: as registered, or as a new one will be."""
     if dataset.get("existing"):
@@ -245,6 +288,7 @@ def load_upload(client: GrantClient, task: dict) -> dict:
         except (pa.ArrowInvalid, OSError, ValueError) as exc:
             raise LoadFailed([f"can't read the file: {exc}"]) from exc
     mapped = apply_mapping(data, mapping)
+    pairs = locations(data, mapping)
     typed = check(
         mapped, target_columns(client, project, dataset), mapping.get("timezone")
     )
@@ -252,8 +296,14 @@ def load_upload(client: GrantClient, task: dict) -> dict:
     if not dataset.get("existing"):
         register(client, project, dataset)
         created = True
-    return {
+    result = {
         "dataset": dataset["name"],
         "created": created,
         **write(client, project, dataset, typed),
     }
+    if pairs is not None:
+        notes = set_locations(client, project, dataset, pairs)
+        result["locations_set"] = pairs.num_rows
+        if notes:
+            result["notes"] = notes
+    return result

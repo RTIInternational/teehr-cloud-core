@@ -483,3 +483,47 @@ def test_load_one_series_from_parquet(client, staging, jobs, tables):  # noqa: F
     assert run_load(client, staging, kube)["rows"] == 2
     _, _, data = tables.writes[-1]
     assert data.column("series_key").to_pylist() == ["gauge-1", "gauge-1"]
+
+
+def test_load_sets_each_series_location(client, staging, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    client.post(
+        "/v1/projects/flood/datasets",
+        json={"type": "layer", "name": "gauges"},
+        headers=ALICE,
+    )
+    client.post(
+        "/v1/projects/flood/datasets/gauges/data",
+        json=[{"location_key": "01010000", "geometry": "POINT (-69.7 46.7)"}],
+        headers=ALICE,
+    )
+    upload_id = inspected(client, staging)
+    resp = ingest(
+        client,
+        upload_id,
+        {**OBS, "location_layer": "gauges"},
+        {"location_key": "site_no"},  # the site number is both keys
+    )
+    assert resp.status_code == 202, resp.text
+    result = run_load(client, staging, kube)
+    assert result["locations_set"] == 2
+    assert result["notes"] == ["1 of 2 location keys aren't in gauges: 01010500"]
+    series = tables.rows[("flood", "obs_series")]
+    assert series["01010000"]["location_key"] == "01010000"
+    assert series["01010000"]["location_layer"] == "gauges"
+
+
+def test_location_keys_need_a_layer(client, staging, jobs):
+    upload_id = inspected(client, staging)
+    resp = ingest(client, upload_id, mapping={"location_key": "site_no"})
+    assert resp.status_code == 422
+    places = [".".join(e["loc"][1:]) for e in resp.json()["errors"]]
+    assert "mapping.location_key" in places
+    resp = ingest(
+        client,
+        upload_id,
+        {**OBS, "location_layer": "nope"},
+        {"location_key": "site_no"},
+    )
+    places = [".".join(e["loc"][1:]) for e in resp.json()["errors"]]
+    assert "dataset.location_layer" in places

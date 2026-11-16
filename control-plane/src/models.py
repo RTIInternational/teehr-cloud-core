@@ -147,6 +147,8 @@ class DatasetWrite(Base):
     # canonical unit), and how many new series keys the write added.
     unit: Mapped[str | None] = mapped_column(String(64))
     series_added: Mapped[int | None] = mapped_column(BigInteger)
+    # What was written but may be wrong (e.g. crosswalk keys not found).
+    notes: Mapped[list[str] | None] = mapped_column(JSON)
     snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
     written_by: Mapped[str] = mapped_column(String(255))
     # Set here (microseconds) so quick successive writes keep their order.

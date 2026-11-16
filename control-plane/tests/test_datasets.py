@@ -49,7 +49,19 @@ class FakeTables:
             raise self.fail_with
         self.snapshot = getattr(self, "snapshot", 9_000_000_000_000_000_000) + 1
         self.writes = [*getattr(self, "writes", []), (mode, overwrite_filter, data)]
+        self.written = getattr(self, "written", {})
+        self.written.setdefault((namespace, name), []).append(data)
         return WriteResult(self.snapshot)
+
+    def existing_keys(self, token, namespace, name, column, values):
+        self.calls.append(("existing_keys", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        present = set(getattr(self, "rows", {}).get((namespace, name), {}))
+        for data in getattr(self, "written", {}).get((namespace, name), []):
+            if column in data.column_names:
+                present |= set(data[column].to_pylist())
+        return present & set(values)
 
     def insert_missing(self, token, namespace, name, data):
         self.calls.append(("insert_missing", token, namespace, name))
