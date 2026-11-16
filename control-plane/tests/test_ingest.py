@@ -359,6 +359,34 @@ def test_cancel(client, staging, jobs):
     )
 
 
+def test_cancel_without_kubernetes_is_refused(client, staging, jobs):
+    upload_id = inspected(client, staging)
+    ingest(client, upload_id)
+    app.dependency_overrides[get_kube] = lambda: None
+    resp = client.post(f"{UPLOADS}/{upload_id}/cancel", headers=ALICE)
+    assert resp.status_code == 503
+    assert client.get(f"{UPLOADS}/{upload_id}", headers=ALICE).json()["status"] in (
+        "queued", "running"
+    )  # fmt: skip
+
+
+def test_a_failed_commit_deletes_the_job_it_started(client, staging, jobs, monkeypatch):
+    kube, _ = jobs
+    upload_id = inspected(client, staging)
+
+    def boom(self):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(Session, "commit", boom)
+    with pytest.raises(RuntimeError):
+        ingest(client, upload_id)
+    monkeypatch.undo()
+    assert kube.deleted == ["upload-0"]
+    assert client.get(f"{UPLOADS}/{upload_id}", headers=ALICE).json()["status"] == (
+        "inspected"
+    )
+
+
 # --- the load, end to end (in-process) -------------------------------------------
 
 

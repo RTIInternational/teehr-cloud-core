@@ -107,7 +107,7 @@ def reconcile(kube: Kube | None, job: Job) -> bool:
     return True
 
 
-def cancel(kube: Kube | None, job: Job) -> None:
-    if kube is not None and job.k8s_name:
+def cancel(kube: Kube, job: Job) -> None:
+    if job.k8s_name:
         kube.delete_job(job.k8s_name)
     end(job, JobStatus.CANCELLED)

@@ -12,6 +12,7 @@
 Uploading and inspecting need the write role; listing and reading need read.
 """
 
+import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -401,7 +402,14 @@ def ingest_upload(
     upload.job_id, upload.status = job.id, UploadStatus.QUEUED
     upload.rows_done, upload.result, upload.problems, upload.error = 0, None, None, None
     upload.started_at = upload.finished_at = None
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        # Without its row the Job's grant is refused anyway; don't leave it behind.
+        session.rollback()
+        with contextlib.suppress(KubeError):
+            kube.delete_job(job.k8s_name)
+        raise
     session.refresh(upload)
     return UploadOut.model_validate(upload)
 
@@ -409,7 +417,7 @@ def ingest_upload(
 @router.post(
     "/{upload_id}/cancel",
     operation_id="cancel_upload",
-    responses=_errors(401, 403, 404, 409, 502),
+    responses=_errors(401, 403, 404, 409, 502, 503),
 )
 def cancel_upload(
     name: ProjectName,
@@ -427,6 +435,11 @@ def cancel_upload(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Upload is {upload.status.value}, not loading",
+        )
+    if kube is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Loading uploads (jobs) is not configured; can't stop the job",
         )
     try:
         cancel(kube, job)
