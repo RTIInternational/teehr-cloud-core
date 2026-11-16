@@ -173,7 +173,11 @@ Files go straight to staging storage, not through the API
    and first rows; a CSV's first MiB, every column as text so `01010000` stays
    `01010000`) and proposes a mapping to the timeseries columns, a dataset name, what
    each column looks like, and what's still needed (role, variable, unit, statistic;
-   a time zone when times have none; a series key when the file has no key column).
+   a time zone when times have none; a series key when the file has no key column;
+   `mapping.time_format` (strptime) when times aren't ISO 8601). A file with a time
+   column, no key column and several value columns is read as wide (`layout: wide`,
+   `series_columns`: one series per column, named by its header). The contract is
+   shared with VeriRace (teehr-shared-eval-spec `standards/uploads.md`).
    - `kind: layer`: GeoJSON, zipped Shapefile, GeoPackage (read in place by GDAL,
      range requests; `?source_layer=` picks a GeoPackage layer), GeoParquet, or CSV
      with longitude/latitude or WKT. Proposes the key, name, geometry, CRS (needed

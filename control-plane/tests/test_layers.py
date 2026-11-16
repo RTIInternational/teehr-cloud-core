@@ -375,3 +375,13 @@ def test_other_projects_cant_be_referred_to_yet(client, tables):  # noqa: F811
     resp = create(client, {"type": "crosswalk", "name": "xw",
                            "left": "other.obs", "right": "obs"})  # fmt: skip
     assert resp.status_code == 422
+
+
+def test_arrow_reads_mark_geometry_as_geoarrow(client, stored):
+    resp = client.get(f"{DATASETS}/gauges/data", headers={**ALICE, "Accept": ARROW})
+    table = pa.ipc.open_stream(resp.content).read_all()
+    meta = table.schema.field("geometry").metadata
+    assert meta[b"ARROW:extension:name"] == b"geoarrow.wkb"
+    # ...and a GeoArrow-marked column is accepted on write.
+    assert write_arrow(client, "gauges", table.select(["location_key", "geometry"])
+                       ).status_code == 201  # fmt: skip
