@@ -23,7 +23,15 @@ from src.provisioning import (
     reconcile,
     reconcile_access,
 )
-from src.routes import datasets, domains, job_grants, projects, runs, uploads
+from src.routes import (
+    datasets,
+    domains,
+    evaluations,
+    job_grants,
+    projects,
+    runs,
+    uploads,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
@@ -86,6 +94,7 @@ app.include_router(domains.router)
 app.include_router(uploads.router)
 app.include_router(job_grants.router)
 app.include_router(runs.router)
+app.include_router(evaluations.router)
 errors.install(app)
 
 

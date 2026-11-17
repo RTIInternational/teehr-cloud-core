@@ -268,6 +268,7 @@ def _check_labels(
 class PlanSummary:
     """What a planned spec will do."""
 
+    spec: EvaluationSpec
     unit: str | None
     inputs: list[dict[str, Any]]
     relation: dict[str, Any] | None
@@ -306,4 +307,14 @@ def plan(session: Session, project: Project, body: Any) -> PlanSummary:
         }
         for stage in planned.spec.aggregate
     ]
-    return PlanSummary(planned.unit, inputs, relation, stages)
+    return PlanSummary(spec, planned.unit, inputs, relation, stages)
+
+
+def spec_hash(spec: EvaluationSpec) -> str:
+    """A parsed spec's fingerprint: equal for specs that mean the same (aliases,
+    key order and defaults aside)."""
+    import hashlib
+    import json
+
+    canonical = json.dumps(spec.model_dump(mode="json", by_alias=True), sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
