@@ -440,3 +440,33 @@ def test_specs_whose_months_depend_on_others_run_in_full():
     assert blockers(load_spec(spec(fields=[ranked]))) == [
         "field 'rank' looks beyond each pair's month"
     ]
+
+
+def test_rollups_keep_the_finest_sets_state(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"] = [
+        {"rollup": ["primary_series_key"], "metrics": ["count", "rmse"]}
+    ]
+    saved(client, body)
+
+    def check(months):
+        results = tables.written[("flood", "results_e_v1")][-1].to_pylist()
+        by_key = {r["primary_series_key"]: r for r in results}
+        assert set(by_key) == {"usgs-a", "usgs-b", "(all)"}
+        o = np.array([v for k in OBS for v in OBS[k] + (OBS_FEB[k] if months else [])])
+        s = np.array([v for k in SIM for v in SIM[k] + (SIM_FEB[k] if months else [])])
+        assert by_key["(all)"]["count"] == len(o)
+        assert by_key["(all)"]["root_mean_square_error"] == pytest.approx(
+            np.sqrt(np.mean((s - o) ** 2))
+        )
+
+    first = run_once(client, kube)
+    assert (
+        first["mode"] == "full" and first["state"]["rows"] == 2
+    )  # the finest set only
+    check(months=False)
+    add_february(client, lake)
+    second = run_once(client, kube)
+    assert (second["mode"], second["months"]) == ("incremental", ["2026-02"])
+    check(months=True)
