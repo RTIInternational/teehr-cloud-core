@@ -15,7 +15,7 @@ depend on (ADR-0011), so one definition of each metric gives the same numbers ev
 
 | Depends on it | For |
 | --- | --- |
-| `teehr` | its metrics (replacing `teehr/metrics`), local evaluations, and a Spark path for the largest jobs |
+| ~~`teehr`~~ | not adopted: legacy `teehr` is frozen until cutover, and its name moves to the user package built on teehr-core (ADR-0015) |
 | VeriRace | its metrics, state and bootstrap (replacing its own copies) |
 | the control plane | the data model's dataset types; Phase 5 runs evaluations with it |
 
@@ -45,7 +45,7 @@ and `teehr.querying`).
 | **Spec schema** | VeriRace `spec/models.py` (Pydantic, v1) | | the decided shape (`DECISIONS.md`): `version` 1, ISO 8601 durations, bootstrap on stages, one pair of window columns, `<name>` / `public.<name>` references; JSON Schema generated from it |
 | **Expressions** | VeriRace `spec/expressions.py` and the control plane's `expressions.py` (both sqlglot) | | one allow-list module; the control plane's `/data` filters import it |
 | **Spec engine** | VeriRace `engine/` (DuckDB SQL for inputs, pairing, fields, filter, grouping; numpy for metrics) | | see "The engine" |
-| **Spark path** | teehr `metrics/format.py`, `spark_native.py` | | stays in `teehr` (below) |
+| **Spark path** | teehr `metrics/format.py`, `spark_native.py` | | if needed, a backend over state, not in `teehr` (below; ADR-0015) |
 | **Tests** | VeriRace's golden vectors (`metric_vectors.json`, `hydro_metrics.json`, cross-checked against other libraries) | teehr's metric regression tests (`tests/query/test_metrics_*`), rerun through the core | the shared spec's conformance cases are built here |
 
 ## The engine
@@ -68,11 +68,7 @@ Iceberg through Polaris as the caller, the control plane's reads and Phase 5's r
 engine. If the spike fails, the engine still runs on files and Arrow handed to it, and only the
 control plane's reads stay on PyIceberg.
 
-**Spark** stays in `teehr`, for jobs too large for one machine (ADR-0002): Spark computes each
-partition's metric state with the core's `group_state` (in `applyInPandas`), merges by addition (a
-Spark aggregate), and finalizes with the core's `compute_from_state`. Same formulas, same state,
-so pairs, Spark and DuckDB agree by construction. `spark_native.py`'s second implementation of the
-metrics goes away.
+**Spark**, for jobs too large for one machine (ADR-0002), if needed at all: a small backend that computes each partition's metric state with the core's `group_state`, merges by addition and finalizes with `compute_from_state`, so pairs, Spark and DuckDB agree by construction. Not in legacy `teehr` (ADR-0015); a teehr-core extra or the run job image, decided by real run sizes.
 
 ## Layout
 
@@ -98,9 +94,9 @@ Python ≥ 3.12. Base dependencies: numpy, pyarrow, pydantic, sqlglot. Extra `en
 4. **Spec schema and expressions** (the decided v1), JSON Schema.
 5. **Conformance cases** (shared spec) and the runner; both systems run them in CI.
 6. **Engine** (DuckDB extra), ported from VeriRace.
-7. **Adoption:** `teehr` replaces `teehr/metrics` (Python path) with the core and rebuilds its
-   Spark path on state (teehr#871); VeriRace replaces its metrics package; the control plane
-   imports the dataset types and expressions.
+7. **Adoption:** VeriRace replaces its metrics package; the control plane imports the dataset
+   types, expressions and engine (done). Legacy `teehr` doesn't adopt teehr-core: it is frozen
+   until cutover (ADR-0015).
 
 Steps 2–5 are the release that matters to both systems; 6–7 follow.
 
