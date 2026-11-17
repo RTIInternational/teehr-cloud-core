@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session
 
 from src.errors import problem
 from src.evaluations import SpecProblems, plan
-from src.jobs import reconcile
-from src.kube import Kube, get_kube
+from src.jobs import ACTIVE as ACTIVE_JOBS
+from src.jobs import cancel, reconcile
+from src.kube import Kube, KubeError, get_kube
 from src.models import Job, Role, Run
 from src.routes.projects import (
     IdentityDep,
@@ -173,4 +174,47 @@ def get_run(
     if run is None or run.project_id != project.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Run not found")
     sync(session, kube, run)
+    return run_out(run)
+
+
+@router.post(
+    "/{run_id}/cancel",
+    operation_id="cancel_run",
+    response_model=RunOut,
+    responses=_errors(401, 403, 404, 409, 502, 503),
+)
+def cancel_run(
+    name: ProjectName,
+    run_id: uuid.UUID,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+):
+    """Stop a run that's queued or running. Its tables keep what an earlier run
+    wrote (a run replaces them only as it finishes). Needs the write role."""
+    project, _ = _authorize(session, name, identity, settings, Role.WRITE)
+    run = session.get(Run, run_id)
+    if run is None or run.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Run not found")
+    sync(session, kube, run)
+    job = session.get(Job, run.job_id) if run.job_id else None
+    if job is None or job.status not in ACTIVE_JOBS:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=f"Run is {run.status}, not going"
+        )
+    if kube is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Runs (jobs) aren't configured; can't stop the job",
+        )
+    try:
+        cancel(kube, job)
+    except KubeError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="Couldn't stop the job"
+        ) from exc
+    run.status, run.finished_at = job.status.value, job.finished_at
+    session.commit()
+    session.refresh(run)
     return run_out(run)
