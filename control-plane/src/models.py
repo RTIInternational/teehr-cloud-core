@@ -12,6 +12,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -322,6 +323,43 @@ class Variable(Base):
     name: Mapped[str] = mapped_column(String(60))
     canonical_unit: Mapped[str] = mapped_column(String(64))
     description: Mapped[str | None] = mapped_column(Text)
+
+
+class Evaluation(Base):
+    """A saved evaluation: a spec under a name, versioned (warehouse data model,
+    "Evaluation outputs"). Each version's runs write ``results_<slug>_v<version>``."""
+
+    __tablename__ = "evaluations"
+    __table_args__ = (UniqueConstraint("project_id", "slug"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(_fk("projects"))
+    slug: Mapped[str] = mapped_column(String(45))
+    created_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class EvaluationVersion(Base):
+    """One version of an evaluation's spec; never changed once saved."""
+
+    __tablename__ = "evaluation_versions"
+    __table_args__ = (UniqueConstraint("evaluation_id", "version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(_fk("evaluations"))
+    version: Mapped[int] = mapped_column(Integer)
+    # As given; spec_hash is of the parsed spec, so aliases and key order don't
+    # make a new version.
+    spec: Mapped[dict] = mapped_column(JSON)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
 
 
 class Run(Base):
