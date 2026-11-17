@@ -294,11 +294,12 @@ def delete_evaluation(
     kube: Annotated[Kube | None, Depends(get_kube)],
     keep_results: Annotated[
         bool,
-        Query(description="Keep the results tables (as datasets of their own)"),
+        Query(description="Keep the runs' tables (as datasets of their own)"),
     ] = False,
 ):
-    """Delete an evaluation with its versions, runs and results tables
-    (``results_<slug>_v<n>``, dropped as you), unless ``keep_results``. Refused
+    """Delete an evaluation with its versions, runs and their tables
+    (``results_``, ``pairs_``, ``state_<slug>_v<n>``, dropped as you), unless
+    ``keep_results``. Refused
     while one of its runs is going. Needs the admin role."""
     project, my_role = _authorize(session, name, identity, settings, Role.ADMIN)
     evaluation = _evaluation(session, project, slug)
@@ -319,7 +320,7 @@ def delete_evaluation(
             f"'{slug}' has {len(going)} run(s) going; wait for them to finish",
         )
     if not keep_results:
-        names = [results_dataset(slug, v.version) for v in versions]
+        names = [n for v in versions for n in run_tables(slug, v.version)]
         results = session.scalars(
             select(Dataset).where(
                 Dataset.project_id == project.id, Dataset.name.in_(names)
@@ -369,8 +370,16 @@ class RunRequest(BaseModel):
     version: int | None = Field(default=None, ge=1, description="Default: the latest")
 
 
+#: The tables a version's runs write (warehouse data model, "Evaluation outputs").
+RUN_TABLE_KINDS = ("results", "pairs", "state")
+
+
 def results_dataset(slug: str, version: int) -> str:
     return f"results_{slug}_v{version}"
+
+
+def run_tables(slug: str, version: int) -> list[str]:
+    return [f"{kind}_{slug}_v{version}" for kind in RUN_TABLE_KINDS]
 
 
 @router.post(
@@ -468,6 +477,8 @@ def start_run(
             "version": version.version,
             "spec": version.spec,
             "results_dataset": results_dataset(slug, version.version),
+            # Pairs are kept when the spec asks (output.pairs: all); default none.
+            "pairs": planned.spec.output.pairs == "all",
             "manifest": planned.manifest,
         },
     )
