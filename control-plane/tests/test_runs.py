@@ -245,3 +245,34 @@ def test_deleting_an_evaluation_can_keep_its_results(client, lake, jobs):  # noq
     assert resp.status_code == 204
     results = "/v1/projects/flood/datasets/results_e_v1"
     assert client.get(results, headers=ALICE).status_code == 200
+
+
+def test_pairs_are_kept_when_the_spec_asks(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    body = spec(output={"pairs": "all"})
+    body["aggregate"][0]["metrics"] = ["count"]
+    saved(client, body)
+    run = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()
+    result = run_job(client, kube)
+    assert result["pairs"]["dataset"] == "pairs_e_v1" and result["pairs"]["rows"] == 8
+    pairs = client.get("/v1/projects/flood/datasets/pairs_e_v1", headers=ALICE).json()
+    names = {c["name"] for c in pairs["columns"]}
+    assert {"primary_series_key", "secondary_series_key", "value_time",
+            "primary_value", "secondary_value", "run_id"} <= names  # fmt: skip
+    written = next(
+        d for m, _, d in tables.writes if "secondary_value" in d.column_names
+    )
+    assert written.num_rows == 8 and set(written["run_id"].to_pylist()) == {run["id"]}
+    # Deleting the evaluation drops its pairs too.
+    assert client.delete(f"{EVALUATIONS}/e", headers=ALICE).status_code == 204
+    gone = client.get("/v1/projects/flood/datasets/pairs_e_v1", headers=ALICE)
+    assert gone.status_code == 404
+
+
+def test_no_pairs_by_default(client, lake, jobs):  # noqa: F811
+    kube, _ = jobs
+    saved(client)
+    client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
+    assert "pairs" not in run_job(client, kube)
+    resp = client.get("/v1/projects/flood/datasets/pairs_e_v1", headers=ALICE)
+    assert resp.status_code == 404

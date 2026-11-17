@@ -8,9 +8,10 @@ user token. A grant works only while its job is queued or running:
   and a URL to read the staged file); marks the job running.
 - ``POST /v1/job-grants/progress``: rows done so far.
 - ``POST /v1/job-grants/finish``: the outcome; the grant stops working.
-- ``POST /v1/job-grants/results-table``: a run's results table, created as the
-  caller and registered (runs may write it; the caller needn't be able to
-  register untyped datasets).
+- ``POST /v1/job-grants/run-table``: one of a run's tables (``results``,
+  ``pairs``, ``state``: ``<kind>_<slug>_v<version>``), created as the caller and
+  registered (runs may write them; the caller needn't be able to register untyped
+  datasets).
 
 Internal: not in the published API.
 """
@@ -180,7 +181,15 @@ def finish(body: Finish, job: JobDep, session: SessionDep) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-class ResultsTable(BaseModel):
+RUN_TABLES = {
+    "results": "Results",
+    "pairs": "Pairs",
+    "state": "Metric state (per group and month)",
+}
+
+
+class RunTable(BaseModel):
+    kind: Literal["results", "pairs", "state"] = "results"
     columns: list[DatasetColumn] = Field(min_length=1, max_length=1000)
 
 
@@ -203,24 +212,24 @@ def _caller_token(
     return tokens.access_token
 
 
-@router.post("/results-table")
-def results_table(
-    body: ResultsTable,
+@router.post("/run-table")
+def run_table(
+    body: RunTable,
     job: JobDep,
     session: SessionDep,
     delegation: Annotated[Delegation | None, Depends(get_delegation)],
     sealer: Annotated[Sealer | None, Depends(get_sealer)],
     tables: Annotated[Tables | None, Depends(get_tables)],
 ) -> dict:
-    """Create and register a run's results table (``results_<slug>_v<version>``)
-    as the caller, or confirm the one there has these columns."""
+    """Create and register one of a run's tables (``<kind>_<slug>_v<version>``) as
+    the caller, or confirm the one there has these columns."""
     run = _run(session, job)
     if job.kind != "run" or run is None or not run.task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a run's job")
     if tables is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No table storage")
     project = session.get(Project, job.project_id)
-    name = run.task["results_dataset"]
+    name = f"{body.kind}_{run.task['evaluation']}_v{run.task['version']}"
     columns = [c.model_dump(exclude_none=True) for c in body.columns]
     existing = session.scalar(
         select(Dataset).where(Dataset.project_id == project.id, Dataset.name == name)
@@ -229,8 +238,8 @@ def results_table(
         if existing.columns != columns:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"'{name}' has other columns than this run's results (an earlier "
-                "engine's?); delete it and run again",
+                f"'{name}' has other columns than this run's {body.kind} (an "
+                "earlier engine's?); delete it and run again",
             )
         return {"dataset": name, "created": False}
     token = _caller_token(job, session, delegation, sealer)
@@ -251,13 +260,14 @@ def results_table(
             name=name,
             kind=TABLE,
             description=(
-                f"Results of evaluation '{run.task['evaluation']}' "
+                f"{RUN_TABLES[body.kind]} of evaluation '{run.task['evaluation']}' "
                 f"version {run.task['version']}"
             ),
             columns=columns,
             properties={
                 "evaluation": run.task["evaluation"],
                 "version": run.task["version"],
+                "run_table": body.kind,
             },
             table_identifier=f"{project.name}.{name}",
             created_by=job.created_by,

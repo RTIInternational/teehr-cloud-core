@@ -9,7 +9,9 @@
 3. Add lineage to the results (``run_id``, ``spec_version``, ``engine_version``),
    have the results table created (``results_<slug>_v<version>``, job grant) and
    write the rows through the write API as the caller: the first chunk replaces
-   an earlier run's rows, the rest append.
+   an earlier run's rows, the rest append. When the spec keeps pairs
+   (``output.pairs: all``), the paired rows go to ``pairs_<slug>_v<version>`` the
+   same way.
 
 The inputs' snapshot ids are the run's result, with the rows written, so a run
 says exactly what it read.
@@ -116,8 +118,8 @@ def _column_type(t: pa.DataType) -> tuple[str, pa.DataType]:
     raise LoadFailed([f"results have a column of type {t}, which datasets can't hold"])
 
 
-def results_table(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
-    """The results with lineage, typed as dataset columns, and those columns."""
+def typed(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
+    """A run's table with lineage, typed as dataset columns, and those columns."""
     n = table.num_rows
     table = table.append_column("run_id", pa.array([run["id"]] * n, pa.string()))
     table = table.append_column(
@@ -134,10 +136,10 @@ def results_table(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
     return pa.Table.from_arrays(arrays, names=table.column_names), columns
 
 
-def write_results(
+def write_table(
     client: GrantClient, project: str, name: str, table: pa.Table
 ) -> int | None:
-    """Replace the results table's rows with ``table`` (chunked); the last snapshot."""
+    """Replace a run table's rows with ``table`` (chunked); the last snapshot."""
     path = f"/projects/{project}/datasets/{name}/data"
     snapshot = None
     pieces = list(chunks(table)) if table.num_rows else [table]
@@ -150,32 +152,44 @@ def write_results(
             headers={"Content-Type": ARROW},
         )  # fmt: skip
         if resp.status_code != 201:
-            raise LoadFailed([f"writing the results: {_problem(resp)}"])
+            raise LoadFailed([f"writing {name}: {_problem(resp)}"])
         snapshot = resp.json().get("snapshot_id")
     return snapshot
+
+
+def store(
+    client: GrantClient, project: str, kind: str, table: pa.Table, run: dict
+) -> dict:
+    """Write one of the run's tables (results, pairs) with its lineage."""
+    rows, columns = typed(table, run)
+    try:
+        resp = client._grant(
+            "POST", "run-table", json={"kind": kind, "columns": columns}
+        )
+    except httpx.HTTPStatusError as exc:
+        raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
+    dataset = resp.json()["dataset"]
+    snapshot = write_table(client, project, dataset, rows)
+    return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
 
 
 def run_evaluation(client: GrantClient, task: dict) -> dict:
     """Do a run's task; returns its result (raises LoadFailed with what went wrong)."""
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
+    if run.get("pairs"):
+        spec = {**spec, "output": {**spec.get("output", {}), "include_pairs": True}}
     rows, series, snapshots = read_inputs(client, manifest, spec)
     try:
         catalog = catalog_from(manifest, rows, series)
         result = evaluate(spec, catalog)
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
-    table, columns = results_table(result.table, run)
-    try:
-        resp = client._grant("POST", "results-table", json={"columns": columns})
-    except httpx.HTTPStatusError as exc:
-        raise LoadFailed([f"the results table: {_problem(exc.response)}"]) from None
-    dataset = resp.json()["dataset"]
-    snapshot = write_results(client, project, dataset, table)
+    out = store(client, project, "results", result.table, run)
+    if run.get("pairs") and result.pairs is not None:
+        out["pairs"] = store(client, project, "pairs", result.pairs, run)
     return {
-        "dataset": dataset,
-        "rows": table.num_rows,
-        "snapshot_id": snapshot,
+        **out,
         "inputs": snapshots,
         "engine_version": f"teehr-core {ENGINE_VERSION}",
     }

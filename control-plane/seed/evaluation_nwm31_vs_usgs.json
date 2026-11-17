@@ -34,6 +34,7 @@
     }
   ],
   "output": {
-    "unit": "[cft_i]/s"
+    "unit": "[cft_i]/s",
+    "pairs": "all"
   }
 }

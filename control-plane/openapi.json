@@ -4976,7 +4976,7 @@
     },
     "/v1/projects/{name}/evaluations/{slug}": {
       "delete": {
-        "description": "Delete an evaluation with its versions, runs and results tables\n(``results_<slug>_v<n>``, dropped as you), unless ``keep_results``. Refused\nwhile one of its runs is going. Needs the admin role.",
+        "description": "Delete an evaluation with its versions, runs and their tables\n(``results_``, ``pairs_``, ``state_<slug>_v<n>``, dropped as you), unless\n``keep_results``. Refused\nwhile one of its runs is going. Needs the admin role.",
         "operationId": "delete_evaluation",
         "parameters": [
           {
@@ -5004,13 +5004,13 @@
             }
           },
           {
-            "description": "Keep the results tables (as datasets of their own)",
+            "description": "Keep the runs' tables (as datasets of their own)",
             "in": "query",
             "name": "keep_results",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Keep the results tables (as datasets of their own)",
+              "description": "Keep the runs' tables (as datasets of their own)",
               "title": "Keep Results",
               "type": "boolean"
             }

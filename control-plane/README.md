@@ -291,7 +291,7 @@ safe to run again):
   and `nwm31_medium_range_mem1` (forecasts, one series table), `usgs_nwm31`
   (crosswalk). Three USGS gauges and their NWM 3.1 reaches, a few days in October
   2026 (teehr-core's hydro test fixture).
-- `demo`: `user` is a writer; evaluations `nwm31_vs_usgs` (by gauge) and
+- `demo`: `user` is a writer; evaluations `nwm31_vs_usgs` (by gauge; keeps pairs) and
   `nwm31_by_lead_time` (6-hour lead bins), each run once: results in
   `results_<slug>_v1`.
 
