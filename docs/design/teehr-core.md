@@ -78,11 +78,9 @@ metrics goes away.
 
 ```
 teehr_core/
+  metrics/      registry, stats (components), state, sketch, bootstrap, significance:
+                VeriRace's layout, kept so changes carry over while both copies exist
   model/        dataset types (pyarrow schemas), units (conversion over a unit table)
-  metrics/      registry, components, finalizers, transforms
-  state/        group_state, merge (numpy), compute_from_state, sketch
-  bootstrap/    draws, intervals (standards/bootstrap.md)
-  stats/        significance (Diebold-Mariano)
   spec/         models, JSON Schema, expressions (allow-list, sqlglot)
   engine/       [engine extra] plan + DuckDB backend
   conformance/  runner for the shared spec's cases
