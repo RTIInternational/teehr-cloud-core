@@ -1,11 +1,15 @@
 """Running an evaluation version, in the job's pod, as the caller (Phase 5).
 
 1. Read every dataset the run's manifest names (and each timeseries' series table)
-   through the control plane's read API as the caller, in Arrow pages pinned to
-   one snapshot each. A timeseries input's spec ``filter`` goes with the read, so
-   only the rows it keeps leave the warehouse (the engine applies it again).
+   straight from the warehouse as the caller, each pinned to one snapshot
+   (``reads.Warehouse``: PyIceberg plans, DuckDB reads; #223). A timeseries input's
+   spec ``filter`` goes with the read, so only the rows it keeps are read (the
+   engine applies it again).
 2. Build teehr-core's engine catalog from the manifest and the rows
-   (``evaluations.catalog_from``) and run the spec.
+   (``evaluations.catalog_from``) and run the spec. A run that keeps state goes in
+   shards (VeriRace's design): contiguous ranges of observed series keys, each read
+   with its linked predicted series only and sized to the pod's memory; each
+   shard's state is kept and the parts merged per month.
 3. Add lineage to the results (``run_id``, ``spec_version``, ``engine_version``),
    have the results table created (``results_<slug>_v<version>``, job grant) and
    write the rows through the write API as the caller: the first chunk replaces
@@ -25,10 +29,10 @@ says exactly what it read.
 """
 
 import json
+import os
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import httpx
 import pyarrow as pa
@@ -38,6 +42,7 @@ from teehr_core.durations import parse_duration
 from teehr_core.engine import ContractError, DuckDBBackend, PlanError, build_plan
 from teehr_core.engine.connect import arrow_table, memory_connection, register
 from teehr_core.engine.duckdb_backend import DmSettings, state_rollup_sql
+from teehr_core.engine.shards import key_ranges, shard_rows
 from teehr_core.metrics.significance import default_lag
 from teehr_core.metrics.state import SKETCH_TYPE
 from teehr_core.spec import EvaluationSpec, GeneratedInput, load_spec
@@ -45,40 +50,13 @@ from teehr_core.spec.models import AttributeField, WithinField
 
 from src.evaluations import SpecProblems, catalog_from
 from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
+from src.jobs.reads import CatalogAccess, Read, Warehouse
 
-PAGE_ROWS = 1_000_000  # the API's largest binary page
 #: State is kept per month of value_time (a rerun recomputes changed months only).
 STATE_BUCKET = "month"
 LINEAGE = ("run_id", "spec_version", "engine_version")
 _COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _ENCODED = "xs__"
-
-
-def read_all(
-    client: GrantClient, project: str, name: str, row_filter: str | None = None
-) -> tuple[pa.Table, int | None]:
-    """A dataset's rows (those ``row_filter`` keeps), page by page from one
-    snapshot; and that snapshot's id."""
-    parts, cursor, snapshot = [], None, None
-    while True:
-        params: dict[str, Any] = {"limit": PAGE_ROWS}
-        if row_filter:
-            params["filter"] = row_filter
-        if cursor:
-            params["cursor"] = cursor
-        resp = client.api(
-            "GET", f"/projects/{project}/datasets/{name}/data",
-            params=params, headers={"Accept": ARROW},
-        )  # fmt: skip
-        if resp.status_code != 200:
-            raise LoadFailed([f"reading {project}.{name}: {_problem(resp)}"])
-        parts.append(pa.ipc.open_stream(resp.content).read_all())
-        snapshot = snapshot or resp.headers.get("x-snapshot-id")
-        cursor = resp.headers.get("x-next-cursor")
-        if not cursor:
-            break
-    table = pa.concat_tables(parts) if len(parts) > 1 else parts[0]
-    return table, int(snapshot) if snapshot else None
 
 
 def _input_filters(spec: dict) -> dict[str, str]:
@@ -140,43 +118,178 @@ def _both(a: str | None, b: str | None) -> str | None:
     return f"({a}) AND ({b})" if a and b else a or b
 
 
-def read_inputs(
-    client: GrantClient,
-    manifest: dict,
-    spec: dict,
-    windows: dict[str, str] | None = None,
-) -> tuple[dict[str, pa.Table], dict[str, pa.Table], dict[str, int | None]]:
-    """The rows of every dataset in the manifest, their series tables', and the
-    snapshot each was read at (keyed ``<project>.<name>``). With ``windows`` (an
-    incremental run), a timeseries' rows are only those its window keeps (none
-    without one)."""
-    filters = _input_filters(spec)
-    rows, series, snapshots = {}, {}, {}
-    for ref, d in manifest["datasets"].items():
-        row_filter = filters.get(ref)
-        if windows is not None and d["kind"] == "timeseries":
-            if not windows.get(ref):
-                continue  # nothing of it to read
-            row_filter = _both(row_filter, windows[ref])
-        rows[ref], snapshots[f"{d['project']}.{d['name']}"] = read_all(
-            client, d["project"], d["name"], row_filter
+def rows_per_shard() -> int:
+    """Predicted rows a shard holds: teehr-core's ``shard_rows`` for the pod's memory
+    (``RUN_ROWS_PER_SHARD`` overrides)."""
+    explicit = os.environ.get("RUN_ROWS_PER_SHARD")
+    return int(explicit) if explicit else shard_rows()
+
+
+def open_warehouse(client: GrantClient, task: dict) -> Warehouse:
+    """The warehouse, read as the caller (tests replace this)."""
+    if not task.get("catalog"):
+        raise LoadFailed(["the control plane didn't say where the warehouse is"])
+    return Warehouse(CatalogAccess.from_task(task["catalog"]), client.token)
+
+
+def _observed_keyed(spec: EvaluationSpec) -> set[str]:
+    """Datasets keyed by the observed series: the observed input, climatologies, and
+    the datasets fields look values up in."""
+    refs = {spec.inputs.primary.dataset}
+    refs |= {p.from_ for p in spec.inputs.secondary
+             if isinstance(p, GeneratedInput) and p.from_}  # fmt: skip
+    refs |= {f.from_ for f in spec.fields if getattr(f, "from_", None)}
+    return refs
+
+
+class Inputs:
+    """A run's datasets, read from the warehouse: all of them, or one shard's.
+
+    A shard is a range of observed series keys. It reads the datasets keyed by the
+    observed series for those keys, the predicted datasets for the series linked to
+    them (by the relation, or by the series tables' shared attribute), and the
+    relation's rows for them. Anything else (layers, other tables) is read whole,
+    once.
+    """
+
+    def __init__(
+        self,
+        warehouse: Warehouse,
+        manifest: dict,
+        spec: EvaluationSpec,
+        raw_spec: dict,
+        windows: dict[str, str] | None,
+    ):
+        self.wh, self.manifest, self.spec, self.windows = (
+            warehouse, manifest, spec, windows,
+        )  # fmt: skip
+        self.filters = _input_filters(raw_spec)
+        self.obs_keyed = _observed_keyed(spec)
+        self.predicted = set(_predicted(spec))
+        self.relation = spec.pair.relation
+        reversed_ = manifest.get("relation_reversed")
+        self.obs_col, self.pred_col = (
+            ("right_key", "left_key") if reversed_ else ("left_key", "right_key")
         )
-        if d.get("series"):
-            s = d["series"]
-            series[ref], snapshots[f"{s['project']}.{s['name']}"] = read_all(
-                client, s["project"], s["name"]
+        self._whole: dict[tuple[str, str], pa.Table] = {}
+
+    def _read(
+        self, ref: str, where: str | None, keys: Sequence[str] | None
+    ) -> pa.Table:
+        d = self.manifest["datasets"][ref]
+        return self.wh.read(
+            Read(d["project"], d["name"], d["columns"], where, keys=keys)
+        )
+
+    def _where(self, ref: str) -> str | None:
+        d = self.manifest["datasets"][ref]
+        where = self.filters.get(ref)
+        if self.windows is not None and d["kind"] == "timeseries":
+            where = _both(where, self.windows.get(ref))
+        return where
+
+    def whole(self, project: str, name: str, columns: list | None = None) -> pa.Table:
+        """A table read whole (once per run)."""
+        key = (project, name)
+        if key not in self._whole:
+            self._whole[key] = self.wh.read(Read(project, name, columns or []))
+        return self._whole[key]
+
+    def _dataset_whole(self, ref: str) -> pa.Table:
+        d = self.manifest["datasets"][ref]
+        return self.whole(d["project"], d["name"], d["columns"])
+
+    def _series_whole(self, ref: str) -> pa.Table | None:
+        s = self.manifest["datasets"][ref].get("series")
+        return self.whole(s["project"], s["name"], s["columns"]) if s else None
+
+    def shard_keys(self) -> list[str] | None:
+        """The observed series keys a run splits into shards (None: it can't)."""
+        if self.relation:
+            rel = self._dataset_whole(self.relation)
+            return sorted({str(k) for k in rel[self.obs_col].to_pylist()})
+        if self.spec.pair.on_attribute:
+            obs = self._series_whole(self.spec.inputs.primary.dataset)
+            return (
+                sorted({str(k) for k in obs["series_key"].to_pylist()}) if obs else None
             )
-    return rows, series, snapshots
+        return None
 
+    def predicted_rows(self) -> int:
+        """Rows of the predicted datasets a run reads (from the catalog)."""
+        total = 0
+        for ref in self.predicted & set(self.manifest["datasets"]):
+            d = self.manifest["datasets"][ref]
+            total += self.wh.rows(Read(d["project"], d["name"], d["columns"],
+                                       self._where(ref)))  # fmt: skip
+        return total
 
-def count_rows(client: GrantClient, project: str, name: str) -> int:
-    resp = client.api(
-        "GET", f"/projects/{project}/datasets/{name}/data",
-        params={"limit": 1, "count": "true"}, headers={"Accept": ARROW},
-    )  # fmt: skip
-    if resp.status_code != 200:
-        raise LoadFailed([f"counting {project}.{name}: {_problem(resp)}"])
-    return int(resp.headers.get("x-total-rows") or 0)
+    def _linked(self, obs_keys: Sequence[str]) -> list[str]:
+        """The predicted series linked to ``obs_keys``."""
+        if self.relation:
+            rel = self._dataset_whole(self.relation)
+            mask = pc.is_in(rel[self.obs_col], pa.array(list(obs_keys), pa.string()))
+            return sorted({str(k) for k in rel.filter(mask)[self.pred_col].to_pylist()})
+        attr = self.spec.pair.on_attribute
+        obs = self._series_whole(self.spec.inputs.primary.dataset)
+        wanted = {
+            v for k, v in zip(obs["series_key"].to_pylist(), obs[attr].to_pylist(),
+                              strict=True)
+            if k in set(obs_keys) and v is not None
+        }  # fmt: skip
+        out: set[str] = set()
+        for ref in self.predicted & set(self.manifest["datasets"]):
+            series = self._series_whole(ref)
+            if series is not None and attr in series.column_names:
+                out |= {str(k) for k, v in zip(series["series_key"].to_pylist(),
+                                                series[attr].to_pylist(), strict=True)
+                        if v in wanted}  # fmt: skip
+        return sorted(out)
+
+    def load(
+        self, obs_keys: Sequence[str] | None = None
+    ) -> tuple[dict[str, pa.Table], dict[str, pa.Table]]:
+        """Every dataset's rows and series tables: all of them, or ``obs_keys``'
+        shard's."""
+        rows, series = {}, {}
+        pred_keys = self._linked(obs_keys) if obs_keys is not None else None
+        for ref, d in self.manifest["datasets"].items():
+            if self.windows is not None and d["kind"] == "timeseries":
+                if not self.windows.get(ref):
+                    continue  # nothing of it to read
+            keys = None
+            if obs_keys is not None:
+                if ref in self.obs_keyed:
+                    keys = obs_keys
+                elif ref in self.predicted:
+                    keys = pred_keys
+            if ref == self.relation and obs_keys is not None:
+                rel = self._dataset_whole(ref)
+                mask = pc.is_in(
+                    rel[self.obs_col], pa.array(list(obs_keys), pa.string())
+                )
+                rows[ref] = rel.filter(mask)
+            elif keys is None and d["kind"] != "timeseries":
+                rows[ref] = self._dataset_whole(ref)
+            else:
+                rows[ref] = self._read(ref, self._where(ref), keys)
+            if d.get("series"):
+                s = d["series"]
+                series[ref] = (
+                    self.whole(s["project"], s["name"], s["columns"]) if keys is None
+                    else self.wh.read(Read(s["project"], s["name"], s["columns"],
+                                           keys=keys))
+                )  # fmt: skip
+        return rows, series
+
+    def snapshots(self) -> dict[str, int | None]:
+        """The snapshot each input was read at (keyed ``<project>.<name>``)."""
+        refs = []
+        for d in self.manifest["datasets"].values():
+            refs.append(f"{d['project']}.{d['name']}")
+            if d.get("series"):
+                refs.append(f"{d['series']['project']}.{d['series']['name']}")
+        return {r: self.wh.snapshots[r] for r in refs if r in self.wh.snapshots}
 
 
 def _column_type(t: pa.DataType) -> tuple[str, pa.DataType]:
@@ -231,17 +344,18 @@ def write_table(
     name: str,
     table: pa.Table,
     overwrite_filter: str | None = None,
+    append: bool = False,
 ) -> int | None:
     """Replace a run table's rows (those ``overwrite_filter`` keeps, or all) with
-    ``table`` (chunked); the last snapshot."""
+    ``table`` (chunked), or add ``table`` to them (``append``); the last snapshot."""
     path = f"/projects/{project}/datasets/{name}/data"
     snapshot = None
     pieces = list(chunks(table)) if table.num_rows else [table]
     for i, chunk in enumerate(pieces):
         if chunk.num_rows == 0:
             break  # nothing to write; an earlier run's rows stay
-        params = {"mode": "overwrite" if i == 0 else "append"}
-        if i == 0 and overwrite_filter:
+        params = {"mode": "overwrite" if i == 0 and not append else "append"}
+        if i == 0 and overwrite_filter and not append:
             params["filter"] = overwrite_filter
         resp = client.api(
             "POST", path, params=params, content=arrow_bytes(chunk),
@@ -260,6 +374,7 @@ def store(
     table: pa.Table,
     run: dict,
     overwrite_filter: str | None = None,
+    append: bool = False,
 ) -> dict:
     """Write one of the run's tables (results, pairs) with its lineage."""
     rows, columns = typed(table, run)
@@ -270,7 +385,7 @@ def store(
     except httpx.HTTPStatusError as exc:
         raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
     dataset = resp.json()["dataset"]
-    snapshot = write_table(client, project, dataset, rows, overwrite_filter)
+    snapshot = write_table(client, project, dataset, rows, overwrite_filter, append)
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
 
 
@@ -288,7 +403,9 @@ def first_stage_from_state(
     try:
         register(con, "s", state)
         source = "s"
-        if spec.aggregate[0].grouping_sets:
+        if spec.aggregate[0].finest_set() is not None:
+            # State was kept for the finest set only: the coarser sets come from it.
+            # Without one (sets that don't nest), every set's rows were kept.
             source = state_rollup_sql(spec.aggregate[0], "s")
         merged = arrow_table(con, DuckDBBackend.merge_state_sql(spec, source))
         dm_sql = DuckDBBackend.merge_dm_sql(spec, source)
@@ -338,14 +455,26 @@ def decode_state(table: pa.Table) -> pa.Table:
     return pa.Table.from_arrays(arrays, names=names)
 
 
-def _stored_state(client: GrantClient, project: str, run: dict) -> pa.Table | None:
+def _stored_state(wh: Warehouse, project: str, run: dict) -> pa.Table | None:
     """The version's state as the last run left it (None if it can't be read)."""
     name = f"state_{run['evaluation']}_v{run['version']}"
     try:
-        table, _ = read_all(client, project, name)
-    except LoadFailed:
+        table = wh.read(Read(project, name, []))
+    except Exception:  # noqa: BLE001 - missing, unreadable: the run goes full
         return None
     return decode_state(table)
+
+
+def merge_shards(spec: EvaluationSpec, parts: list[pa.Table]) -> pa.Table | None:
+    """The shards' state parts as one state: a row per group, transform and month
+    (groups spanning series, e.g. by lead time, had a part in every shard)."""
+    parts = [t for t in parts if t is not None and t.num_rows]
+    if not parts:
+        return None
+    state = pa.concat_tables(parts, promote_options="permissive")
+    return (
+        state if len(parts) == 1 else DuckDBBackend.merge_state_by_bucket(spec, state)
+    )
 
 
 def _months_of(bucket: pa.ChunkedArray) -> pa.ChunkedArray:
@@ -431,7 +560,7 @@ def _layer_key(ref: str | None, owner: str) -> tuple[str, str] | None:
 
 
 def location_labels(
-    client: GrantClient,
+    layer_rows: Callable[[str, str], pa.Table],
     manifest: dict,
     spec: EvaluationSpec,
     rows: dict[str, pa.Table],
@@ -470,7 +599,7 @@ def location_labels(
 
     def layer(key: tuple[str, str]) -> dict[str, dict]:
         if key not in layers:
-            table, _ = read_all(client, key[0], key[1])
+            table = layer_rows(key[0], key[1])
             layers[key] = {r["location_key"]: r for r in table.to_pylist()}
         return layers[key]
 
@@ -511,7 +640,7 @@ def location_labels(
     return out
 
 
-def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
+def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict:
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
     parsed = load_spec(spec)
@@ -524,15 +653,15 @@ def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
     dm: DmSettings | None = None
     p_reach = timedelta(0)
     if incremental:
-        stored = _stored_state(client, project, run)
+        stored = _stored_state(wh, project, run)
         if stored is None:
             raise _Full("the stored state couldn't be read")
         if how.get("dm"):
             dm = DmSettings(**how["dm"])
             if dm_test and skill.lag is None:
                 total = sum(
-                    count_rows(client, manifest["datasets"][r]["project"],
-                               manifest["datasets"][r]["name"])
+                    wh.rows(Read(manifest["datasets"][r]["project"],
+                                 manifest["datasets"][r]["name"], []))
                     for r in _predicted(parsed) if r in manifest["datasets"]
                 )  # fmt: skip
                 needed = default_lag(max(total, 1))
@@ -559,33 +688,69 @@ def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
             for ref, d in manifest["datasets"].items()
             if d["kind"] == "timeseries" and dirty
         }
-    rows, series, snapshots = read_inputs(client, manifest, spec, windows)
+    inputs = Inputs(wh, manifest, parsed, spec, windows)
 
-    if stateful and not incremental:
-        if dm_test:
-            predicted = [rows[r] for r in _predicted(parsed) if r in rows]
-            n = sum(t.num_rows for t in predicted)
-            lags = skill.lag if skill.lag is not None else default_lag(4 * max(n, 1))
-            dm = DmSettings(_time_step(predicted) or 3600, lags)
-        p_reach = _reach(parsed, rows)
-    elif incremental and _persistence(parsed) and _reach(parsed, rows) > p_reach:
-        raise _Full(
-            "persistence forecasts now reach further than the stored state allows"
-        )
+    # Shards: ranges of observed series keys, when the run keeps state (each shard's
+    # state merges); otherwise one read of everything.
+    shards: list[Sequence[str] | None] = [None]
+    keys = inputs.shard_keys() if stateful else None
+    if keys:
+        predicted_rows = inputs.predicted_rows()
+        shards = list(key_ranges(keys, predicted_rows / len(keys), rows_per_shard()))
+    if dirty == set():
+        shards = []  # nothing changed: the stored state is the state
 
     backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
-    pairs, state = None, None
-    if dirty != set():
-        labels = location_labels(client, manifest, parsed, rows, series)
+    parts: list[pa.Table] = []
+    all_pairs: pa.Table | None = None
+    pairs_out: dict | None = None
+    counted = months_sql(dirty) if incremental else None
+    for i, shard in enumerate(shards):
+        rows, series = inputs.load(shard)
+        if i == 0 and stateful and not incremental and dm_test:
+            predicted = [rows[r] for r in _predicted(parsed) if r in rows]
+            n = (
+                inputs.predicted_rows()
+                if shard is not None
+                else sum(t.num_rows for t in predicted)
+            )
+            lags = skill.lag if skill.lag is not None else default_lag(4 * max(n, 1))
+            dm = DmSettings(_time_step(predicted) or 3600, lags)
+            backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
+        if stateful and not incremental:
+            p_reach = max(p_reach, _reach(parsed, rows))
+        elif incremental and _persistence(parsed) and _reach(parsed, rows) > p_reach:
+            raise _Full(
+                "persistence forecasts now reach further than the stored state allows"
+            )
+        labels = location_labels(inputs.whole, manifest, parsed, rows, series)
         catalog = catalog_from(manifest, rows, series, labels)
+        del rows, series
         pairs = backend.pairs(build_plan(parsed, catalog))
-    if stateful:
-        fresh = None
-        if pairs is not None and pairs.num_rows:
-            counted = months_sql(dirty) if incremental else None
-            fresh = backend.first_stage_state(parsed, pairs, STATE_BUCKET, counted)
+        del catalog
+        if not stateful:
+            all_pairs = pairs
+            break
+        if pairs.num_rows:
+            parts.append(
+                backend.first_stage_state(parsed, pairs, STATE_BUCKET, counted)
+            )
             if incremental:  # the pairs this run is for (the rest were lag partners)
                 pairs = _sql(pairs, f"SELECT * FROM t WHERE {counted}")
+        if run.get("pairs") and pairs.num_rows:
+            first = pairs_out is None
+            replaced = months_filter(dirty) if incremental and first else None
+            written = store(client, project, "pairs", pairs, run, replaced,
+                            append=not first)  # fmt: skip
+            pairs_out = (
+                written if first
+                else {**written, "rows": pairs_out["rows"] + written["rows"]}
+            )  # fmt: skip
+        del pairs
+
+    state = None
+    if stateful:
+        fresh = merge_shards(parsed, parts)
         if not incremental:
             state = fresh
         else:  # the stored state, its changed months replaced
@@ -597,9 +762,11 @@ def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
                     )
                 )
             )
-            parts = [t for t in (kept, fresh) if t is not None and t.num_rows]
+            pieces = [t for t in (kept, fresh) if t is not None and t.num_rows]
             state = (
-                pa.concat_tables(parts, promote_options="permissive") if parts else kept
+                pa.concat_tables(pieces, promote_options="permissive")
+                if pieces
+                else kept
             )
         if state is None:
             raise PlanError("the evaluation produced no pairs")
@@ -607,12 +774,13 @@ def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
             parsed, first_stage_from_state(backend, parsed, state)
         )
     else:
-        stages = backend.aggregate(parsed, pairs)
+        stages = backend.aggregate(parsed, all_pairs)
+        if run.get("pairs") and all_pairs is not None and all_pairs.num_rows:
+            pairs_out = store(client, project, "pairs", all_pairs, run)
 
     out = store(client, project, "results", stages[-1], run)
-    if run.get("pairs") and pairs is not None and pairs.num_rows:
-        replaced = months_filter(dirty) if incremental else None
-        out["pairs"] = store(client, project, "pairs", pairs, run, replaced)
+    if pairs_out is not None:
+        out["pairs"] = pairs_out
     if state is not None:
         out["state"] = {
             **store(client, project, "state", encode_state(state), run),
@@ -622,7 +790,9 @@ def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
             out["dm"] = {"step": dm.step, "max_lag": dm.max_lag}
         if _persistence(parsed):
             out["persistence_reach"] = int(p_reach.total_seconds())
-    out["inputs"] = snapshots
+    out["inputs"] = inputs.snapshots()
+    if keys:
+        out["shards"] = len(shards)
     if incremental:
         out["changed"] = how["months"]
         how = {**how, "months": sorted(dirty)}
@@ -634,13 +804,16 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
 
     An incremental run that finds it can't be one after all runs in full."""
     how = task["run"].get("incremental") or {"mode": "full", "why": "not decided"}
+    wh = open_warehouse(client, task)
     try:
         try:
-            result = _evaluate(client, task, how)
+            result = _evaluate(client, task, how, wh)
         except _Full as exc:
-            result = _evaluate(client, task, {"mode": "full", "why": str(exc)})
+            result = _evaluate(client, task, {"mode": "full", "why": str(exc)}, wh)
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
+    finally:
+        wh.close()
     return {
         **result,
         "inputs": result.pop("inputs", None) or {},
