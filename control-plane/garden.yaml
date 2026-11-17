@@ -56,3 +56,29 @@ spec:
         exclude: ["__pycache__", "*.pyc"]
     overrides:
       - command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+---
+
+# Local only: public datasets (USGS, NWM 3.1, a gauges layer, a crosswalk) and a
+# demo project with two evaluations, run once, so there's something to test
+# against after every deploy (seed/seed.py; safe to run again).
+kind: Deploy
+type: exec
+name: control-plane-local-seed
+description: Seed the local control plane with public datasets and demo evaluations
+dependencies:
+  - deploy.teehr-control-plane
+  - deploy.keycloak-local-users-bootstrap
+environments:
+  - local
+spec:
+  deployCommand:
+    - bash
+    - -c
+    - >-
+      K="kubectl --context kind-kind -n ${environment.namespace}" &&
+      $K create configmap control-plane-seed --from-file=./seed --dry-run=client -o yaml | $K apply -f - &&
+      $K delete job control-plane-seed --ignore-not-found=true &&
+      sed "s|__IMAGE__|${actions.build.teehr-control-plane.outputs.deploymentImageId}|" ./manifests/seed-job.yaml | $K apply -f - &&
+      { $K wait --for=condition=Complete job/control-plane-seed --timeout=600s; status=$?;
+        $K logs job/control-plane-seed; exit $status; }
