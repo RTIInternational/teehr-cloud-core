@@ -150,16 +150,22 @@ def manifest(
     reversed_ = False
     if spec.pair.relation:
         reversed_ = _check_relation(session, project, spec, records)
-    location_fields = [
-        f.name
-        for f in spec.fields
-        if isinstance(f, WithinField | AttributeField)
-        and _check_labels(session, project, spec, records, f)
-    ]
+    location_fields, location_layers = [], {}
+    for f in spec.fields:
+        if isinstance(f, WithinField | AttributeField):
+            layer = _check_labels(session, project, spec, records, f)
+            if layer is not None:
+                location_fields.append(f.name)
+                key = f"{layer.project.name}.{layer.dataset.name}"
+                location_layers[key] = {
+                    "project": layer.project.name, "name": layer.dataset.name,
+                }  # fmt: skip
     return {
         "datasets": datasets,
         "relation_reversed": reversed_,
         "location_fields": location_fields,
+        # The layers series' locations are in (a run reads them for the labels).
+        "location_layers": list(location_layers.values()),
         **registries(session, project),
     }
 
@@ -168,6 +174,7 @@ def catalog_from(
     manifest_: dict[str, Any],
     rows: dict[str, pa.Table] | None = None,
     series_rows: dict[str, pa.Table] | None = None,
+    labels: dict[str, pa.Table] | None = None,
 ) -> Catalog:
     """The engine catalog for a :func:`manifest`: with the rows read for each
     dataset and its series table, or (planning) none. A relation that runs right
@@ -203,10 +210,10 @@ def catalog_from(
         {"series_key": pa.array([], pa.string()), "value": pa.array([], pa.string())}
     )
     for field_name in manifest_["location_fields"]:
+        table = (labels or {}).get(field_name, empty_labels)
         datasets.append(
-            EngineDataset(labels_name(field_name), "auxiliary", empty_labels,
-                          kind="labels")
-        )  # fmt: skip
+            EngineDataset(labels_name(field_name), "auxiliary", table, kind="labels")
+        )
     try:
         return Catalog(
             datasets,
@@ -260,39 +267,47 @@ def _check_relation(
     )  # fmt: skip
 
 
+def _locations(
+    session: Session, spec: EvaluationSpec, records: dict, f: Any
+) -> refs.Resolved:
+    """The observed dataset's locations layer (its default), for a location field."""
+    observed = records[spec.inputs.primary.dataset]
+    layer_ref = (observed.dataset.properties or {}).get("location_layer")
+    layer = refs.resolve(session, observed.project, layer_ref) if layer_ref else None
+    if layer is None:
+        raise _problem(
+            f"field '{f.name}': '{spec.inputs.primary.dataset}' names no location "
+            "layer to find its series' locations in",
+            "field", "fields",
+        )  # fmt: skip
+    return layer
+
+
 def _check_labels(
     session: Session, project: Project, spec: EvaluationSpec, records: dict, f: Any
-) -> bool:
-    """Whether a field labels series by their location's layer (after checking
-    the layer); a run computes those labels."""
+) -> refs.Resolved | None:
+    """For a field that labels series by their location (after checking its
+    layers), the observed dataset's locations layer; a run computes the labels."""
     if isinstance(f, AttributeField) and f.of == "series":
-        return False  # straight from the series table
+        return None  # straight from the series table
+    locations = _locations(session, spec, records, f)
     if isinstance(f, WithinField):
-        layer = records[f.layer]
-        if layer.dataset.kind != LAYER:
+        polygons = records[f.layer]
+        if polygons.dataset.kind != LAYER:
             raise _problem(
                 f"field '{f.name}': '{f.layer}' is not a layer", "field", "fields"
             )
+        layer, attribute = polygons, f.attribute
     else:
-        observed = records[spec.inputs.primary.dataset]
-        layer_ref = (observed.dataset.properties or {}).get("location_layer")
-        layer = (
-            refs.resolve(session, observed.project, layer_ref) if layer_ref else None
-        )
-        if layer is None:
-            raise _problem(
-                f"field '{f.name}': '{spec.inputs.primary.dataset}' names no location "
-                "layer to look attributes up in",
-                "field", "fields",
-            )  # fmt: skip
-        names = {c["name"] for c in layer.dataset.columns or []}
-        if f.attribute not in names:
-            raise _problem(
-                f"field '{f.name}': layer '{layer.dataset.name}' has no attribute "
-                f"'{f.attribute}'",
-                "field", "fields",
-            )  # fmt: skip
-    return True
+        layer, attribute = locations, f.attribute
+    names = {c["name"] for c in layer.dataset.columns or []}
+    if attribute not in names:
+        raise _problem(
+            f"field '{f.name}': layer '{layer.dataset.name}' has no attribute "
+            f"'{attribute}'",
+            "field", "fields",
+        )  # fmt: skip
+    return locations
 
 
 @dataclass
