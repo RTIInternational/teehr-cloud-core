@@ -36,7 +36,9 @@ from src.delegation import (
 )
 from src.errors import APIError, problem
 from src.evaluations import SpecProblems, plan, spec_hash
+from src.incremental import decide
 from src.jobs import JobRefused, start_job
+from src.jobs.run import keeps_state
 from src.kube import Kube, KubeError, get_kube
 from src.models import (
     Dataset,
@@ -368,6 +370,10 @@ class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int | None = Field(default=None, ge=1, description="Default: the latest")
+    full: bool = Field(
+        default=False,
+        description="Recompute everything, even where only some months changed",
+    )
 
 
 #: The tables a version's runs write (warehouse data model, "Evaluation outputs").
@@ -403,7 +409,13 @@ def start_run(
     """Run a version of the evaluation (default the latest) as a job acting as
     you: it reads the inputs, runs the spec and writes results_<slug>_v<version>
     (replacing an earlier run's). The spec is planned again first, against the
-    datasets as they are now (422 if it no longer plans). Needs the write role."""
+    datasets as they are now (422 if it no longer plans).
+
+    A run is incremental when it can be: the version keeps state and only some
+    months of its inputs changed since its last run (timeseries writes record the
+    months they touch); it then recomputes only those. ``full`` recomputes all;
+    the run's ``result.mode`` says which it did, and why when full. Needs the write
+    role."""
     project, my_role = _authorize(session, name, identity, settings, Role.WRITE)
     if (
         my_role is not None
@@ -446,6 +458,10 @@ def start_run(
             errors=[{"loc": ["body", "fields"], "type": "unsupported",
                      "msg": f"location fields aren't run yet: {fields}"}],
         )  # fmt: skip
+    incremental = decide(
+        session, project, version, planned.spec, planned.manifest,
+        keeps_state=keeps_state(planned.spec), full=bool(body and body.full),
+    )  # fmt: skip
     try:
         job = start_job(
             session, settings, kube, delegation, sealer,
@@ -479,6 +495,7 @@ def start_run(
             "results_dataset": results_dataset(slug, version.version),
             # Pairs are kept when the spec asks (output.pairs: all); default none.
             "pairs": planned.spec.output.pairs == "all",
+            "incremental": incremental,
             "manifest": planned.manifest,
         },
     )
