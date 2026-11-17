@@ -33,6 +33,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from teehr_core import __version__ as ENGINE_VERSION
 from teehr_core.engine import ContractError, DuckDBBackend, PlanError, build_plan
+from teehr_core.engine.connect import arrow_table, memory_connection, register
+from teehr_core.engine.duckdb_backend import state_rollup_sql
 from teehr_core.metrics.state import SKETCH_TYPE
 from teehr_core.spec import EvaluationSpec, load_spec
 
@@ -227,11 +229,30 @@ def store(
 def keeps_state(spec: EvaluationSpec) -> bool:
     """Whether runs of ``spec`` keep state (and compute results from it)."""
     stage = spec.aggregate[0]
-    return (
-        not DuckDBBackend.state_blockers(spec)
-        and not stage.grouping_sets  # coarser sets are built from state: later
-        and not (stage.skill is not None and stage.skill.test is not None)  # DM: later
+    return not DuckDBBackend.state_blockers(spec) and not (
+        stage.skill is not None and stage.skill.test is not None  # DM: later
     )
+
+
+def first_stage_from_state(
+    backend: DuckDBBackend, spec: EvaluationSpec, state: pa.Table
+) -> pa.Table:
+    """The first stage from state rows. With grouping sets (rollups) state is kept
+    for the finest set only; the coarser sets' rows come from it (state merges)."""
+    con = memory_connection()
+    try:
+        register(con, "s", state)
+        source = "s"
+        if spec.aggregate[0].grouping_sets:
+            source = state_rollup_sql(spec.aggregate[0], "s")
+        merged = arrow_table(con, DuckDBBackend.merge_state_sql(spec, source))
+        dm_sql = DuckDBBackend.merge_dm_sql(spec, source)
+        dm = arrow_table(con, dm_sql) if dm_sql else None
+        boot_sql = DuckDBBackend.bootstrap_state_sql(spec, source)
+        units = arrow_table(con, boot_sql) if boot_sql else None
+    finally:
+        con.close()
+    return backend.first_stage_from_merged(spec, merged, dm, units)
 
 
 def encode_state(state: pa.Table) -> pa.Table:
@@ -298,15 +319,17 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
             how = {"mode": "full", "why": "the stored state couldn't be read"}
     months = how["months"] if how["mode"] == "incremental" else None
     rows, series, snapshots = read_inputs(client, manifest, spec, months)
-    backend = DuckDBBackend()
     pairs = None
     try:
         parsed = load_spec(spec)
+        stateful = keeps_state(parsed)
+        # With state, pair into a rollup's finest set only (the rest come from state).
+        backend = DuckDBBackend(finest_set_only=stateful)
         if months != []:
             catalog = catalog_from(manifest, rows, series)
             pairs = backend.pairs(build_plan(parsed, catalog))
         state = None
-        if keeps_state(parsed):
+        if stateful:
             fresh = None
             if pairs is not None and pairs.num_rows:
                 fresh = backend.first_stage_state(parsed, pairs, STATE_BUCKET)
@@ -330,7 +353,7 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
             if state is None:
                 raise PlanError("the evaluation produced no pairs")
             stages = backend.summarize(
-                parsed, backend.first_stage_from_state(parsed, state)
+                parsed, first_stage_from_state(backend, parsed, state)
             )
         else:
             stages = backend.aggregate(parsed, pairs)
