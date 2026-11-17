@@ -284,6 +284,17 @@ The client is enabled, and has those roles, only in the local environment.
 The login uses the public `teehr-control-plane-docs` Keycloak client, which is
 enabled only in the local environment.
 
+**Seeded data.** Every local deploy seeds (`control-plane-local-seed`, `seed/seed.py`;
+safe to run again):
+
+- `public`: `usgs_gauges` (layer), `usgs_streamflow` (observed), `nwm31_short_range`
+  and `nwm31_medium_range_mem1` (forecasts, one series table), `usgs_nwm31`
+  (crosswalk). Three USGS gauges and their NWM 3.1 reaches, a few days in October
+  2026 (teehr-core's hydro test fixture).
+- `demo`: `user` is a writer; evaluations `nwm31_vs_usgs` (by gauge) and
+  `nwm31_by_lead_time` (6-hour lead bins), each run once: results in
+  `results_<slug>_v1`.
+
 ## Develop
 
 ```bash
