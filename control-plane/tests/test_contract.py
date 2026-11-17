@@ -38,6 +38,7 @@ OPERATION_IDS = {
     "write_dataset",
     "list_dataset_writes",
     "read_dataset",
+    "plan_run",
     "list_units",
     "add_unit",
     "list_periods",

@@ -55,6 +55,24 @@
         "title": "AttributeMapping",
         "type": "object"
       },
+      "ConversionOut": {
+        "properties": {
+          "offset": {
+            "title": "Offset",
+            "type": "number"
+          },
+          "scale": {
+            "title": "Scale",
+            "type": "number"
+          }
+        },
+        "required": [
+          "scale",
+          "offset"
+        ],
+        "title": "ConversionOut",
+        "type": "object"
+      },
       "CrosswalkCreate": {
         "additionalProperties": false,
         "description": "A `crosswalk` dataset: links the series of two timeseries datasets' series\ntables (`left_key` -> `right_key`), plus optional extra columns.",
@@ -1312,6 +1330,165 @@
           "project"
         ],
         "title": "PeriodOut",
+        "type": "object"
+      },
+      "PlanOut": {
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedInputOut"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "relation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlannedRelationOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedStageOut"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The evaluation unit (output.unit, else the primary's)",
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "unit",
+          "inputs",
+          "relation",
+          "stages"
+        ],
+        "title": "PlanOut",
+        "type": "object"
+      },
+      "PlannedInputOut": {
+        "properties": {
+          "conversion": {
+            "$ref": "#/components/schemas/ConversionOut",
+            "description": "value \u00d7 scale + offset gives the evaluation unit"
+          },
+          "dataset": {
+            "description": "As the spec names it (`<name>` or `public.<name>`)",
+            "title": "Dataset",
+            "type": "string"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "side": {
+            "description": "primary | secondary",
+            "title": "Side",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The unit the dataset is stored in",
+            "title": "Unit"
+          },
+          "variable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variable"
+          }
+        },
+        "required": [
+          "dataset",
+          "side",
+          "role",
+          "variable",
+          "unit",
+          "period",
+          "conversion"
+        ],
+        "title": "PlannedInputOut",
+        "type": "object"
+      },
+      "PlannedRelationOut": {
+        "properties": {
+          "dataset": {
+            "title": "Dataset",
+            "type": "string"
+          },
+          "reversed": {
+            "description": "The crosswalk's left keys are the secondary side's series",
+            "title": "Reversed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dataset",
+          "reversed"
+        ],
+        "title": "PlannedRelationOut",
+        "type": "object"
+      },
+      "PlannedStageOut": {
+        "properties": {
+          "columns": {
+            "description": "The stage's result columns, besides group_by",
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "group_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Group By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "group_by",
+          "columns"
+        ],
+        "title": "PlannedStageOut",
         "type": "object"
       },
       "ProjectCreate": {
@@ -4994,6 +5171,90 @@
         "summary": "Reprovision Project",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/v1/projects/{name}/runs/plan": {
+      "post": {
+        "description": "Check an evaluation spec against the project's datasets, without running it.\n\nChecks the spec's shape, that every dataset it names exists (`<name>` here,\n`public.<name>` in the public project), and everything the engine can check\nwithout the data: roles, units and conversions, periods, the crosswalk linking\nthe inputs, fields and metric options. Needs the read role.",
+        "operationId": "plan_run",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "description": "An evaluation spec (teehr-shared-eval-spec v1), as JSON",
+                "title": "Spec",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Plan Run",
+        "tags": [
+          "runs"
         ]
       }
     },
