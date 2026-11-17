@@ -24,6 +24,7 @@ from src.provisioning import (
     reconcile_access,
 )
 from src.routes import (
+    admin,
     datasets,
     domains,
     evaluations,
@@ -95,6 +96,7 @@ app.include_router(uploads.router)
 app.include_router(job_grants.router)
 app.include_router(runs.router)
 app.include_router(evaluations.router)
+app.include_router(admin.router)
 errors.install(app)
 
 

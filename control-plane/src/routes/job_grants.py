@@ -35,7 +35,16 @@ from src.delegation import (
 )
 from src.errors import APIError
 from src.jobs import by_grant, end
-from src.models import Dataset, Job, JobStatus, Project, Run, Upload, UploadStatus
+from src.models import (
+    Dataset,
+    Job,
+    JobStatus,
+    LegacyCopy,
+    Project,
+    Run,
+    Upload,
+    UploadStatus,
+)
 from src.routes.projects import SessionDep, SettingsDep
 from src.schemas import DatasetColumn
 from src.staging import Staging, get_staging
@@ -68,6 +77,10 @@ def _upload(session: Session, job: Job) -> Upload | None:
 
 def _run(session: Session, job: Job) -> Run | None:
     return session.scalar(select(Run).where(Run.job_id == job.id))
+
+
+def _copy(session: Session, job: Job) -> LegacyCopy | None:
+    return session.scalar(select(LegacyCopy).where(LegacyCopy.job_id == job.id))
 
 
 @router.post("/token")
@@ -124,6 +137,9 @@ def task(
     run = _run(session, job)
     if job.kind == "run" and run is not None:
         body["run"] = {"id": str(run.id), **(run.task or {})}
+    copy = _copy(session, job)
+    if job.kind == "legacy_copy" and copy is not None:
+        body["copy"] = {"id": str(copy.id), **copy.request}
     if job.status == JobStatus.QUEUED:
         now = datetime.now(UTC)
         job.status, job.started_at = JobStatus.RUNNING, now
@@ -131,6 +147,8 @@ def task(
             upload.status, upload.started_at = UploadStatus.RUNNING, now
         if run is not None:
             run.status, run.started_at = JobStatus.RUNNING.value, now
+        if copy is not None:
+            copy.status, copy.started_at = JobStatus.RUNNING.value, now
         session.commit()
     return body
 
@@ -169,6 +187,14 @@ def finish(body: Finish, job: JobDep, session: SessionDep) -> Response:
             body.error,
         )
         upload.finished_at = job.finished_at
+    copy = _copy(session, job)
+    if copy is not None:
+        copy.status = job.status.value
+        copy.result, copy.error, copy.finished_at = (
+            body.result,
+            body.error,
+            job.finished_at,
+        )
     run = _run(session, job)
     if run is not None:
         run.status = job.status.value

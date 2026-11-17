@@ -11,6 +11,7 @@ import os
 import sys
 import traceback
 
+from src.jobs.legacy_copy import run_legacy_copy
 from src.jobs.load import GrantClient, LoadFailed, load_upload
 from src.jobs.run import run_evaluation
 
@@ -28,6 +29,8 @@ def run(job_id: str) -> int:
             result = load_upload(client, task)
         elif task["kind"] == "run":
             result = run_evaluation(client, task)
+        elif task["kind"] == "legacy_copy":
+            result = run_legacy_copy(client, task)
         else:
             raise LoadFailed([f"unknown job kind '{task['kind']}'"])
     except LoadFailed as exc:

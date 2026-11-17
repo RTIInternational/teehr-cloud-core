@@ -124,6 +124,15 @@ class SnapshotGone(TableError):
 
 
 @dataclass(frozen=True)
+class Partitioning:
+    """A table's partition fields (name, source column, transform) and, when
+    partitioned, its per-partition counts (pyiceberg's partitions table)."""
+
+    fields: tuple[tuple[str, str, str], ...]
+    counts: pa.Table | None
+
+
+@dataclass(frozen=True)
 class ReadResult:
     """Rows from one snapshot, and which snapshot (None: the table is empty)."""
 
@@ -603,6 +612,50 @@ class PolarisTables:
             found = table.scan(row_filter=row_filter, selected_fields=(column,))
             present = set(pc.unique(found.to_arrow()[column]).to_pylist())
             return present & wanted
+
+        return self._guard(run)
+
+    def partitioning(
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        row_filter: BooleanExpression | None = None,
+    ) -> Partitioning:
+        """A table's partition spec and counts per partition (those with rows
+        ``row_filter`` may match), from metadata only."""
+
+        def run() -> Partitioning:
+            table = self._catalog(token).load_table((namespace, name))
+            schema = table.schema()
+            fields = tuple(
+                (f.name, schema.find_column_name(f.source_id) or "", str(f.transform))
+                for f in table.spec().fields
+            )
+            counts = None
+            if fields:
+                counts = table.inspect.partitions(row_filter=row_filter or AlwaysTrue())
+            return Partitioning(fields, counts)
+
+        return self._guard(run)
+
+    def scan_batches(
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        columns: tuple[str, ...],
+        row_filter: BooleanExpression | None = None,
+    ) -> pa.RecordBatchReader:
+        """Stream a table's rows (``columns``, those ``row_filter`` keeps) as the
+        caller, without holding them all."""
+
+        def run() -> pa.RecordBatchReader:
+            table = self._catalog(token).load_table((namespace, name))
+            scan = table.scan(
+                row_filter=row_filter or AlwaysTrue(), selected_fields=columns
+            )
+            return scan.to_arrow_batch_reader()
 
         return self._guard(run)
 

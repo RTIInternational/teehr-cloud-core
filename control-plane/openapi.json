@@ -1116,6 +1116,123 @@
         "title": "LayerOut",
         "type": "object"
       },
+      "LegacyCopyOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "request": {
+            "additionalProperties": true,
+            "title": "Request",
+            "type": "object"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "request",
+          "result",
+          "error",
+          "created_by",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "LegacyCopyOut",
+        "type": "object"
+      },
+      "LegacyCopyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "description": "A legacy forecast configuration, e.g. nwm30_medium_range",
+            "pattern": "^[a-z][a-z0-9_]{0,99}$",
+            "title": "Configuration",
+            "type": "string"
+          },
+          "mode": {
+            "const": "count",
+            "default": "count",
+            "description": "count: how much a copy would move, per month",
+            "title": "Mode",
+            "type": "string"
+          },
+          "observations": {
+            "default": "usgs_observations",
+            "description": "The legacy observations configuration it's evaluated against",
+            "pattern": "^[a-z][a-z0-9_]{0,99}$",
+            "title": "Observations",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configuration"
+        ],
+        "title": "LegacyCopyRequest",
+        "type": "object"
+      },
       "MemberAdd": {
         "additionalProperties": false,
         "properties": {
@@ -2950,6 +3067,241 @@
           }
         },
         "summary": "Ready"
+      }
+    },
+    "/v1/admin/legacy-copies": {
+      "get": {
+        "description": "Legacy copies, newest first. Platform admins only.",
+        "operationId": "list_legacy_copies",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LegacyCopyOut"
+                  },
+                  "title": "Response List Legacy Copies",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List Legacy Copies",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "Start a job, as you, on legacy warehouse data for one configuration\n(``mode: count``: how much a copy would move). Platform admins only.",
+        "operationId": "start_legacy_copy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyCopyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyCopyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Too many jobs running in the project; retry when one finishes"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Start Legacy Copy",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/legacy-copies/{copy_id}": {
+      "get": {
+        "description": "A legacy copy's status and, when done, what it found. Platform admins only.",
+        "operationId": "get_legacy_copy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "copy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Copy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyCopyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Legacy Copy",
+        "tags": [
+          "admin"
+        ]
       }
     },
     "/v1/domains/periods": {

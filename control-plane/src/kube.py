@@ -44,6 +44,11 @@ class Kube(Protocol):
         """Delete the Job and its pods; no error if it's gone."""
 
 
+#: The control plane's settings ConfigMap, and the job kinds that get it.
+CONFIG_MAP = "teehr-control-plane-config"
+CATALOG_JOBS = frozenset({"legacy_copy"})
+
+
 def job_manifest(
     settings: Settings, kind: str, job_id: str, grant: str
 ) -> dict[str, Any]:
@@ -74,6 +79,13 @@ def job_manifest(
                         "value": settings.internal_url,
                     },
                 ],
+                # Jobs that read the catalog themselves (as their caller) get
+                # the control plane's settings (no secrets in it).
+                **(
+                    {"envFrom": [{"configMapRef": {"name": CONFIG_MAP}}]}
+                    if kind in CATALOG_JOBS
+                    else {}
+                ),
                 "resources": {
                     "requests": {"memory": settings.job_memory_request},
                     "limits": {"memory": settings.job_memory_limit},
@@ -89,7 +101,8 @@ def job_manifest(
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
-            "generateName": f"{kind}-{job_id[:8]}-",
+            # Names are DNS labels: no underscores (legacy_copy -> legacy-copy).
+            "generateName": f"{kind.replace('_', '-')}-{job_id[:8]}-",
             "namespace": settings.job_namespace,
             "labels": labels,
         },

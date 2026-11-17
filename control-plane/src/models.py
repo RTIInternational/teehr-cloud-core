@@ -395,3 +395,28 @@ class Run(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LegacyCopy(Base):
+    """A platform admin's copy of legacy warehouse data into ``public``, done by a
+    job (``jobs/legacy_copy.py``). ``request``: what to copy and how
+    (``mode: count`` sizes it); ``result``: what the job found or did."""
+
+    __tablename__ = "legacy_copies"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.jobs.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(16))
+    request: Mapped[dict] = mapped_column(JSON)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
