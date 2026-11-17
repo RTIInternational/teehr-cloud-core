@@ -87,40 +87,35 @@ def _qualified(owner: Project, name: str) -> tuple[str, str]:
     return owner.name, name
 
 
-@dataclass
-class Resolved:
-    """A spec's datasets: the catalog the engine plans with, and the records."""
-
-    catalog: Catalog
-    records: dict[str, refs.Resolved]
-    #: For the relation: whether its left side is the spec's secondary side.
-    relation_reversed: bool = False
-
-
-def registries(
-    session: Session, project: Project
-) -> tuple[UnitRegistry, PeriodRegistry, dict[str, str]]:
-    """The units, periods and variables visible in ``project`` (public + its own)."""
-    units = UnitRegistry.from_rows(
-        {"symbol": u.symbol, "dimension": u.dimension, "to_si": u.to_si,
-         "offset": u.offset, "description": u.description}
-        for u in session.scalars(visible(Unit, project.id))
-    )  # fmt: skip
-    periods = PeriodRegistry.from_rows(
-        {"name": p.name, "form": p.form, "length": p.length,
-         "value_time_at": p.value_time_at, "start": p.start, "end": p.end,
-         "description": p.description}
-        for p in session.scalars(visible(Period, project.id))
-    )  # fmt: skip
-    variables = {
-        v.name: v.canonical_unit for v in session.scalars(visible(Variable, project.id))
-    }
-    return units, periods, variables
+def registries(session: Session, project: Project) -> dict[str, Any]:
+    """The units, periods and variables visible in ``project`` (public + its own),
+    as rows."""
+    return {
+        "units": [
+            {"symbol": u.symbol, "dimension": u.dimension, "to_si": u.to_si,
+             "offset": u.offset, "description": u.description}
+            for u in session.scalars(visible(Unit, project.id))
+        ],
+        "periods": [
+            {"name": p.name, "form": p.form, "length": p.length,
+             "value_time_at": p.value_time_at, "start": p.start, "end": p.end,
+             "description": p.description}
+            for p in session.scalars(visible(Period, project.id))
+        ],
+        "variables": {
+            v.name: v.canonical_unit
+            for v in session.scalars(visible(Variable, project.id))
+        },
+    }  # fmt: skip
 
 
-def resolve(session: Session, project: Project, spec: EvaluationSpec) -> Resolved:
-    """Resolve the spec's datasets into an engine catalog (raises SpecProblems)."""
-    units, periods, variables = registries(session, project)
+def manifest(
+    session: Session, project: Project, spec: EvaluationSpec
+) -> dict[str, Any]:
+    """Everything the engine needs besides the rows, as JSON: each dataset the spec
+    names (where it is, its kind, metadata and columns, its series table), the
+    registries, and which way the relation runs. A run's job builds its catalog
+    from this and the rows it reads. Raises :class:`SpecProblems`."""
     records: dict[str, refs.Resolved] = {}
     problems = []
     for name in references(spec):
@@ -128,60 +123,99 @@ def resolve(session: Session, project: Project, spec: EvaluationSpec) -> Resolve
         if found is None:
             where = "the public project" if name.startswith("public.") else project.name
             problems.append(
-                {
-                    "loc": ["body"],
-                    "msg": f"no dataset '{name}' in {where}",
-                    "type": "not_found",
-                }
-            )
+                {"loc": ["body"], "msg": f"no dataset '{name}' in {where}",
+                 "type": "not_found"}
+            )  # fmt: skip
         else:
             records[name] = found
     if problems:
         raise SpecProblems(problems)
 
-    datasets = []
+    datasets: dict[str, dict[str, Any]] = {}
     for name, found in records.items():
         record, props = found.dataset, found.dataset.properties or {}
+        entry: dict[str, Any] = {
+            "project": found.project.name, "name": record.name, "kind": record.kind,
+            "properties": props, "columns": record.columns or [], "series": None,
+        }  # fmt: skip
         if record.kind == TIMESERIES:
             series = refs.resolve(session, found.project, props["series_table"])
-            datasets.append(
-                EngineDataset(
-                    name=name,
-                    role=props["role"],
-                    table=_empty(record.columns),
-                    series=_empty(series.dataset.columns) if series else None,
-                    variable=props.get("variable"),
-                    unit=props.get("unit"),
-                    statistic=props.get("statistic"),
-                    period=props.get("period"),
-                )
-            )
-        elif record.kind == CROSSWALK:
-            datasets.append(
-                EngineDataset(
-                    name, "auxiliary", _empty(record.columns), kind="crosswalk"
-                )
-            )
-        else:  # layers (within fields), series and plain tables
-            datasets.append(
-                EngineDataset(
-                    name, "auxiliary", _empty(record.columns), kind=record.kind
-                )
-            )
-
+            if series is not None:
+                entry["series"] = {
+                    "project": series.project.name,
+                    "name": series.dataset.name,
+                    "columns": series.dataset.columns or [],
+                }
+        datasets[name] = entry
     reversed_ = False
     if spec.pair.relation:
         reversed_ = _check_relation(session, project, spec, records)
-    for f in spec.fields:
-        if isinstance(f, WithinField | AttributeField):
-            labels = _check_labels(session, project, spec, records, f)
-            if labels is not None:
-                datasets.append(labels)
+    location_fields = [
+        f.name
+        for f in spec.fields
+        if isinstance(f, WithinField | AttributeField)
+        and _check_labels(session, project, spec, records, f)
+    ]
+    return {
+        "datasets": datasets,
+        "relation_reversed": reversed_,
+        "location_fields": location_fields,
+        **registries(session, project),
+    }
+
+
+def catalog_from(
+    manifest_: dict[str, Any],
+    rows: dict[str, pa.Table] | None = None,
+    series_rows: dict[str, pa.Table] | None = None,
+) -> Catalog:
+    """The engine catalog for a :func:`manifest`: with the rows read for each
+    dataset and its series table, or (planning) none. A relation that runs right
+    to left is turned round, so its left keys are the primary side's."""
+    rows, series_rows = rows or {}, series_rows or {}
+    datasets = []
+    for name, d in manifest_["datasets"].items():
+        props = d["properties"]
+        table = rows.get(name)
+        if table is None:
+            table = _empty(d["columns"])
+        if d["kind"] == TIMESERIES:
+            series = series_rows.get(name)
+            if series is None and d["series"] is not None:
+                series = _empty(d["series"]["columns"])
+            datasets.append(
+                EngineDataset(
+                    name=name, role=props["role"], table=table, series=series,
+                    variable=props.get("variable"), unit=props.get("unit"),
+                    statistic=props.get("statistic"), period=props.get("period"),
+                )
+            )  # fmt: skip
+        elif d["kind"] == CROSSWALK:
+            if manifest_["relation_reversed"]:
+                swap = {"left_key": "right_key", "right_key": "left_key"}
+                table = table.rename_columns(
+                    [swap.get(c, c) for c in table.column_names]
+                )
+            datasets.append(EngineDataset(name, "auxiliary", table, kind="crosswalk"))
+        else:  # layers (within fields), series and plain tables
+            datasets.append(EngineDataset(name, "auxiliary", table, kind=d["kind"]))
+    empty_labels = pa.table(
+        {"series_key": pa.array([], pa.string()), "value": pa.array([], pa.string())}
+    )
+    for field_name in manifest_["location_fields"]:
+        datasets.append(
+            EngineDataset(labels_name(field_name), "auxiliary", empty_labels,
+                          kind="labels")
+        )  # fmt: skip
     try:
-        catalog = Catalog(datasets, units, periods, variables)
+        return Catalog(
+            datasets,
+            UnitRegistry.from_rows(manifest_["units"]),
+            PeriodRegistry.from_rows(manifest_["periods"]),
+            manifest_["variables"],
+        )
     except Exception as exc:  # a dataset that doesn't meet the contract
         raise _problem(str(exc), "contract") from None
-    return Resolved(catalog, records, reversed_)
 
 
 def _series_of(session: Session, found: refs.Resolved) -> tuple[str, str] | None:
@@ -228,11 +262,11 @@ def _check_relation(
 
 def _check_labels(
     session: Session, project: Project, spec: EvaluationSpec, records: dict, f: Any
-) -> EngineDataset | None:
-    """A field that labels series by their location's layer: check the layer, and
-    stand in for the labels a run computes."""
+) -> bool:
+    """Whether a field labels series by their location's layer (after checking
+    the layer); a run computes those labels."""
     if isinstance(f, AttributeField) and f.of == "series":
-        return None  # straight from the series table
+        return False  # straight from the series table
     if isinstance(f, WithinField):
         layer = records[f.layer]
         if layer.dataset.kind != LAYER:
@@ -258,10 +292,7 @@ def _check_labels(
                 f"'{f.attribute}'",
                 "field", "fields",
             )  # fmt: skip
-    table = pa.table(
-        {"series_key": pa.array([], pa.string()), "value": pa.array([], pa.string())}
-    )
-    return EngineDataset(labels_name(f.name), "auxiliary", table, kind="labels")
+    return True
 
 
 @dataclass
@@ -269,6 +300,7 @@ class PlanSummary:
     """What a planned spec will do."""
 
     spec: EvaluationSpec
+    manifest: dict[str, Any]
     unit: str | None
     inputs: list[dict[str, Any]]
     relation: dict[str, Any] | None
@@ -278,9 +310,9 @@ class PlanSummary:
 def plan(session: Session, project: Project, body: Any) -> PlanSummary:
     """Parse, resolve and plan a spec (raises :class:`SpecProblems`)."""
     spec = parse(body)
-    resolved = resolve(session, project, spec)
+    found = manifest(session, project, spec)
     try:
-        planned = build_plan(spec, resolved.catalog)
+        planned = build_plan(spec, catalog_from(found))
     except (PlanError, KeyError, ValueError) as exc:
         message = exc.args[0] if isinstance(exc, KeyError) and exc.args else str(exc)
         raise _problem(str(message), "plan") from None
@@ -298,7 +330,7 @@ def plan(session: Session, project: Project, body: Any) -> PlanSummary:
     if planned.relation is not None:
         relation = {
             "dataset": planned.relation.name,
-            "reversed": resolved.relation_reversed,
+            "reversed": found["relation_reversed"],
         }
     stages = [
         {
@@ -307,7 +339,7 @@ def plan(session: Session, project: Project, body: Any) -> PlanSummary:
         }
         for stage in planned.spec.aggregate
     ]
-    return PlanSummary(spec, planned.unit, inputs, relation, stages)
+    return PlanSummary(spec, found, planned.unit, inputs, relation, stages)
 
 
 def spec_hash(spec: EvaluationSpec) -> str:

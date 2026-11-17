@@ -363,14 +363,30 @@ class EvaluationVersion(Base):
 
 
 class Run(Base):
-    """Stub: an evaluation run in a project (filled in by later phases)."""
+    """A run of an evaluation version, done by a job as its caller (Phase 5).
+
+    ``task`` is what the job works from, fixed when the run starts: the spec, the
+    datasets it resolved to and the registries (``evaluations.manifest``), and the
+    results table. ``result``: rows written, input snapshots, engine version."""
 
     __tablename__ = "runs"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(_fk("projects"))
+    evaluation_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("evaluation_versions")
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.jobs.id", ondelete="SET NULL")
+    )
+    # A JobStatus value.
     status: Mapped[str] = mapped_column(String(16))
+    task: Mapped[dict | None] = mapped_column(JSON)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
