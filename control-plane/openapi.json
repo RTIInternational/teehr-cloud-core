@@ -1879,6 +1879,12 @@
       "RunRequest": {
         "additionalProperties": false,
         "properties": {
+          "full": {
+            "default": false,
+            "description": "Recompute everything, even where only some months changed",
+            "title": "Full",
+            "type": "boolean"
+          },
           "version": {
             "anyOf": [
               {
@@ -2791,6 +2797,21 @@
           "mode": {
             "title": "Mode",
             "type": "string"
+          },
+          "months": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timeseries: the months (YYYY-MM, UTC) of value_time the rows touched (null for an overwrite: rows anywhere may be gone)",
+            "title": "Months"
           },
           "notes": {
             "anyOf": [
@@ -5384,7 +5405,7 @@
         ]
       },
       "post": {
-        "description": "Run a version of the evaluation (default the latest) as a job acting as\nyou: it reads the inputs, runs the spec and writes results_<slug>_v<version>\n(replacing an earlier run's). The spec is planned again first, against the\ndatasets as they are now (422 if it no longer plans). Needs the write role.",
+        "description": "Run a version of the evaluation (default the latest) as a job acting as\nyou: it reads the inputs, runs the spec and writes results_<slug>_v<version>\n(replacing an earlier run's). The spec is planned again first, against the\ndatasets as they are now (422 if it no longer plans).\n\nA run is incremental when it can be: the version keeps state and only some\nmonths of its inputs changed since its last run (timeseries writes record the\nmonths they touch); it then recomputes only those. ``full`` recomputes all;\nthe run's ``result.mode`` says which it did, and why when full. Needs the write\nrole.",
         "operationId": "start_run",
         "parameters": [
           {

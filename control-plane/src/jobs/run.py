@@ -87,16 +87,39 @@ def _input_filters(spec: dict) -> dict[str, str]:
     }
 
 
+def months_filter(months: list[str], column: str = "value_time") -> str:
+    """An expression keeping rows whose ``column`` is in one of ``months`` (YYYY-MM)."""
+    parts = []
+    for month in months:
+        year, number = (int(x) for x in month.split("-"))
+        end = (year + 1, 1) if number == 12 else (year, number + 1)
+        parts.append(
+            f"({column} >= '{year:04d}-{number:02d}-01T00:00:00Z' AND "
+            f"{column} < '{end[0]:04d}-{end[1]:02d}-01T00:00:00Z')"
+        )
+    return " OR ".join(parts)
+
+
+def _both(a: str | None, b: str | None) -> str | None:
+    return f"({a}) AND ({b})" if a and b else a or b
+
+
 def read_inputs(
-    client: GrantClient, manifest: dict, spec: dict
+    client: GrantClient, manifest: dict, spec: dict, months: list[str] | None = None
 ) -> tuple[dict[str, pa.Table], dict[str, pa.Table], dict[str, int | None]]:
     """The rows of every dataset in the manifest, their series tables', and the
-    snapshot each was read at (keyed ``<project>.<name>``)."""
+    snapshot each was read at (keyed ``<project>.<name>``). With ``months`` (an
+    incremental run), a timeseries' rows are only those months'."""
     filters = _input_filters(spec)
     rows, series, snapshots = {}, {}, {}
     for ref, d in manifest["datasets"].items():
+        row_filter = filters.get(ref)
+        if months is not None and d["kind"] == "timeseries":
+            if not months:
+                continue  # nothing changed: no rows to read
+            row_filter = _both(row_filter, months_filter(months))
         rows[ref], snapshots[f"{d['project']}.{d['name']}"] = read_all(
-            client, d["project"], d["name"], filters.get(ref)
+            client, d["project"], d["name"], row_filter
         )
         if d.get("series"):
             s = d["series"]
@@ -153,18 +176,25 @@ def typed(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
 
 
 def write_table(
-    client: GrantClient, project: str, name: str, table: pa.Table
+    client: GrantClient,
+    project: str,
+    name: str,
+    table: pa.Table,
+    overwrite_filter: str | None = None,
 ) -> int | None:
-    """Replace a run table's rows with ``table`` (chunked); the last snapshot."""
+    """Replace a run table's rows (those ``overwrite_filter`` keeps, or all) with
+    ``table`` (chunked); the last snapshot."""
     path = f"/projects/{project}/datasets/{name}/data"
     snapshot = None
     pieces = list(chunks(table)) if table.num_rows else [table]
     for i, chunk in enumerate(pieces):
         if chunk.num_rows == 0:
             break  # nothing to write; an earlier run's rows stay
-        mode = "overwrite" if i == 0 else "append"
+        params = {"mode": "overwrite" if i == 0 else "append"}
+        if i == 0 and overwrite_filter:
+            params["filter"] = overwrite_filter
         resp = client.api(
-            "POST", path, params={"mode": mode}, content=arrow_bytes(chunk),
+            "POST", path, params=params, content=arrow_bytes(chunk),
             headers={"Content-Type": ARROW},
         )  # fmt: skip
         if resp.status_code != 201:
@@ -174,7 +204,12 @@ def write_table(
 
 
 def store(
-    client: GrantClient, project: str, kind: str, table: pa.Table, run: dict
+    client: GrantClient,
+    project: str,
+    kind: str,
+    table: pa.Table,
+    run: dict,
+    overwrite_filter: str | None = None,
 ) -> dict:
     """Write one of the run's tables (results, pairs) with its lineage."""
     rows, columns = typed(table, run)
@@ -185,7 +220,7 @@ def store(
     except httpx.HTTPStatusError as exc:
         raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
     dataset = resp.json()["dataset"]
-    snapshot = write_table(client, project, dataset, rows)
+    snapshot = write_table(client, project, dataset, rows, overwrite_filter)
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
 
 
@@ -237,19 +272,63 @@ def decode_state(table: pa.Table) -> pa.Table:
     return pa.Table.from_arrays(arrays, names=names)
 
 
+def _stored_state(client: GrantClient, project: str, run: dict) -> pa.Table | None:
+    """The version's state as the last run left it (None if it can't be read)."""
+    name = f"state_{run['evaluation']}_v{run['version']}"
+    try:
+        table, _ = read_all(client, project, name)
+    except LoadFailed:
+        return None
+    return decode_state(table)
+
+
+def _months_of(bucket: pa.ChunkedArray) -> pa.ChunkedArray:
+    return pc.strftime(bucket, format="%Y-%m", locale="C")
+
+
 def run_evaluation(client: GrantClient, task: dict) -> dict:
     """Do a run's task; returns its result (raises LoadFailed with what went wrong)."""
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
-    rows, series, snapshots = read_inputs(client, manifest, spec)
+    how = run.get("incremental") or {"mode": "full", "why": "not decided"}
+    stored = None
+    if how["mode"] == "incremental":
+        stored = _stored_state(client, project, run)
+        if stored is None:
+            how = {"mode": "full", "why": "the stored state couldn't be read"}
+    months = how["months"] if how["mode"] == "incremental" else None
+    rows, series, snapshots = read_inputs(client, manifest, spec, months)
     backend = DuckDBBackend()
+    pairs = None
     try:
         parsed = load_spec(spec)
-        catalog = catalog_from(manifest, rows, series)
-        pairs = backend.pairs(build_plan(parsed, catalog))
+        if months != []:
+            catalog = catalog_from(manifest, rows, series)
+            pairs = backend.pairs(build_plan(parsed, catalog))
         state = None
         if keeps_state(parsed):
-            state = backend.first_stage_state(parsed, pairs, STATE_BUCKET)
+            fresh = None
+            if pairs is not None and pairs.num_rows:
+                fresh = backend.first_stage_state(parsed, pairs, STATE_BUCKET)
+            if months is None:
+                state = fresh
+            else:  # the stored state, its changed months replaced
+                kept = stored.filter(
+                    pc.invert(
+                        pc.is_in(
+                            _months_of(stored["__bucket"]),
+                            pa.array(months, pa.string()),
+                        )
+                    )
+                )
+                parts = [t for t in (kept, fresh) if t is not None and t.num_rows]
+                state = (
+                    pa.concat_tables(parts, promote_options="permissive")
+                    if parts
+                    else kept
+                )
+            if state is None:
+                raise PlanError("the evaluation produced no pairs")
             stages = backend.summarize(
                 parsed, backend.first_stage_from_state(parsed, state)
             )
@@ -258,8 +337,9 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
     out = store(client, project, "results", stages[-1], run)
-    if run.get("pairs"):
-        out["pairs"] = store(client, project, "pairs", pairs, run)
+    if run.get("pairs") and pairs is not None and pairs.num_rows:
+        replaced = None if months is None else months_filter(months)
+        out["pairs"] = store(client, project, "pairs", pairs, run, replaced)
     if state is not None:
         out["state"] = {
             **store(client, project, "state", encode_state(state), run),
@@ -267,6 +347,7 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
         }
     return {
         **out,
+        **how,
         "inputs": snapshots,
         "engine_version": f"teehr-core {ENGINE_VERSION}",
     }

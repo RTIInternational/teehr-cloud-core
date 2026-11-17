@@ -10,9 +10,10 @@ user), so seeding exercises the same paths a client uses:
 - ``demo``: a project with ``user`` as a writer and two saved evaluations of the
   public datasets, each run once so results are there to look at.
 
-Safe to run again: datasets are created when missing and their rows upserted;
-saving an unchanged evaluation saves nothing; runs only start for evaluations
-without results.
+Safe to run again: datasets are created when missing and written only while empty
+(so a redeploy doesn't touch them, and runs after it stay incremental); saving an
+unchanged evaluation saves nothing; runs only start for evaluations without
+results.
 """
 
 import base64
@@ -79,7 +80,17 @@ class Api:
     def exists(self, path: str) -> bool:
         return self.call("GET", path, ok=(200, 404)).status_code == 200
 
-    def write_arrow(self, project: str, dataset: str, table: pa.Table, **params):
+    def empty(self, project: str, dataset: str) -> bool:
+        resp = self.call("GET", f"/projects/{project}/datasets/{dataset}/data",
+                         params={"limit": 1})  # fmt: skip
+        return not resp.json()["rows"]
+
+    def write_arrow(
+        self, project: str, dataset: str, table: pa.Table, **params
+    ) -> bool:
+        """Write ``table`` if the dataset is empty; whether it did."""
+        if not self.empty(project, dataset):
+            return False
         sink = pa.BufferOutputStream()
         with pa.ipc.new_stream(sink, table.schema) as writer:
             writer.write_table(table)
@@ -89,6 +100,12 @@ class Api:
             headers={"Content-Type": ARROW},
         )  # fmt: skip
         log(f"  wrote {table.num_rows} rows to {project}.{dataset}")
+        return True
+
+    def write_json(self, project: str, dataset: str, rows: list[dict]) -> None:
+        """Write ``rows`` (upserted) as they are."""
+        self.call("POST", f"/projects/{project}/datasets/{dataset}/data", json=rows)
+        log(f"  wrote {len(rows)} rows to {project}.{dataset}")
 
 
 def ensure_dataset(api: Api, project: str, body: dict) -> None:
@@ -126,8 +143,8 @@ def seed_public(api: Api) -> None:
          "state_code": r["state_code"], "drainage_area_mi2": r["drainage_area_mi2"]}
         for r in series.to_pylist()
     ]  # fmt: skip
-    api.call("POST", "/projects/public/datasets/usgs_gauges/data", json=gauges)
-    log(f"  wrote {len(gauges)} rows to public.usgs_gauges")
+    if api.empty("public", "usgs_gauges"):
+        api.write_json("public", "usgs_gauges", gauges)
 
     ensure_dataset(api, "public", {
         "type": "timeseries", "name": "usgs_streamflow", "role": "observed",
@@ -136,14 +153,14 @@ def seed_public(api: Api) -> None:
         "description": "USGS instantaneous streamflow",
     })  # fmt: skip
     obs = pq.read_table(HERE / "usgs_streamflow.parquet")
-    api.write_arrow("public", "usgs_streamflow",
-                    obs.select(["series_key", "value_time", "value", "quality"]),
-                    unit="[cft_i]/s")  # fmt: skip
-    api.call(
-        "POST", "/projects/public/datasets/usgs_streamflow_series/data",
-        json=[{"series_key": r["series_key"], "location_key": r["location_key"],
-               "resolution": r["resolution"]} for r in series.to_pylist()],
-    )  # fmt: skip
+    written = api.write_arrow("public", "usgs_streamflow",
+                              obs.select(["series_key", "value_time", "value", "quality"]),
+                              unit="[cft_i]/s")  # fmt: skip
+    if written:  # its series' locations, once the writes have added the series
+        api.write_json("public", "usgs_streamflow_series", [
+            {"series_key": r["series_key"], "location_key": r["location_key"],
+             "resolution": r["resolution"]} for r in series.to_pylist()
+        ])  # fmt: skip
 
     nwm_series = [{"name": "feature_id", "type": "int64"}]
     ensure_dataset(api, "public", {
@@ -157,14 +174,14 @@ def seed_public(api: Api) -> None:
         "series_table": "nwm31_short_range_series",
         "description": "NWM 3.1 medium-range, member 1",
     })  # fmt: skip
+    written = False
     for name in ("nwm31_short_range", "nwm31_medium_range_mem1"):
         fc = pq.read_table(HERE / f"{name}.parquet")
-        api.write_arrow("public", name,
-                        fc.select(["series_key", "reference_time", "value_time", "value"]))  # fmt: skip
-    reaches = pq.read_table(HERE / "nwm31__series.parquet").to_pylist()
-    api.call(
-        "POST", "/projects/public/datasets/nwm31_short_range_series/data", json=reaches
-    )
+        columns = ["series_key", "reference_time", "value_time", "value"]
+        written = api.write_arrow("public", name, fc.select(columns)) or written
+    if written:
+        reaches = pq.read_table(HERE / "nwm31__series.parquet").to_pylist()
+        api.write_json("public", "nwm31_short_range_series", reaches)
 
     ensure_dataset(api, "public", {
         "type": "crosswalk", "name": "usgs_nwm31", "left": "usgs_streamflow",

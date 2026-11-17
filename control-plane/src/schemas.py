@@ -481,6 +481,13 @@ class WriteOut(BaseModel):
             "not found where they point"
         ),
     )
+    months: list[str] | None = Field(
+        default=None,
+        description=(
+            "Timeseries: the months (YYYY-MM, UTC) of value_time the rows touched "
+            "(null for an overwrite: rows anywhere may be gone)"
+        ),
+    )
     snapshot_id: str | None = Field(
         description="The Iceberg snapshot this write produced (a string: 64-bit id)"
     )

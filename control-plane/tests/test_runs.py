@@ -34,7 +34,7 @@ class Lake:
     one snapshot per table."""
 
     def __init__(self, client, fake):
-        self.client, self.data, self.reads = client, {}, []
+        self.client, self.fake, self.data, self.reads = client, fake, {}, []
         fake.read, fake.count = self.read, lambda *a, **k: 0
 
     def put(self, name, table):
@@ -42,7 +42,10 @@ class Lake:
 
     def read(self, token, ns, name, *, columns, row_filter, snapshot_id, limit):
         self.reads.append((ns, name, row_filter))
-        table = self.data[(ns, name)]
+        if (ns, name) in self.data:
+            table = self.data[(ns, name)]
+        else:  # a run's table: the rows last written to it
+            table = self.fake.written[(ns, name)][-1]
         if row_filter is not None:
             declared = self.client.get(
                 f"/v1/projects/{ns}/datasets/{name}", headers=ALICE
@@ -322,3 +325,118 @@ def test_no_state_when_a_metric_needs_every_pair(client, lake, jobs):  # noqa: F
     saved(client, body)
     client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
     assert "state" not in run_job(client, kube)
+
+
+# --- incremental runs -----------------------------------------------------------
+
+FEB = T0 + timedelta(days=31)
+OBS_FEB = {"usgs-a": [5.0, 6.0], "usgs-b": [50.0, 60.0]}
+SIM_FEB = {"nwm-1": [4.0, 7.0], "nwm-2": [55.0, 58.0]}
+
+
+def _feb_rows(values, forecast=False):
+    rows = []
+    for key, vs in values.items():
+        for h, v in enumerate(vs):
+            row = {
+                "series_key": key,
+                "value_time": (FEB + timedelta(hours=h)).isoformat(),
+                "value": v,
+            }
+            if forecast:
+                row["reference_time"] = FEB.isoformat()
+            rows.append(row)
+    return rows  # fmt: skip
+
+
+def add_february(client, lake):
+    """Write February through the API (lineage records the month) and into the lake."""
+    for name, values, forecast in (
+        ("usgs_obs", OBS_FEB, False),
+        ("nwm_sr", SIM_FEB, True),
+    ):
+        rows = _feb_rows(values, forecast)
+        resp = client.post(f"/v1/projects/flood/datasets/{name}/data", json=rows,
+                           headers=ALICE)  # fmt: skip
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["months"] == ["2026-02"]
+        old = lake.data[("flood", name)]
+        new = pa.table({
+            c: pa.array([
+                (datetime.fromisoformat(r[c]) if c.endswith("_time") else r[c])
+                for r in rows
+            ], old.schema.field(c).type)
+            for c in old.column_names
+        })  # fmt: skip
+        lake.put(name, pa.concat_tables([old, new]))
+
+
+def run_once(client, kube, body=None):
+    resp = client.post(f"{EVALUATIONS}/e/runs", json=body, headers=ALICE_NOW)
+    assert resp.status_code == 202, resp.text
+    return run_job(client, kube)
+
+
+def test_a_rerun_recomputes_only_the_changed_months(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    first = run_once(client, kube)
+    assert (first["mode"], first["why"]) == ("full", "no earlier run kept state")
+
+    add_february(client, lake)
+    lake.reads.clear()
+    second = run_once(client, kube)
+    assert (second["mode"], second["months"]) == ("incremental", ["2026-02"])
+    # Only February's rows were read from the timeseries.
+    obs_filter = next(f for _, n, f in lake.reads if n == "usgs_obs")
+    assert obs_filter is not None
+    assert second["state"]["rows"] == 4  # two series by two months
+
+    results = tables.written[("flood", "results_e_v1")][-1]
+    rows = {r["primary_series_key"]: r for r in results.to_pylist()}
+    for obs_key, sim_key in LINKS.items():
+        o = np.array(OBS[obs_key] + OBS_FEB[obs_key])
+        s = np.array(SIM[sim_key] + SIM_FEB[sim_key])
+        assert rows[obs_key]["count"] == 6
+        assert rows[obs_key]["root_mean_square_error"] == pytest.approx(
+            np.sqrt(np.mean((s - o) ** 2))
+        )
+
+    # Nothing changed since: nothing to read, the same results.
+    third = run_once(client, kube)
+    assert (third["mode"], third["months"]) == ("incremental", [])
+
+
+def test_full_runs_when_asked_or_when_more_than_months_changed(client, lake, jobs):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    run_once(client, kube)
+    assert run_once(client, kube, {"full": True})["why"] == "a full run was asked for"
+
+    client.post("/v1/projects/flood/datasets/usgs_nwm/data",
+                json=[{"left_key": "usgs-a", "right_key": "nwm-1"}], headers=ALICE)  # fmt: skip
+    assert run_once(client, kube)["why"] == "'flood.usgs_nwm' changed"
+
+    rows = _feb_rows(OBS_FEB)
+    resp = client.post("/v1/projects/flood/datasets/usgs_obs/data", json=rows,
+                       params={"mode": "overwrite"}, headers=ALICE)  # fmt: skip
+    assert resp.status_code == 201 and resp.json()["months"] is None
+    assert "overwritten" in run_once(client, kube)["why"]
+
+
+def test_specs_whose_months_depend_on_others_run_in_full():
+    from teehr_core.spec import load_spec
+
+    from src.incremental import blockers
+
+    assert blockers(load_spec(spec())) == []
+    lead = {"name": "lead", "fn": "lead_time_bins", "width": "PT6H"}
+    assert blockers(load_spec(spec(fields=[lead]))) == []
+    ranked = {"name": "rank", "fn": "exceedance", "side": "primary"}
+    assert blockers(load_spec(spec(fields=[ranked]))) == [
+        "field 'rank' looks beyond each pair's month"
+    ]

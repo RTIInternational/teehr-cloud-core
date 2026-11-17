@@ -882,11 +882,16 @@ def write_dataset(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The catalog could not commit the write",
         ) from exc
+    months = None
+    if record.kind == TIMESERIES and mode != "overwrite":
+        stamps = pc.strftime(data["value_time"], format="%Y-%m", locale="C")
+        months = sorted(m for m in pc.unique(stamps).to_pylist() if m)
     write = DatasetWrite(
         dataset_id=record.id,
         mode=mode,
         filter=filter,
         rows=data.num_rows,
+        months=months,
         unit=units and units[0].symbol,
         series_added=series_added,
         notes=notes or None,

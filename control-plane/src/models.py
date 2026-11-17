@@ -150,6 +150,9 @@ class DatasetWrite(Base):
     series_added: Mapped[int | None] = mapped_column(BigInteger)
     # What was written but may be wrong (e.g. crosswalk keys not found).
     notes: Mapped[list[str] | None] = mapped_column(JSON)
+    # Timeseries: the months (YYYY-MM, UTC) of value_time the rows touched, so an
+    # incremental run knows what changed; null when unknown (an overwrite).
+    months: Mapped[list[str] | None] = mapped_column(JSON)
     snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
     written_by: Mapped[str] = mapped_column(String(255))
     # Set here (microseconds) so quick successive writes keep their order.
@@ -386,7 +389,9 @@ class Run(Base):
     error: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
