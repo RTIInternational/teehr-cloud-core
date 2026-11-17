@@ -128,6 +128,41 @@ def _out(evaluation: Evaluation, versions: list[EvaluationVersion]) -> dict[str,
     }
 
 
+@router.get(
+    "",
+    operation_id="list_evaluations",
+    response_model=list[EvaluationSummaryOut],
+    responses=_errors(401, 404),
+)
+def list_evaluations(
+    name: ProjectName, session: SessionDep, identity: IdentityDep, settings: SettingsDep
+):
+    """The project's saved evaluations, with their latest versions. Needs the read
+    role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    latest = (
+        select(
+            EvaluationVersion.evaluation_id,
+            func.max(EvaluationVersion.version).label("version"),
+            func.max(EvaluationVersion.created_at).label("updated_at"),
+        )
+        .group_by(EvaluationVersion.evaluation_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(Evaluation, latest.c.version, latest.c.updated_at)
+        .join(latest, latest.c.evaluation_id == Evaluation.id)
+        .where(Evaluation.project_id == project.id)
+        .order_by(Evaluation.slug)
+    )
+    return [
+        EvaluationSummaryOut(
+            slug=e.slug, version=v, updated_at=u, created_by=e.created_by
+        )
+        for e, v, u in rows
+    ]
+
+
 @router.put(
     "/{slug}",
     operation_id="save_evaluation",
@@ -190,41 +225,6 @@ def save_evaluation(
         response.status_code = status.HTTP_201_CREATED
     return {**_out(evaluation, versions), "changed": changed,
             "plan": PlanOut.model_validate(planned, from_attributes=True)}  # fmt: skip
-
-
-@router.get(
-    "",
-    operation_id="list_evaluations",
-    response_model=list[EvaluationSummaryOut],
-    responses=_errors(401, 404),
-)
-def list_evaluations(
-    name: ProjectName, session: SessionDep, identity: IdentityDep, settings: SettingsDep
-):
-    """The project's saved evaluations, with their latest versions. Needs the read
-    role."""
-    project, _ = _authorize(session, name, identity, settings, Role.READ)
-    latest = (
-        select(
-            EvaluationVersion.evaluation_id,
-            func.max(EvaluationVersion.version).label("version"),
-            func.max(EvaluationVersion.created_at).label("updated_at"),
-        )
-        .group_by(EvaluationVersion.evaluation_id)
-        .subquery()
-    )
-    rows = session.execute(
-        select(Evaluation, latest.c.version, latest.c.updated_at)
-        .join(latest, latest.c.evaluation_id == Evaluation.id)
-        .where(Evaluation.project_id == project.id)
-        .order_by(Evaluation.slug)
-    )
-    return [
-        EvaluationSummaryOut(
-            slug=e.slug, version=v, updated_at=u, created_by=e.created_by
-        )
-        for e, v, u in rows
-    ]
 
 
 @router.get(
