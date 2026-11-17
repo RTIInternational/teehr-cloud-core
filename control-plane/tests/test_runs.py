@@ -192,18 +192,65 @@ def test_starting_a_run(client, lake, jobs):  # noqa: F811
     assert kube.created == []
 
 
-def test_location_fields_arent_run_yet(client, lake, jobs):  # noqa: F811
+def test_location_fields_label_series_by_their_locations(client, lake, jobs, tables):  # noqa: F811
+    import shapely
+
     from tests.test_layers import layer, timeseries
     from tests.test_runs_plan import crosswalk
 
+    kube, _ = jobs
     layer(client, "gauges", attributes=[{"name": "huc2", "type": "string"}])
+    layer(client, "basins")
     timeseries(client, "obs_located", location_layer="gauges")
     crosswalk(client, "located_nwm", "obs_located", "nwm_sr")
-    field = {"name": "huc", "fn": "attribute", "attribute": "huc2", "of": "location"}
-    body = spec(primary="obs_located", relation="located_nwm", fields=[field])
+    lake.put("obs_located", lake.data[("flood", "usgs_obs")])
+    series = _series(list(OBS))
+    series = series.set_column(1, "location_key", pa.array(["g-a", "g-b"]))
+    lake.put("obs_located_series", series)
+    lake.put("located_nwm", lake.data[("flood", "usgs_nwm")])
+
+    def rows(places):
+        return pa.table({
+            "location_key": [k for k, _, _ in places],
+            "name": [None] * len(places),
+            "geometry": [shapely.to_wkb(g) for _, g, _ in places],
+            **{c: [0.0] * len(places)
+               for c in ("bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax")},
+            "huc2": [h for _, _, h in places],
+        })  # fmt: skip
+
+    lake.put("gauges", rows([("g-a", shapely.Point(1, 1), "02"),
+                             ("g-b", shapely.Point(5, 5), "05")]))  # fmt: skip
+    lake.put("basins", rows([
+        ("b-west", shapely.box(0, 0, 3, 3), None),
+        ("b-east", shapely.box(4, 4, 6, 6), None),
+        ("b-overlap", shapely.box(0, 0, 10, 10), None),  # contains both: larger key
+    ]).drop_columns(["huc2"]))  # fmt: skip
+
+    body = spec(primary="obs_located", relation="located_nwm", fields=[
+        {"name": "huc", "fn": "attribute", "attribute": "huc2", "of": "location"},
+        {"name": "basin", "fn": "within", "layer": "basins"},
+    ])  # fmt: skip
+    body["aggregate"][0]["group_by"] = ["huc", "basin"]
+    body["aggregate"][0]["metrics"] = ["count"]
     saved(client, body)
-    resp = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
-    assert resp.status_code == 422 and "don't do yet" in resp.text
+    result = run_once(client, kube)
+    assert result["rows"] == 2
+    written = tables.written[("flood", "results_e_v1")][-1].to_pylist()
+    # g-a is in b-west and b-overlap, g-b in b-east and b-overlap: the smaller key.
+    assert sorted((r["huc"], r["basin"], r["count"]) for r in written) == [
+        ("02", "b-overlap", 4),
+        ("05", "b-east", 4),
+    ]
+    # Labels come from the locations layer: a change there makes the next run full.
+    again = run_once(client, kube)
+    assert again["mode"] == "incremental", again.get("why")
+    moved = [{"location_key": "g-b", "geometry": "POINT (1 1)", "huc2": "02"}]
+    resp = client.post(
+        "/v1/projects/flood/datasets/gauges/data", json=moved, headers=ALICE
+    )
+    assert resp.status_code == 201, resp.text
+    assert run_once(client, kube)["why"] == "'flood.gauges' changed (series' locations)"
 
 
 def test_a_failed_run_says_why(client, lake, jobs):  # noqa: F811

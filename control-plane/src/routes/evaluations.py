@@ -450,15 +450,6 @@ def start_run(
     except SpecProblems as exc:
         first = exc.errors[0]["msg"] if exc.errors else "Invalid spec"
         return problem(422, first, errors=exc.errors)
-    if planned.manifest["location_fields"]:
-        fields = ", ".join(planned.manifest["location_fields"])
-        return problem(
-            422,
-            f"fields {fields} label series by their location layer, which runs "
-            "don't do yet",
-            errors=[{"loc": ["body", "fields"], "type": "unsupported",
-                     "msg": f"location fields aren't run yet: {fields}"}],
-        )  # fmt: skip
     incremental = decide(
         session, project, version, planned.spec, planned.manifest,
         keeps_state=keeps_state(planned.spec), full=bool(body and body.full),
