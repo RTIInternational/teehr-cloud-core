@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "teehr-control-plane"
 version = "0.1.0"
 description = "TEEHR project control plane: projects, members, datasets, runs"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     "fastapi>=0.110.0",
@@ -28,6 +28,9 @@ dependencies = [
     "pyproj>=3.6",
     # /data filters: the shared expression language (teehr-shared-eval-spec).
     "sqlglot>=26",
+    # The shared data model and expression allow-list. Pinned to a commit until
+    # teehr-core is released (an archive URL: the image has no git).
+    "teehr-core @ https://github.com/RTIInternational/teehr-core/archive/c1156931f4408b837cedb036aa12eef3e83ec30f.zip",
 ]
 
 [project.optional-dependencies]

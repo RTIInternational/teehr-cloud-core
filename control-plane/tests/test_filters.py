@@ -1,5 +1,6 @@
 """/data filters in the shared expression language (#196, spec/expressions.md):
-allow-list checks, the split into scan pushdown and the rest, and reads with it."""
+allow-list checks (teehr-core's), the split into scan pushdown and the rest, and
+reads with it."""
 
 from datetime import UTC, datetime
 
@@ -45,13 +46,13 @@ def test_filters_split_into_pushdown_and_the_rest(text, pushed, rest):
 @pytest.mark.parametrize(
     ("text", "why"),
     [
-        ("log(value) > 1", r"ln\(\) or log10\(\)"),
+        ("log(value) > 1", "use ln, log10"),
         ("nope > 1", "unknown column 'nope'"),
         ("t.value > 1", "unknown column"),
-        ("value > (SELECT 1)", "isn't allowed"),
-        ("dayofweek(value_time) = 1", "isn't allowed"),
-        ("series_key = 'a'; DROP TABLE x", "isn't allowed"),
-        ("cast(value AS json) = 1", "can't cast"),
+        ("value > (SELECT 1)", "'subquery' is not allowed"),
+        ("dayofweek(value_time) = 1", "engines number weekdays differently"),
+        ("series_key = 'a'; DROP TABLE x", "is not allowed"),
+        ("cast(value AS json) = 1", "'CAST to JSON' is not allowed"),
         ("value >", "invalid filter"),
     ],
 )
@@ -90,6 +91,9 @@ def table():
             ["b", "a"],
         ),  # fmt: skip
         ("abs(value - 2) < 0.5 OR quality = 'A'", ["b", "a"]),
+        ("CAST(value > 1 AS BOOLEAN)", ["b"]),
+        ("value_time + INTERVAL '1' HOUR = '2026-01-01T02:00:00Z'", ["b"]),
+        ("value_time - INTERVAL '90' MINUTE >= '2026-01-01T00:00:00Z'", ["a"]),
     ],
 )
 def test_the_rest_is_evaluated_on_the_rows(text, keys):
