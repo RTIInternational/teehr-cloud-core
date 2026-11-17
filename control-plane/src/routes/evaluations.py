@@ -12,7 +12,16 @@ import contextlib
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Response, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    status,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -29,7 +38,15 @@ from src.errors import APIError, problem
 from src.evaluations import SpecProblems, plan, spec_hash
 from src.jobs import JobRefused, start_job
 from src.kube import Kube, KubeError, get_kube
-from src.models import Evaluation, EvaluationVersion, Project, Role, Run
+from src.models import (
+    Dataset,
+    Evaluation,
+    EvaluationVersion,
+    JobStatus,
+    Project,
+    Role,
+    Run,
+)
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -39,6 +56,7 @@ from src.routes.projects import (
     _errors,
 )
 from src.routes.runs import PlanOut, RunOut, run_out, sync
+from src.tables import TableError, TableForbidden, TableMissing, Tables, get_tables
 
 router = APIRouter(prefix="/v1/projects/{name}/evaluations", tags=["evaluations"])
 
@@ -264,7 +282,7 @@ def get_evaluation_version(
     "/{slug}",
     operation_id="delete_evaluation",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=_errors(401, 403, 404),
+    responses=_errors(401, 403, 404, 409, 502, 503),
 )
 def delete_evaluation(
     name: ProjectName,
@@ -272,13 +290,67 @@ def delete_evaluation(
     session: SessionDep,
     identity: IdentityDep,
     settings: SettingsDep,
+    tables: Annotated[Tables | None, Depends(get_tables)],
+    kube: Annotated[Kube | None, Depends(get_kube)],
+    keep_results: Annotated[
+        bool,
+        Query(description="Keep the results tables (as datasets of their own)"),
+    ] = False,
 ):
-    """Delete an evaluation, its versions and their runs. Results tables stay (delete
-    them as datasets). Needs the admin role."""
-    project, _ = _authorize(session, name, identity, settings, Role.ADMIN)
+    """Delete an evaluation with its versions, runs and results tables
+    (``results_<slug>_v<n>``, dropped as you), unless ``keep_results``. Refused
+    while one of its runs is going. Needs the admin role."""
+    project, my_role = _authorize(session, name, identity, settings, Role.ADMIN)
     evaluation = _evaluation(session, project, slug)
     if evaluation is None:
         raise _not_found()
+    versions = _versions(session, evaluation)
+    runs = session.scalars(
+        select(Run).where(Run.evaluation_version_id.in_([v.id for v in versions]))
+    ).all()
+    for run in runs:
+        sync(session, kube, run)
+    going = [
+        r for r in runs if r.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
+    ]
+    if going:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"'{slug}' has {len(going)} run(s) going; wait for them to finish",
+        )
+    if not keep_results:
+        names = [results_dataset(slug, v.version) for v in versions]
+        results = session.scalars(
+            select(Dataset).where(
+                Dataset.project_id == project.id, Dataset.name.in_(names)
+            )
+        ).all()
+        if results and tables is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Table storage is not configured"
+            )
+        for dataset in results:
+            try:
+                tables.drop_table(identity.token, project.name, dataset.name)
+            except TableMissing:
+                pass  # gone from the catalog already; drop the record
+            except TableForbidden as exc:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    f"The catalog refused dropping '{dataset.name}'"
+                    + (
+                        "; your token may predate your role, get a new one"
+                        if my_role
+                        else ""
+                    ),
+                ) from exc
+            except TableError as exc:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    f"The catalog could not drop '{dataset.name}'",
+                ) from exc
+            session.delete(dataset)
+            session.commit()
     session.execute(
         delete(EvaluationVersion).where(
             EvaluationVersion.evaluation_id == evaluation.id

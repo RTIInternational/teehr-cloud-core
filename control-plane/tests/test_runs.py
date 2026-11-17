@@ -214,19 +214,34 @@ def test_a_failed_run_says_why(client, lake, jobs):  # noqa: F811
     assert run["status"] == "failed" and "HTTP 502" in run["error"]
 
 
-def test_deleting_an_evaluation_keeps_its_results(client, lake, jobs):  # noqa: F811
+def test_deleting_an_evaluation_deletes_its_runs_and_results(
+    client, lake, jobs, tables
+):  # noqa: F811
     kube, _ = jobs
     saved(client)
     run = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()
+    # Not while a run is going: it would write into a dropped table.
+    resp = client.delete(f"{EVALUATIONS}/e", headers=ALICE)
+    assert resp.status_code == 409 and "going" in resp.text
     run_job(client, kube)
     assert client.delete(f"{EVALUATIONS}/e", headers=ALICE).status_code == 204
-    assert (
-        client.get(f"/v1/projects/flood/runs/{run['id']}", headers=ALICE).status_code
-        == 404
+    run_url = f"/v1/projects/flood/runs/{run['id']}"
+    assert client.get(run_url, headers=ALICE).status_code == 404
+    results = "/v1/projects/flood/datasets/results_e_v1"
+    assert client.get(results, headers=ALICE).status_code == 404
+    assert ("drop", "flood", "results_e_v1") in {
+        (c[0], c[2], c[3]) for c in tables.calls
+    }
+
+
+def test_deleting_an_evaluation_can_keep_its_results(client, lake, jobs):  # noqa: F811
+    kube, _ = jobs
+    saved(client)
+    client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
+    run_job(client, kube)
+    resp = client.delete(
+        f"{EVALUATIONS}/e", params={"keep_results": True}, headers=ALICE
     )
-    assert (
-        client.get(
-            "/v1/projects/flood/datasets/results_e_v1", headers=ALICE
-        ).status_code
-        == 200
-    )
+    assert resp.status_code == 204
+    results = "/v1/projects/flood/datasets/results_e_v1"
+    assert client.get(results, headers=ALICE).status_code == 200

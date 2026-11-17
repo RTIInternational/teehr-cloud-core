@@ -4976,7 +4976,7 @@
     },
     "/v1/projects/{name}/evaluations/{slug}": {
       "delete": {
-        "description": "Delete an evaluation, its versions and their runs. Results tables stay (delete\nthem as datasets). Needs the admin role.",
+        "description": "Delete an evaluation with its versions, runs and results tables\n(``results_<slug>_v<n>``, dropped as you), unless ``keep_results``. Refused\nwhile one of its runs is going. Needs the admin role.",
         "operationId": "delete_evaluation",
         "parameters": [
           {
@@ -5001,6 +5001,18 @@
               "pattern": "^[a-z][a-z0-9_]{0,44}$",
               "title": "Slug",
               "type": "string"
+            }
+          },
+          {
+            "description": "Keep the results tables (as datasets of their own)",
+            "in": "query",
+            "name": "keep_results",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Keep the results tables (as datasets of their own)",
+              "title": "Keep Results",
+              "type": "boolean"
             }
           }
         ],
@@ -5038,6 +5050,16 @@
             },
             "description": "No such project (or the caller isn't a member), member or user"
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -5047,6 +5069,26 @@
               }
             },
             "description": "Invalid request"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
           }
         },
         "security": [
