@@ -41,6 +41,7 @@ from teehr_core.engine.duckdb_backend import DmSettings, state_rollup_sql
 from teehr_core.metrics.significance import default_lag
 from teehr_core.metrics.state import SKETCH_TYPE
 from teehr_core.spec import EvaluationSpec, GeneratedInput, load_spec
+from teehr_core.spec.models import AttributeField, WithinField
 
 from src.evaluations import SpecProblems, catalog_from
 from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
@@ -420,6 +421,96 @@ def _reach(spec: EvaluationSpec, rows: dict[str, pa.Table]) -> timedelta:
     return out
 
 
+def _layer_key(ref: str | None, owner: str) -> tuple[str, str] | None:
+    """A layer reference (``<name>`` in ``owner``'s project, or ``public.<name>``)."""
+    if not ref:
+        return None
+    if ref.startswith("public."):
+        return "public", ref.removeprefix("public.")
+    return owner, ref
+
+
+def location_labels(
+    client: GrantClient,
+    manifest: dict,
+    spec: EvaluationSpec,
+    rows: dict[str, pa.Table],
+    series_rows: dict[str, pa.Table],
+) -> dict[str, pa.Table]:
+    """Each observed series' label for the spec's location fields (by field name).
+
+    A series' location is its ``location_key`` in its ``location_layer`` (the
+    dataset's default when unset). An attribute field takes the location's
+    attribute; a within field the attribute of the polygon of its layer that
+    contains the location (by centroid for lines and polygons; boundaries
+    included; where polygons overlap, the one with the smallest key).
+    """
+    import shapely
+
+    fields = {
+        f.name: f for f in spec.fields
+        if isinstance(f, WithinField) or (isinstance(f, AttributeField) and f.of == "location")
+    }  # fmt: skip
+    if not fields:
+        return {}
+    observed = manifest["datasets"][spec.inputs.primary.dataset]
+    owner = observed["project"]
+    default = observed["properties"].get("location_layer")
+    series = series_rows.get(spec.inputs.primary.dataset)
+    keys = series["series_key"].to_pylist() if series is not None else []
+    located = (
+        list(zip(
+            series["location_layer"].to_pylist() if "location_layer" in series.column_names
+            else [None] * len(keys),
+            series["location_key"].to_pylist(), strict=True,
+        )) if series is not None else []
+    )  # fmt: skip
+
+    layers: dict[tuple[str, str], dict[str, dict]] = {}
+
+    def layer(key: tuple[str, str]) -> dict[str, dict]:
+        if key not in layers:
+            table, _ = read_all(client, key[0], key[1])
+            layers[key] = {r["location_key"]: r for r in table.to_pylist()}
+        return layers[key]
+
+    places = []
+    for layer_ref, location_key in located:
+        key = _layer_key(layer_ref or default, owner)
+        places.append(layer(key).get(location_key) if key and location_key else None)
+
+    out = {}
+    for name, f in fields.items():
+        if isinstance(f, AttributeField):
+            values = [p.get(f.attribute) if p else None for p in places]
+        else:
+            polygons = rows[f.layer].to_pylist()
+            shapes = shapely.from_wkb([p["geometry"] for p in polygons])
+            tree = shapely.STRtree(shapes)
+            points = [
+                shapely.centroid(shapely.from_wkb(p["geometry"]))
+                if p and p.get("geometry") else None
+                for p in places
+            ]  # fmt: skip
+            values = []
+            for point in points:
+                if point is None:
+                    values.append(None)
+                    continue
+                hits = tree.query(point, predicate="intersects")
+                best = min(
+                    hits, key=lambda i: polygons[i]["location_key"], default=None
+                )
+                values.append(None if best is None else polygons[best].get(f.attribute))
+        array = pa.array(values)
+        if pa.types.is_null(array.type):
+            array = array.cast(pa.string())
+        out[name] = pa.table(
+            {"series_key": pa.array(keys, pa.string()), "value": array}
+        )
+    return out
+
+
 def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
@@ -485,7 +576,9 @@ def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
     backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
     pairs, state = None, None
     if dirty != set():
-        pairs = backend.pairs(build_plan(parsed, catalog_from(manifest, rows, series)))
+        labels = location_labels(client, manifest, parsed, rows, series)
+        catalog = catalog_from(manifest, rows, series, labels)
+        pairs = backend.pairs(build_plan(parsed, catalog))
     if stateful:
         fresh = None
         if pairs is not None and pairs.num_rows:

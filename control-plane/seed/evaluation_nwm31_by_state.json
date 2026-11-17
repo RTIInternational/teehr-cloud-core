@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "nwm31-by-state",
+  "inputs": {
+    "primary": {"dataset": "public.usgs_streamflow"},
+    "secondary": [
+      {"dataset": "public.nwm31_short_range"},
+      {"dataset": "public.nwm31_medium_range_mem1"}
+    ]
+  },
+  "pair": {"relation": "public.usgs_nwm31"},
+  "fields": [{"name": "state", "fn": "attribute", "attribute": "state_code", "of": "location"}],
+  "aggregate": [
+    {
+      "group_by": ["state", "secondary_dataset"],
+      "metrics": ["count", "kling_gupta_efficiency", "root_mean_square_error"]
+    }
+  ],
+  "output": {"unit": "[cft_i]/s"}
+}

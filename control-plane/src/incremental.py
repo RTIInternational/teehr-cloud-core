@@ -35,6 +35,7 @@ from teehr_core.spec.models import (
     ExprField,
     GeneratedInput,
     LeadTimeBinsField,
+    WithinField,
 )
 
 from src.dataset_types import TIMESERIES
@@ -50,8 +51,8 @@ def blockers(spec: EvaluationSpec) -> list[str]:
     for f in spec.fields:
         if isinstance(f, ExprField | CalendarField | LeadTimeBinsField):
             continue
-        if isinstance(f, AttributeField) and f.of == "series":
-            continue
+        if isinstance(f, AttributeField | WithinField):
+            continue  # one label per series (a change to its layer makes runs full)
         out.append(f"field '{f.name}' looks beyond each pair's month")
     return out
 
@@ -152,6 +153,18 @@ def decide(
                 months.update(w.months)
                 if ref == spec.inputs.primary.dataset and kind == TIMESERIES:
                     obs_months.update(w.months)
+    for layer in manifest.get("location_layers", []):
+        where = f"{layer['project']}.{layer['name']}"
+        record = _dataset(session, layer["project"], layer["name"])
+        if record is None:
+            return _full(f"'{where}' is gone")
+        changed = session.scalar(
+            select(DatasetWrite.id).where(
+                DatasetWrite.dataset_id == record.id, DatasetWrite.written_at > since
+            )
+        )
+        if changed is not None or _aware(record.created_at) > since:
+            return _full(f"'{where}' changed (series' locations)")
     return {
         "mode": "incremental",
         "months": sorted(months),
