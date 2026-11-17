@@ -1,5 +1,6 @@
 """Row filters in the shared expression language (teehr-shared-eval-spec
-``spec/expressions.md``): a restricted SQL subset, checked against an allow-list.
+``spec/expressions.md``): a restricted SQL subset, checked against teehr-core's
+allow-list (``teehr_core.spec.expressions``, the one VeriRace's specs use too).
 
 A filter is split into what PyIceberg can push down to the scan (comparisons of a
 column with literals, ``IN``, ``BETWEEN``, ``IS [NOT] NULL``, and ``AND`` / ``OR`` /
@@ -11,7 +12,7 @@ canonical unit).
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -20,20 +21,11 @@ from pyiceberg import expressions as ice
 from pyiceberg.expressions import BooleanExpression
 from pyiceberg.expressions.visitors import bind
 from sqlglot import exp
+from teehr_core.spec.expressions import ExpressionError, check_expression
 
 from src.tables import DataMismatch, iceberg_schema
 
-# The allow-list (spec/expressions.md, v0 plus the agreed additions).
-_OPS = (exp.And, exp.Or, exp.Not, exp.Paren, exp.EQ, exp.NEQ, exp.LT, exp.LTE,
-        exp.GT, exp.GTE, exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.Neg,
-        exp.In, exp.Between, exp.Is, exp.Like, exp.DPipe)  # fmt: skip
-_FUNCS = (exp.Abs, exp.Coalesce, exp.Least, exp.Greatest, exp.Hour, exp.Day,
-          exp.Month, exp.Year, exp.Quarter, exp.Minute, exp.DateTrunc, exp.Extract,
-          exp.Ln, exp.Log, exp.Exp, exp.Sqrt, exp.Pow, exp.Ceil, exp.Floor,
-          exp.Nullif, exp.Lower, exp.Upper, exp.Length, exp.Substring, exp.Concat,
-          exp.Case, exp.If, exp.Cast)  # fmt: skip
-_LEAVES = (exp.Column, exp.Identifier, exp.Literal, exp.Boolean, exp.Null,
-           exp.DataType, exp.Var)  # fmt: skip
+# Casts the Arrow evaluation supports (every type the allow-list names).
 _CASTS = {
     exp.DataType.Type.DOUBLE: pa.float64(),
     exp.DataType.Type.FLOAT: pa.float64(),
@@ -41,6 +33,7 @@ _CASTS = {
     exp.DataType.Type.INT: pa.int64(),
     exp.DataType.Type.VARCHAR: pa.string(),
     exp.DataType.Type.TEXT: pa.string(),
+    exp.DataType.Type.BOOLEAN: pa.bool_(),
     exp.DataType.Type.DATE: pa.date32(),
     exp.DataType.Type.TIMESTAMP: pa.timestamp("us"),
     exp.DataType.Type.TIMESTAMPTZ: pa.timestamp("us", tz="UTC"),
@@ -71,9 +64,10 @@ def compile_filter(text: str, columns: list[dict]) -> Filter:
     """Parse ``text``, check it against the allow-list and ``columns``, and split it.
     Raises DataMismatch with what's wrong."""
     try:
-        tree = sqlglot.parse_one(text)
-    except sqlglot.errors.ParseError as exc:
+        check_expression(text)
+    except ExpressionError as exc:
         raise DataMismatch(f"invalid filter: {exc}") from exc
+    tree = sqlglot.parse_one(text)
     known = {c["name"]: c for c in columns}
     _check(tree, known)
     schema = iceberg_schema(columns)
@@ -115,20 +109,13 @@ def compile_filter(text: str, columns: list[dict]) -> Filter:
 
 
 def _check(tree: exp.Expression, known: dict) -> None:
+    """Columns must be the dataset's, unqualified (the allow-list is checked first)."""
     for node in tree.walk():
         if isinstance(node, exp.Column):
-            name = node.name
-            if node.table or name not in known:
+            if node.table or node.name not in known:
                 raise DataMismatch(f"invalid filter: unknown column '{node.sql()}'")
-        elif isinstance(node, exp.Log) and node.args.get("expression") is None:
-            raise DataMismatch(
-                "invalid filter: log() is ambiguous across engines; use ln() or log10()"
-            )
         elif isinstance(node, exp.Cast) and node.to.this not in _CASTS:
             raise DataMismatch(f"invalid filter: can't cast to {node.to.sql()}")
-        elif not isinstance(node, (*_OPS, *_FUNCS, *_LEAVES)):
-            what = node.sql() if not isinstance(node, exp.Anonymous) else node.name
-            raise DataMismatch(f"invalid filter: '{what}' isn't allowed")
 
 
 def _conjuncts(tree: exp.Expression) -> list[exp.Expression]:
@@ -370,6 +357,9 @@ def _evaluate(node: exp.Expression, table: pa.Table):
         return pc.cast(_eval(node.this, table), _CASTS[node.to.this])
     if kind in (exp.Case, exp.If):
         return _case(node, table)
+    if kind is exp.Interval:  # INTERVAL '6' HOUR: a duration to add to a time
+        unit = node.args["unit"].name.lower() + "s"
+        return pa.scalar(timedelta(**{unit: float(node.this.name)}), pa.duration("us"))
     raise DataMismatch(f"invalid filter: '{node.sql()}' isn't allowed")
 
 
