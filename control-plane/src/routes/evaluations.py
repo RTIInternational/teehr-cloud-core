@@ -8,17 +8,45 @@ runs write ``results_<slug>_v<version>`` (warehouse data model, "Evaluation
 outputs"). Runs come next.
 """
 
+import contextlib
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, HTTPException, Path, Response, status
-from pydantic import BaseModel, Field
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    status,
+)
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from src.errors import problem
+from src.access import project_roles
+from src.delegation import (
+    Delegation,
+    DelegationError,
+    Sealer,
+    get_delegation,
+    get_sealer,
+)
+from src.errors import APIError, problem
 from src.evaluations import SpecProblems, plan, spec_hash
-from src.models import Evaluation, EvaluationVersion, Project, Role
+from src.jobs import JobRefused, start_job
+from src.kube import Kube, KubeError, get_kube
+from src.models import (
+    Dataset,
+    Evaluation,
+    EvaluationVersion,
+    JobStatus,
+    Project,
+    Role,
+    Run,
+)
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -27,7 +55,8 @@ from src.routes.projects import (
     _authorize,
     _errors,
 )
-from src.routes.runs import PlanOut
+from src.routes.runs import PlanOut, RunOut, run_out, sync
+from src.tables import TableError, TableForbidden, TableMissing, Tables, get_tables
 
 router = APIRouter(prefix="/v1/projects/{name}/evaluations", tags=["evaluations"])
 
@@ -99,6 +128,41 @@ def _out(evaluation: Evaluation, versions: list[EvaluationVersion]) -> dict[str,
     }
 
 
+@router.get(
+    "",
+    operation_id="list_evaluations",
+    response_model=list[EvaluationSummaryOut],
+    responses=_errors(401, 404),
+)
+def list_evaluations(
+    name: ProjectName, session: SessionDep, identity: IdentityDep, settings: SettingsDep
+):
+    """The project's saved evaluations, with their latest versions. Needs the read
+    role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    latest = (
+        select(
+            EvaluationVersion.evaluation_id,
+            func.max(EvaluationVersion.version).label("version"),
+            func.max(EvaluationVersion.created_at).label("updated_at"),
+        )
+        .group_by(EvaluationVersion.evaluation_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(Evaluation, latest.c.version, latest.c.updated_at)
+        .join(latest, latest.c.evaluation_id == Evaluation.id)
+        .where(Evaluation.project_id == project.id)
+        .order_by(Evaluation.slug)
+    )
+    return [
+        EvaluationSummaryOut(
+            slug=e.slug, version=v, updated_at=u, created_by=e.created_by
+        )
+        for e, v, u in rows
+    ]
+
+
 @router.put(
     "/{slug}",
     operation_id="save_evaluation",
@@ -164,41 +228,6 @@ def save_evaluation(
 
 
 @router.get(
-    "",
-    operation_id="list_evaluations",
-    response_model=list[EvaluationSummaryOut],
-    responses=_errors(401, 404),
-)
-def list_evaluations(
-    name: ProjectName, session: SessionDep, identity: IdentityDep, settings: SettingsDep
-):
-    """The project's saved evaluations, with their latest versions. Needs the read
-    role."""
-    project, _ = _authorize(session, name, identity, settings, Role.READ)
-    latest = (
-        select(
-            EvaluationVersion.evaluation_id,
-            func.max(EvaluationVersion.version).label("version"),
-            func.max(EvaluationVersion.created_at).label("updated_at"),
-        )
-        .group_by(EvaluationVersion.evaluation_id)
-        .subquery()
-    )
-    rows = session.execute(
-        select(Evaluation, latest.c.version, latest.c.updated_at)
-        .join(latest, latest.c.evaluation_id == Evaluation.id)
-        .where(Evaluation.project_id == project.id)
-        .order_by(Evaluation.slug)
-    )
-    return [
-        EvaluationSummaryOut(
-            slug=e.slug, version=v, updated_at=u, created_by=e.created_by
-        )
-        for e, v, u in rows
-    ]
-
-
-@router.get(
     "/{slug}",
     operation_id="get_evaluation",
     response_model=EvaluationOut,
@@ -253,7 +282,7 @@ def get_evaluation_version(
     "/{slug}",
     operation_id="delete_evaluation",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=_errors(401, 403, 404),
+    responses=_errors(401, 403, 404, 409, 502, 503),
 )
 def delete_evaluation(
     name: ProjectName,
@@ -261,12 +290,67 @@ def delete_evaluation(
     session: SessionDep,
     identity: IdentityDep,
     settings: SettingsDep,
+    tables: Annotated[Tables | None, Depends(get_tables)],
+    kube: Annotated[Kube | None, Depends(get_kube)],
+    keep_results: Annotated[
+        bool,
+        Query(description="Keep the results tables (as datasets of their own)"),
+    ] = False,
 ):
-    """Delete an evaluation and its versions. Needs the admin role."""
-    project, _ = _authorize(session, name, identity, settings, Role.ADMIN)
+    """Delete an evaluation with its versions, runs and results tables
+    (``results_<slug>_v<n>``, dropped as you), unless ``keep_results``. Refused
+    while one of its runs is going. Needs the admin role."""
+    project, my_role = _authorize(session, name, identity, settings, Role.ADMIN)
     evaluation = _evaluation(session, project, slug)
     if evaluation is None:
         raise _not_found()
+    versions = _versions(session, evaluation)
+    runs = session.scalars(
+        select(Run).where(Run.evaluation_version_id.in_([v.id for v in versions]))
+    ).all()
+    for run in runs:
+        sync(session, kube, run)
+    going = [
+        r for r in runs if r.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
+    ]
+    if going:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"'{slug}' has {len(going)} run(s) going; wait for them to finish",
+        )
+    if not keep_results:
+        names = [results_dataset(slug, v.version) for v in versions]
+        results = session.scalars(
+            select(Dataset).where(
+                Dataset.project_id == project.id, Dataset.name.in_(names)
+            )
+        ).all()
+        if results and tables is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Table storage is not configured"
+            )
+        for dataset in results:
+            try:
+                tables.drop_table(identity.token, project.name, dataset.name)
+            except TableMissing:
+                pass  # gone from the catalog already; drop the record
+            except TableForbidden as exc:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    f"The catalog refused dropping '{dataset.name}'"
+                    + (
+                        "; your token may predate your role, get a new one"
+                        if my_role
+                        else ""
+                    ),
+                ) from exc
+            except TableError as exc:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    f"The catalog could not drop '{dataset.name}'",
+                ) from exc
+            session.delete(dataset)
+            session.commit()
     session.execute(
         delete(EvaluationVersion).where(
             EvaluationVersion.evaluation_id == evaluation.id
@@ -274,3 +358,156 @@ def delete_evaluation(
     )
     session.delete(evaluation)
     session.commit()
+
+
+# --- runs ---------------------------------------------------------------------
+
+
+class RunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int | None = Field(default=None, ge=1, description="Default: the latest")
+
+
+def results_dataset(slug: str, version: int) -> str:
+    return f"results_{slug}_v{version}"
+
+
+@router.post(
+    "/{slug}/runs",
+    operation_id="start_run",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RunOut,
+    responses=_errors(401, 403, 404, 429, 502, 503),
+)
+def start_run(
+    name: ProjectName,
+    slug: Slug,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+    delegation: Annotated[Delegation | None, Depends(get_delegation)],
+    sealer: Annotated[Sealer | None, Depends(get_sealer)],
+    body: Annotated[RunRequest | None, Body()] = None,
+):
+    """Run a version of the evaluation (default the latest) as a job acting as
+    you: it reads the inputs, runs the spec and writes results_<slug>_v<version>
+    (replacing an earlier run's). The spec is planned again first, against the
+    datasets as they are now (422 if it no longer plans). Needs the write role."""
+    project, my_role = _authorize(session, name, identity, settings, Role.WRITE)
+    if (
+        my_role is not None
+        and not identity.has_any_role(settings.admin_roles)
+        and project_roles(project.name)[my_role] not in identity.roles
+    ):
+        # The job acts with this token's roles (token exchange can't add any).
+        raise APIError(
+            status.HTTP_403_FORBIDDEN,
+            f"Your access token doesn't carry your {my_role.value} role in "
+            f"'{project.name}', so the run would go without it. Get a new token "
+            "and retry.",
+            code="token_refresh_required",
+        )
+    if kube is None or delegation is None or sealer is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="Runs (jobs) aren't configured"
+        )
+    evaluation = _evaluation(session, project, slug)
+    versions = _versions(session, evaluation) if evaluation else []
+    wanted = (
+        body.version
+        if body and body.version
+        else (versions[-1].version if versions else 0)
+    )
+    version = next((v for v in versions if v.version == wanted), None)
+    if evaluation is None or version is None:
+        raise _not_found()
+    try:
+        planned = plan(session, project, version.spec)
+    except SpecProblems as exc:
+        first = exc.errors[0]["msg"] if exc.errors else "Invalid spec"
+        return problem(422, first, errors=exc.errors)
+    if planned.manifest["location_fields"]:
+        fields = ", ".join(planned.manifest["location_fields"])
+        return problem(
+            422,
+            f"fields {fields} label series by their location layer, which runs "
+            "don't do yet",
+            errors=[{"loc": ["body", "fields"], "type": "unsupported",
+                     "msg": f"location fields aren't run yet: {fields}"}],
+        )  # fmt: skip
+    try:
+        job = start_job(
+            session, settings, kube, delegation, sealer,
+            kind="run", project=project,
+            caller=identity.subject, caller_token=identity.token,
+        )  # fmt: skip
+    except JobRefused as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
+    except DelegationError as exc:
+        session.rollback()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Couldn't get a token for the job to act as you; sign in again and retry",
+        ) from exc
+    except KubeError as exc:
+        session.rollback()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="Couldn't start the run's job"
+        ) from exc
+    run = Run(
+        project_id=project.id,
+        evaluation_version_id=version.id,
+        job_id=job.id,
+        status=job.status.value,
+        created_by=identity.subject,
+        task={
+            "evaluation": slug,
+            "version": version.version,
+            "spec": version.spec,
+            "results_dataset": results_dataset(slug, version.version),
+            "manifest": planned.manifest,
+        },
+    )
+    session.add(run)
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        with contextlib.suppress(KubeError):
+            kube.delete_job(job.k8s_name)
+        raise
+    session.refresh(run)
+    return run_out(run)
+
+
+@router.get(
+    "/{slug}/runs",
+    operation_id="list_runs",
+    response_model=list[RunOut],
+    responses=_errors(401, 404),
+)
+def list_runs(
+    name: ProjectName,
+    slug: Slug,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+):
+    """The evaluation's runs, newest first. Needs the read role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    evaluation = _evaluation(session, project, slug)
+    if evaluation is None:
+        raise _not_found()
+    runs = session.scalars(
+        select(Run)
+        .join(EvaluationVersion, EvaluationVersion.id == Run.evaluation_version_id)
+        .where(EvaluationVersion.evaluation_id == evaluation.id)
+        .order_by(Run.created_at.desc())
+    ).all()
+    for run in runs:
+        sync(session, kube, run)
+    return [run_out(r) for r in runs]

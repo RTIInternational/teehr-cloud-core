@@ -8,6 +8,9 @@ user token. A grant works only while its job is queued or running:
   and a URL to read the staged file); marks the job running.
 - ``POST /v1/job-grants/progress``: rows done so far.
 - ``POST /v1/job-grants/finish``: the outcome; the grant stops working.
+- ``POST /v1/job-grants/results-table``: a run's results table, created as the
+  caller and registered (runs may write it; the caller needn't be able to
+  register untyped datasets).
 
 Internal: not in the published API.
 """
@@ -21,6 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.dataset_types import TABLE
 from src.delegation import (
     Delegation,
     DelegationError,
@@ -30,9 +34,11 @@ from src.delegation import (
 )
 from src.errors import APIError
 from src.jobs import by_grant, end
-from src.models import Job, JobStatus, Project, Upload, UploadStatus
+from src.models import Dataset, Job, JobStatus, Project, Run, Upload, UploadStatus
 from src.routes.projects import SessionDep, SettingsDep
+from src.schemas import DatasetColumn
 from src.staging import Staging, get_staging
+from src.tables import TableError, TableExists, Tables, get_tables
 
 router = APIRouter(prefix="/v1/job-grants", include_in_schema=False)
 
@@ -57,6 +63,10 @@ JobDep = Annotated[Job, Depends(_job)]
 
 def _upload(session: Session, job: Job) -> Upload | None:
     return session.scalar(select(Upload).where(Upload.job_id == job.id))
+
+
+def _run(session: Session, job: Job) -> Run | None:
+    return session.scalar(select(Run).where(Run.job_id == job.id))
 
 
 @router.post("/token")
@@ -110,11 +120,16 @@ def task(
             # Long enough for a big file to download.
             "download_url": staging.download_url(upload.object_key, 6 * 3600),
         }
+    run = _run(session, job)
+    if job.kind == "run" and run is not None:
+        body["run"] = {"id": str(run.id), **(run.task or {})}
     if job.status == JobStatus.QUEUED:
         now = datetime.now(UTC)
         job.status, job.started_at = JobStatus.RUNNING, now
         if upload is not None:
             upload.status, upload.started_at = UploadStatus.RUNNING, now
+        if run is not None:
+            run.status, run.started_at = JobStatus.RUNNING.value, now
         session.commit()
     return body
 
@@ -153,5 +168,100 @@ def finish(body: Finish, job: JobDep, session: SessionDep) -> Response:
             body.error,
         )
         upload.finished_at = job.finished_at
+    run = _run(session, job)
+    if run is not None:
+        run.status = job.status.value
+        run.result, run.error, run.finished_at = (
+            body.result,
+            body.error,
+            job.finished_at,
+        )
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class ResultsTable(BaseModel):
+    columns: list[DatasetColumn] = Field(min_length=1, max_length=1000)
+
+
+def _caller_token(
+    job: Job, session: Session, delegation: Delegation | None, sealer: Sealer | None
+) -> str:
+    if delegation is None or sealer is None or not job.refresh_token:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Jobs aren't configured"
+        )
+    try:
+        tokens = delegation.refresh(sealer.open(job.refresh_token))
+    except DelegationError as exc:
+        raise APIError(
+            status.HTTP_401_UNAUTHORIZED,
+            "The caller's login session has ended; the job can't act as them",
+            code=SESSION_ENDED,
+        ) from exc
+    job.refresh_token = sealer.seal(tokens.refresh_token)
+    return tokens.access_token
+
+
+@router.post("/results-table")
+def results_table(
+    body: ResultsTable,
+    job: JobDep,
+    session: SessionDep,
+    delegation: Annotated[Delegation | None, Depends(get_delegation)],
+    sealer: Annotated[Sealer | None, Depends(get_sealer)],
+    tables: Annotated[Tables | None, Depends(get_tables)],
+) -> dict:
+    """Create and register a run's results table (``results_<slug>_v<version>``)
+    as the caller, or confirm the one there has these columns."""
+    run = _run(session, job)
+    if job.kind != "run" or run is None or not run.task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a run's job")
+    if tables is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No table storage")
+    project = session.get(Project, job.project_id)
+    name = run.task["results_dataset"]
+    columns = [c.model_dump(exclude_none=True) for c in body.columns]
+    existing = session.scalar(
+        select(Dataset).where(Dataset.project_id == project.id, Dataset.name == name)
+    )
+    if existing is not None:
+        if existing.columns != columns:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"'{name}' has other columns than this run's results (an earlier "
+                "engine's?); delete it and run again",
+            )
+        return {"dataset": name, "created": False}
+    token = _caller_token(job, session, delegation, sealer)
+    try:
+        tables.create_table(token, project.name, name, columns, None)
+    except TableExists as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"A table '{name}' exists in '{project.name}' but isn't a registered dataset",
+        ) from exc
+    except TableError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "The catalog could not create the table"
+        ) from exc
+    session.add(
+        Dataset(
+            project_id=project.id,
+            name=name,
+            kind=TABLE,
+            description=(
+                f"Results of evaluation '{run.task['evaluation']}' "
+                f"version {run.task['version']}"
+            ),
+            columns=columns,
+            properties={
+                "evaluation": run.task["evaluation"],
+                "version": run.task["version"],
+            },
+            table_identifier=f"{project.name}.{name}",
+            created_by=job.created_by,
+        )
+    )
+    session.commit()
+    return {"dataset": name, "created": True}

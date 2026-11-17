@@ -1,19 +1,25 @@
-"""Evaluation runs (Phase 5). For now: planning a spec before running it.
+"""Evaluation runs (Phase 5).
 
 ``POST /v1/projects/{name}/runs/plan`` checks an evaluation spec against the
 project's datasets (and ``public.<name>`` ones) and says what a run will do, or
-everything that stops it, as 422 ``errors``. Nothing runs; the run itself comes
-next (``POST /v1/projects/{name}/runs``).
+everything that stops it, as 422 ``errors``; nothing runs. Runs of a saved
+evaluation start at ``POST .../evaluations/{slug}/runs``; ``GET .../runs/{id}``
+follows one.
 """
 
+import uuid
+from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from src.errors import problem
 from src.evaluations import SpecProblems, plan
-from src.models import Role
+from src.jobs import reconcile
+from src.kube import Kube, get_kube
+from src.models import Job, Role, Run
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -98,3 +104,73 @@ def plan_run(
         first = exc.errors[0]["msg"] if exc.errors else "Invalid spec"
         return problem(422, first, errors=exc.errors)
     return PlanOut.model_validate(summary, from_attributes=True)
+
+
+# --- runs ---------------------------------------------------------------------
+
+
+class RunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    evaluation: str | None = Field(description="The evaluation's slug")
+    version: int | None = Field(description="The evaluation version it ran")
+    status: str = Field(description="queued | running | succeeded | failed | cancelled")
+    results_dataset: str | None = Field(
+        description="Where its results are: results_<slug>_v<version>"
+    )
+    result: dict[str, Any] | None = Field(
+        description="When it succeeded: rows, each input's snapshot, engine version"
+    )
+    error: str | None
+    created_by: str
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+def run_out(run: Run) -> RunOut:
+    task = run.task or {}
+    return RunOut(
+        id=run.id, evaluation=task.get("evaluation"), version=task.get("version"),
+        status=run.status, results_dataset=task.get("results_dataset"),
+        result=run.result, error=run.error, created_by=run.created_by,
+        created_at=run.created_at, started_at=run.started_at,
+        finished_at=run.finished_at,
+    )  # fmt: skip
+
+
+def sync(session: Session, kube: Kube | None, run: Run) -> None:
+    """Bring a run up to date with its job (fail it if its pod died unreported)."""
+    job = session.get(Job, run.job_id) if run.job_id else None
+    if job is None:
+        return
+    if reconcile(kube, job) or run.status != job.status.value:
+        run.status, run.error = job.status.value, job.error or run.error
+        run.started_at = run.started_at or job.started_at
+        run.finished_at = job.finished_at
+        session.commit()
+
+
+@router.get(
+    "/{run_id}",
+    operation_id="get_run",
+    response_model=RunOut,
+    responses=_errors(401, 404),
+)
+def get_run(
+    name: ProjectName,
+    run_id: uuid.UUID,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+):
+    """A run's status and, once it has succeeded, where its results are. Needs the
+    read role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    run = session.get(Run, run_id)
+    if run is None or run.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Run not found")
+    sync(session, kube, run)
+    return run_out(run)

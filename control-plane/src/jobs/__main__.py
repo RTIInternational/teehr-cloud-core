@@ -2,7 +2,8 @@
 
 Reads its grant from ``JOB_GRANT`` and the control plane's address from
 ``CONTROL_PLANE_INTERNAL_URL``; does the job as its caller; reports the outcome.
-Exits 0 once the outcome is reported (a failed load included), 1 if it can't be.
+Exits 0 once the outcome is reported (a failed load or run included), 1 if it
+can't be.
 """
 
 import logging
@@ -11,6 +12,7 @@ import sys
 import traceback
 
 from src.jobs.load import GrantClient, LoadFailed, load_upload
+from src.jobs.run import run_evaluation
 
 log = logging.getLogger("src.jobs")
 
@@ -22,9 +24,12 @@ def run(job_id: str) -> int:
     task = client.task()
     log.info("job %s: %s in %s", job_id, task["kind"], task["project"])
     try:
-        if task["kind"] != "upload":
+        if task["kind"] == "upload":
+            result = load_upload(client, task)
+        elif task["kind"] == "run":
+            result = run_evaluation(client, task)
+        else:
             raise LoadFailed([f"unknown job kind '{task['kind']}'"])
-        result = load_upload(client, task)
     except LoadFailed as exc:
         log.warning("job %s failed: %s", job_id, exc)
         client.finish("failed", problems=exc.problems, error=str(exc)[:10_000])
