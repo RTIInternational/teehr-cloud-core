@@ -134,8 +134,8 @@ def test_a_run_reads_runs_and_writes_its_results(client, lake, jobs, tables):  #
         "run_id", "spec_version", "engine_version",
     }  # fmt: skip
 
-    mode, _, written = tables.writes[-1]
-    assert mode == "overwrite"
+    assert {m for m, _, _ in tables.writes} == {"overwrite"}
+    written = tables.written[("flood", "results_e_v1")][-1]
     rows = {r["primary_series_key"]: r for r in written.to_pylist()}
     for obs_key, sim_key in LINKS.items():  # the first three hours (the filter)
         o, s = np.array(OBS[obs_key][:3]), np.array(SIM[sim_key][:3])
@@ -276,3 +276,49 @@ def test_no_pairs_by_default(client, lake, jobs):  # noqa: F811
     assert "pairs" not in run_job(client, kube)
     resp = client.get("/v1/projects/flood/datasets/pairs_e_v1", headers=ALICE)
     assert resp.status_code == 404
+
+
+def test_state_is_kept_and_gives_the_results_back(client, lake, jobs, tables):  # noqa: F811
+    from teehr_core.engine import DuckDBBackend
+    from teehr_core.spec import load_spec
+
+    from src.jobs.run import decode_state
+
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse", "relative_median"]
+    saved(client, body)
+    client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
+    result = run_job(client, kube)
+    # One row per group, transform and month: two series, all in January 2026.
+    assert result["state"]["dataset"] == "state_e_v1" and result["state"]["rows"] == 2
+    assert result["state"]["bucket"] == "month"
+    columns = client.get("/v1/projects/flood/datasets/state_e_v1", headers=ALICE).json()
+    names = {c["name"] for c in columns["columns"]}
+    assert {
+        "__transform",
+        "__bucket",
+        "n",
+        "sum_obs",
+        "xs__" + b"~obs".hex(),
+    } <= names
+
+    stored = tables.written[("flood", "state_e_v1")][-1]
+    first = DuckDBBackend().first_stage_from_state(
+        load_spec(body), decode_state(stored)
+    )
+    results = tables.written[("flood", "results_e_v1")][-1]
+    by_key = {r["primary_series_key"]: r for r in results.to_pylist()}
+    for row in first.to_pylist():
+        want = by_key[row["primary_series_key"]]
+        for metric in ("count", "root_mean_square_error", "relative_median"):
+            assert row[metric] == pytest.approx(want[metric])
+
+
+def test_no_state_when_a_metric_needs_every_pair(client, lake, jobs):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "spearman_correlation"]
+    saved(client, body)
+    client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
+    assert "state" not in run_job(client, kube)

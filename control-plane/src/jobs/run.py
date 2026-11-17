@@ -13,22 +13,38 @@
    (``output.pairs: all``), the paired rows go to ``pairs_<slug>_v<version>`` the
    same way.
 
+State: when the first stage can be computed from mergeable state (teehr-core's
+engine says which can), the run computes it per group and month of value_time,
+keeps it in ``state_<slug>_v<version>``, and computes the results from it, so a
+full run and an incremental one (which recomputes only changed months) give the
+same results. State column names that datasets can't hold (``+crps|fair|sum``,
+``~obs``) are stored hex-encoded, and quantile sketches as JSON text.
+
 The inputs' snapshot ids are the run's result, with the rows written, so a run
 says exactly what it read.
 """
 
+import json
+import re
 from typing import Any
 
 import httpx
 import pyarrow as pa
 import pyarrow.compute as pc
 from teehr_core import __version__ as ENGINE_VERSION
-from teehr_core.engine import ContractError, PlanError, evaluate
+from teehr_core.engine import ContractError, DuckDBBackend, PlanError, build_plan
+from teehr_core.metrics.state import SKETCH_TYPE
+from teehr_core.spec import EvaluationSpec, load_spec
 
 from src.evaluations import SpecProblems, catalog_from
 from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
 
 PAGE_ROWS = 1_000_000  # the API's largest binary page
+#: State is kept per month of value_time (a rerun recomputes changed months only).
+STATE_BUCKET = "month"
+LINEAGE = ("run_id", "spec_version", "engine_version")
+_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_ENCODED = "xs__"
 
 
 def read_all(
@@ -173,21 +189,82 @@ def store(
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
 
 
+def keeps_state(spec: EvaluationSpec) -> bool:
+    """Whether runs of ``spec`` keep state (and compute results from it)."""
+    stage = spec.aggregate[0]
+    return (
+        not DuckDBBackend.state_blockers(spec)
+        and not stage.grouping_sets  # coarser sets are built from state: later
+        and not (stage.skill is not None and stage.skill.test is not None)  # DM: later
+    )
+
+
+def encode_state(state: pa.Table) -> pa.Table:
+    """State rows as dataset columns: names a dataset can't hold hex-encoded,
+    sketches (lists of {b, w}) as JSON text."""
+    names, arrays = [], []
+    for field in state.schema:
+        column = state[field.name]
+        if pa.types.is_list(field.type):
+            column = pa.array(
+                [None if v is None else json.dumps([[e["b"], e["w"]] for e in v])
+                 for v in column.to_pylist()],
+                pa.string(),
+            )  # fmt: skip
+        ok = _COLUMN.match(field.name) and not field.name.startswith(_ENCODED)
+        names.append(field.name if ok else _ENCODED + field.name.encode().hex())
+        arrays.append(column)
+    return pa.Table.from_arrays(arrays, names=names)
+
+
+def decode_state(table: pa.Table) -> pa.Table:
+    """The engine's state rows from a stored state table (lineage dropped)."""
+    names, arrays = [], []
+    for name in table.column_names:
+        if name in LINEAGE:
+            continue
+        column = table[name]
+        if name.startswith(_ENCODED):
+            name = bytes.fromhex(name.removeprefix(_ENCODED)).decode()
+        if name.startswith("~"):  # a quantile sketch
+            column = pa.array(
+                [None if v is None else [{"b": b, "w": w} for b, w in json.loads(v)]
+                 for v in column.to_pylist()],
+                SKETCH_TYPE,
+            )  # fmt: skip
+        names.append(name)
+        arrays.append(column)
+    return pa.Table.from_arrays(arrays, names=names)
+
+
 def run_evaluation(client: GrantClient, task: dict) -> dict:
     """Do a run's task; returns its result (raises LoadFailed with what went wrong)."""
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
-    if run.get("pairs"):
-        spec = {**spec, "output": {**spec.get("output", {}), "include_pairs": True}}
     rows, series, snapshots = read_inputs(client, manifest, spec)
+    backend = DuckDBBackend()
     try:
+        parsed = load_spec(spec)
         catalog = catalog_from(manifest, rows, series)
-        result = evaluate(spec, catalog)
+        pairs = backend.pairs(build_plan(parsed, catalog))
+        state = None
+        if keeps_state(parsed):
+            state = backend.first_stage_state(parsed, pairs, STATE_BUCKET)
+            stages = backend.summarize(
+                parsed, backend.first_stage_from_state(parsed, state)
+            )
+        else:
+            stages = backend.aggregate(parsed, pairs)
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
-    out = store(client, project, "results", result.table, run)
-    if run.get("pairs") and result.pairs is not None:
-        out["pairs"] = store(client, project, "pairs", result.pairs, run)
+    out = store(client, project, "results", stages[-1], run)
+    if run.get("pairs"):
+        out["pairs"] = store(client, project, "pairs", pairs, run)
+    if state is not None:
+        out["state"] = {
+            **store(client, project, "state", encode_state(state), run),
+            "bucket": STATE_BUCKET,
+        }
     return {
         **out,
         "inputs": snapshots,
