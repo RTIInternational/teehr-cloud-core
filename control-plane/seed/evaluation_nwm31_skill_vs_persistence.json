@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "nwm31-skill-vs-persistence",
+  "inputs": {
+    "primary": {"dataset": "public.usgs_streamflow"},
+    "secondary": [
+      {"dataset": "public.nwm31_short_range"},
+      {"generate": "persistence", "like": "public.nwm31_short_range", "max_age": "PT6H"}
+    ]
+  },
+  "pair": {"relation": "public.usgs_nwm31"},
+  "aggregate": [
+    {
+      "group_by": ["primary_series_key", "secondary_dataset"],
+      "metrics": ["count", "root_mean_square_error", "kling_gupta_efficiency"],
+      "skill": {
+        "reference": "persistence:public.nwm31_short_range",
+        "metrics": ["root_mean_square_error"],
+        "test": "dm"
+      }
+    }
+  ],
+  "output": {"unit": "[cft_i]/s"}
+}
