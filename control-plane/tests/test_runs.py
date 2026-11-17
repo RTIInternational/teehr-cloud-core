@@ -470,3 +470,48 @@ def test_rollups_keep_the_finest_sets_state(client, lake, jobs, tables):  # noqa
     second = run_once(client, kube)
     assert (second["mode"], second["months"]) == ("incremental", ["2026-02"])
     check(months=True)
+
+
+def _rows(table):
+    keys = ("primary_series_key", "secondary_dataset")
+    return sorted(table.to_pylist(), key=lambda r: tuple(str(r.get(k)) for k in keys))
+
+
+def test_persistence_and_dm_runs_are_incremental_and_match_full_ones(  # noqa: F811
+    client, lake, jobs, tables
+):
+    kube, _ = jobs
+    body = spec(secondary=())
+    body["inputs"]["secondary"] = [
+        {"dataset": "nwm_sr"},
+        {"generate": "persistence", "like": "nwm_sr", "max_age": "PT6H"},
+    ]
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    body["aggregate"][0]["skill"] = {
+        "reference": "persistence:nwm_sr", "metrics": ["rmse"], "test": "dm",
+    }  # fmt: skip
+    saved(client, body)
+
+    first = run_once(client, kube)
+    assert first["mode"] == "full" and first["state"]["rows"] > 0
+    assert first["dm"]["max_lag"] >= 0 and first["dm"]["step"] == 3600
+    assert first["persistence_reach"] == 6 * 3600 + 3 * 3600  # max_age + longest lead
+
+    add_february(client, lake)
+    second = run_once(client, kube)
+    assert second["mode"] == "incremental" and second["changed"] == ["2026-02"]
+    assert "2026-02" in second["months"]
+    incremental = _rows(tables.written[("flood", "results_e_v1")][-1])
+
+    full = run_once(client, kube, {"full": True})
+    assert full["mode"] == "full"
+    recomputed = _rows(tables.written[("flood", "results_e_v1")][-1])
+    assert len(incremental) == len(recomputed) > 0
+    for a, b in zip(incremental, recomputed, strict=True):
+        for column, value in b.items():
+            if column == "run_id":
+                continue
+            if isinstance(value, float):
+                assert a[column] == pytest.approx(value, nan_ok=True), column
+            else:
+                assert a[column] == value, column

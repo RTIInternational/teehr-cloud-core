@@ -9,9 +9,13 @@ recompute only the months whose inputs changed and merge them with the rest:
   months of value_time it touched; every other write (an overwrite, which may
   remove rows anywhere, or a series table, crosswalk or layer) changes too much
   to tell, so the run is a full one;
-- what a month's pairs depend on: only that month's rows, unless a field looks
-  across a whole series (exceedance, events, change) or an input is generated from
-  observations at other times (persistence, climatology); those runs are full.
+- what a month's pairs depend on: that month's rows; with a persistence input also
+  the observations up to its reach before (``max_age`` plus the longest lead), and
+  with a Diebold-Mariano test the lag partners up to ``step × lags`` before. The
+  months a change reaches are recomputed with it (the job widens them by the
+  reaches the last full run recorded). A field that looks across a whole series
+  (exceedance, events, change) or a climatology or blend input (built from the whole
+  record) makes every run full.
 
 Writes that land while a run reads count as new for the next one: at worst a
 month is recomputed twice.
@@ -40,8 +44,9 @@ from src.models import Dataset, DatasetWrite, EvaluationVersion, Project, Run
 def blockers(spec: EvaluationSpec) -> list[str]:
     """Why a spec's months can't be recomputed on their own (empty: they can)."""
     out = []
-    if any(isinstance(p, GeneratedInput) for p in spec.inputs.secondary):
-        out.append("a generated input uses observations from other months")
+    for p in spec.inputs.secondary:
+        if isinstance(p, GeneratedInput) and p.generate != "persistence":
+            out.append(f"a {p.generate} input is built from the whole record")
     for f in spec.fields:
         if isinstance(f, ExprField | CalendarField | LeadTimeBinsField):
             continue
@@ -88,8 +93,9 @@ def decide(
     keeps_state: bool,
     full: bool = False,
 ) -> dict[str, Any]:
-    """``{"mode": "incremental", "months": [...], "since_run": id}`` or
-    ``{"mode": "full", "why": ...}`` for a run about to start."""
+    """``{"mode": "incremental", "months": [...], ...}`` (the months changed, those
+    of observations, and the stored reaches) or ``{"mode": "full", "why": ...}`` for
+    a run about to start."""
     if full:
         return _full("a full run was asked for")
     if not keeps_state:
@@ -104,9 +110,20 @@ def decide(
         "datasets"
     ]:
         return _full("the datasets it reads changed")
+    before = previous.result or {}
+    skill = spec.aggregate[0].skill
+    if skill is not None and skill.test is not None and not before.get("dm"):
+        return _full("the stored state has no Diebold-Mariano settings")
+    persistence = any(
+        isinstance(p, GeneratedInput) and p.generate == "persistence"
+        for p in spec.inputs.secondary
+    )
+    if persistence and before.get("persistence_reach") is None:
+        return _full("the stored state has no persistence reach")
     since = _aware(previous.started_at)
     months: set[str] = set()
-    for d in manifest["datasets"].values():
+    obs_months: set[str] = set()
+    for ref, d in manifest["datasets"].items():
         targets = [(d["project"], d["name"], d["kind"])]
         if d.get("series"):
             targets.append((d["series"]["project"], d["series"]["name"], "series"))
@@ -133,8 +150,14 @@ def decide(
                         f"'{where}' was overwritten (rows anywhere may be gone)"
                     )
                 months.update(w.months)
+                if ref == spec.inputs.primary.dataset and kind == TIMESERIES:
+                    obs_months.update(w.months)
     return {
         "mode": "incremental",
         "months": sorted(months),
+        # Observations reach forward through persistence forecasts made from them.
+        "obs_months": sorted(obs_months),
+        "dm": before.get("dm"),
+        "persistence_reach": before.get("persistence_reach"),
         "since_run": str(previous.id),
     }

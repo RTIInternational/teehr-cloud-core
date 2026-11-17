@@ -26,17 +26,21 @@ says exactly what it read.
 
 import json
 import re
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import pyarrow as pa
 import pyarrow.compute as pc
 from teehr_core import __version__ as ENGINE_VERSION
+from teehr_core.durations import parse_duration
 from teehr_core.engine import ContractError, DuckDBBackend, PlanError, build_plan
 from teehr_core.engine.connect import arrow_table, memory_connection, register
-from teehr_core.engine.duckdb_backend import state_rollup_sql
+from teehr_core.engine.duckdb_backend import DmSettings, state_rollup_sql
+from teehr_core.metrics.significance import default_lag
 from teehr_core.metrics.state import SKETCH_TYPE
-from teehr_core.spec import EvaluationSpec, load_spec
+from teehr_core.spec import EvaluationSpec, GeneratedInput, load_spec
 
 from src.evaluations import SpecProblems, catalog_from
 from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
@@ -89,17 +93,46 @@ def _input_filters(spec: dict) -> dict[str, str]:
     }
 
 
-def months_filter(months: list[str], column: str = "value_time") -> str:
-    """An expression keeping rows whose ``column`` is in one of ``months`` (YYYY-MM)."""
-    parts = []
+def _start(month: str) -> datetime:
+    year, number = (int(x) for x in month.split("-"))
+    return datetime(year, number, 1, tzinfo=UTC)
+
+
+def _next(t: datetime) -> datetime:
+    return datetime(t.year + (t.month == 12), t.month % 12 + 1, 1, tzinfo=UTC)
+
+
+def spread(months: Iterable[str], reach: timedelta) -> set[str]:
+    """``months`` and the months up to ``reach`` after each."""
+    out = set()
     for month in months:
-        year, number = (int(x) for x in month.split("-"))
-        end = (year + 1, 1) if number == 12 else (year, number + 1)
-        parts.append(
-            f"({column} >= '{year:04d}-{number:02d}-01T00:00:00Z' AND "
-            f"{column} < '{end[0]:04d}-{end[1]:02d}-01T00:00:00Z')"
-        )
-    return " OR ".join(parts)
+        t = _start(month)
+        end = _next(t) + reach
+        while t < end:
+            out.add(f"{t.year:04d}-{t.month:02d}")
+            t = _next(t)
+    return out
+
+
+def _windows(months: Iterable[str], lookback: timedelta, form: str) -> str:
+    def at(t: datetime) -> str:
+        return form.format(t.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    return " OR ".join(
+        f"(value_time >= {at(_start(m) - lookback)} AND value_time < {at(_next(_start(m)))})"
+        for m in sorted(months)
+    )
+
+
+def months_filter(months: Iterable[str], lookback: timedelta = timedelta(0)) -> str:
+    """A filter (the shared expression language) keeping rows whose value_time is in
+    one of ``months`` (YYYY-MM), or up to ``lookback`` before one."""
+    return _windows(months, lookback, "'{}'")
+
+
+def months_sql(months: Iterable[str], lookback: timedelta = timedelta(0)) -> str:
+    """The same, as DuckDB SQL (for the engine's pairs)."""
+    return _windows(months, lookback, "TIMESTAMPTZ '{}'")
 
 
 def _both(a: str | None, b: str | None) -> str | None:
@@ -107,19 +140,23 @@ def _both(a: str | None, b: str | None) -> str | None:
 
 
 def read_inputs(
-    client: GrantClient, manifest: dict, spec: dict, months: list[str] | None = None
+    client: GrantClient,
+    manifest: dict,
+    spec: dict,
+    windows: dict[str, str] | None = None,
 ) -> tuple[dict[str, pa.Table], dict[str, pa.Table], dict[str, int | None]]:
     """The rows of every dataset in the manifest, their series tables', and the
-    snapshot each was read at (keyed ``<project>.<name>``). With ``months`` (an
-    incremental run), a timeseries' rows are only those months'."""
+    snapshot each was read at (keyed ``<project>.<name>``). With ``windows`` (an
+    incremental run), a timeseries' rows are only those its window keeps (none
+    without one)."""
     filters = _input_filters(spec)
     rows, series, snapshots = {}, {}, {}
     for ref, d in manifest["datasets"].items():
         row_filter = filters.get(ref)
-        if months is not None and d["kind"] == "timeseries":
-            if not months:
-                continue  # nothing changed: no rows to read
-            row_filter = _both(row_filter, months_filter(months))
+        if windows is not None and d["kind"] == "timeseries":
+            if not windows.get(ref):
+                continue  # nothing of it to read
+            row_filter = _both(row_filter, windows[ref])
         rows[ref], snapshots[f"{d['project']}.{d['name']}"] = read_all(
             client, d["project"], d["name"], row_filter
         )
@@ -129,6 +166,16 @@ def read_inputs(
                 client, s["project"], s["name"]
             )
     return rows, series, snapshots
+
+
+def count_rows(client: GrantClient, project: str, name: str) -> int:
+    resp = client.api(
+        "GET", f"/projects/{project}/datasets/{name}/data",
+        params={"limit": 1, "count": "true"}, headers={"Accept": ARROW},
+    )  # fmt: skip
+    if resp.status_code != 200:
+        raise LoadFailed([f"counting {project}.{name}: {_problem(resp)}"])
+    return int(resp.headers.get("x-total-rows") or 0)
 
 
 def _column_type(t: pa.DataType) -> tuple[str, pa.DataType]:
@@ -228,10 +275,7 @@ def store(
 
 def keeps_state(spec: EvaluationSpec) -> bool:
     """Whether runs of ``spec`` keep state (and compute results from it)."""
-    stage = spec.aggregate[0]
-    return not DuckDBBackend.state_blockers(spec) and not (
-        stage.skill is not None and stage.skill.test is not None  # DM: later
-    )
+    return not DuckDBBackend.state_blockers(spec)
 
 
 def first_stage_from_state(
@@ -307,70 +351,205 @@ def _months_of(bucket: pa.ChunkedArray) -> pa.ChunkedArray:
     return pc.strftime(bucket, format="%Y-%m", locale="C")
 
 
-def run_evaluation(client: GrantClient, task: dict) -> dict:
-    """Do a run's task; returns its result (raises LoadFailed with what went wrong)."""
+class _Full(Exception):
+    """An incremental run can't be done after all; a full one is (the reason)."""
+
+
+def _sql(table: pa.Table, query: str) -> pa.Table:
+    con = memory_connection()
+    try:
+        con.execute("SET TimeZone = 'UTC'")
+        register(con, "t", table)
+        return arrow_table(con, query)
+    finally:
+        con.close()
+
+
+def _time_step(tables: list[pa.Table]) -> int | None:
+    """The smallest spacing (seconds) of value times within a series' run."""
+    steps = []
+    for table in tables:
+        if table.num_rows < 2:
+            continue
+        run = (
+            "series_key, reference_time"
+            if "reference_time" in table.column_names
+            else "series_key"
+        )
+        row = _sql(table, (
+            "SELECT min(d) AS d FROM (SELECT epoch(value_time) - lag(epoch(value_time)) "
+            f"OVER (PARTITION BY {run} ORDER BY value_time) AS d FROM t) WHERE d > 0"
+        )).to_pylist()[0]  # fmt: skip
+        if row["d"]:
+            steps.append(int(row["d"]))
+    return min(steps) if steps else None
+
+
+def _max_lead(table: pa.Table) -> timedelta:
+    """The longest lead time of a forecast's latest run in ``table``."""
+    if table.num_rows == 0 or "reference_time" not in table.column_names:
+        return timedelta(0)
+    row = _sql(table, (
+        "SELECT max(epoch(value_time) - epoch(reference_time)) AS s FROM t "
+        "WHERE reference_time = (SELECT max(reference_time) FROM t)"
+    )).to_pylist()[0]  # fmt: skip
+    return timedelta(seconds=row["s"] or 0)
+
+
+def _persistence(spec: EvaluationSpec) -> list[GeneratedInput]:
+    return [
+        p for p in spec.inputs.secondary
+        if isinstance(p, GeneratedInput) and p.generate == "persistence"
+    ]  # fmt: skip
+
+
+def _predicted(spec: EvaluationSpec) -> list[str]:
+    """The datasets of the predicted side: inputs, and persistence's forecasts."""
+    refs = [
+        p.dataset for p in spec.inputs.secondary if not isinstance(p, GeneratedInput)
+    ]
+    return refs + [p.like for p in _persistence(spec) if p.like]
+
+
+def _reach(spec: EvaluationSpec, rows: dict[str, pa.Table]) -> timedelta:
+    """How far after an observation a persistence forecast made from it can be valid."""
+    out = timedelta(0)
+    for p in _persistence(spec):
+        age = parse_duration(p.max_age) if p.max_age else timedelta(0)
+        out = max(out, age + _max_lead(rows.get(p.like, pa.table({}))))
+    return out
+
+
+def _evaluate(client: GrantClient, task: dict, how: dict) -> dict:
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
-    how = run.get("incremental") or {"mode": "full", "why": "not decided"}
-    stored = None
-    if how["mode"] == "incremental":
+    parsed = load_spec(spec)
+    stateful = keeps_state(parsed)
+    skill = parsed.aggregate[0].skill
+    dm_test = skill is not None and skill.test is not None
+    incremental = how["mode"] == "incremental"
+
+    stored, windows, dirty = None, None, None
+    dm: DmSettings | None = None
+    p_reach = timedelta(0)
+    if incremental:
         stored = _stored_state(client, project, run)
         if stored is None:
-            how = {"mode": "full", "why": "the stored state couldn't be read"}
-    months = how["months"] if how["mode"] == "incremental" else None
-    rows, series, snapshots = read_inputs(client, manifest, spec, months)
-    pairs = None
-    try:
-        parsed = load_spec(spec)
-        stateful = keeps_state(parsed)
-        # With state, pair into a rollup's finest set only (the rest come from state).
-        backend = DuckDBBackend(finest_set_only=stateful)
-        if months != []:
-            catalog = catalog_from(manifest, rows, series)
-            pairs = backend.pairs(build_plan(parsed, catalog))
-        state = None
-        if stateful:
-            fresh = None
-            if pairs is not None and pairs.num_rows:
-                fresh = backend.first_stage_state(parsed, pairs, STATE_BUCKET)
-            if months is None:
-                state = fresh
-            else:  # the stored state, its changed months replaced
-                kept = stored.filter(
-                    pc.invert(
-                        pc.is_in(
-                            _months_of(stored["__bucket"]),
-                            pa.array(months, pa.string()),
-                        )
+            raise _Full("the stored state couldn't be read")
+        if how.get("dm"):
+            dm = DmSettings(**how["dm"])
+            if dm_test and skill.lag is None:
+                total = sum(
+                    count_rows(client, manifest["datasets"][r]["project"],
+                               manifest["datasets"][r]["name"])
+                    for r in _predicted(parsed) if r in manifest["datasets"]
+                )  # fmt: skip
+                needed = default_lag(max(total, 1))
+                if needed > (dm.max_lag or 0):
+                    raise _Full(
+                        f"the test now needs {needed} lags; the state keeps {dm.max_lag}"
+                    )
+        p_reach = timedelta(seconds=how.get("persistence_reach") or 0)
+        lag_reach = (
+            timedelta(seconds=(dm.step or 0) * (dm.max_lag or 0))
+            if dm
+            else timedelta(0)
+        )
+        dirty = (
+            set(how["months"])
+            | spread(how.get("obs_months", []), p_reach + lag_reach)
+            | spread(how["months"], lag_reach)
+        )
+        observed = parsed.inputs.primary.dataset
+        windows = {
+            ref: months_filter(
+                dirty, (p_reach if ref == observed else timedelta(0)) + lag_reach
+            )
+            for ref, d in manifest["datasets"].items()
+            if d["kind"] == "timeseries" and dirty
+        }
+    rows, series, snapshots = read_inputs(client, manifest, spec, windows)
+
+    if stateful and not incremental:
+        if dm_test:
+            predicted = [rows[r] for r in _predicted(parsed) if r in rows]
+            n = sum(t.num_rows for t in predicted)
+            lags = skill.lag if skill.lag is not None else default_lag(4 * max(n, 1))
+            dm = DmSettings(_time_step(predicted) or 3600, lags)
+        p_reach = _reach(parsed, rows)
+    elif incremental and _persistence(parsed) and _reach(parsed, rows) > p_reach:
+        raise _Full(
+            "persistence forecasts now reach further than the stored state allows"
+        )
+
+    backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
+    pairs, state = None, None
+    if dirty != set():
+        pairs = backend.pairs(build_plan(parsed, catalog_from(manifest, rows, series)))
+    if stateful:
+        fresh = None
+        if pairs is not None and pairs.num_rows:
+            counted = months_sql(dirty) if incremental else None
+            fresh = backend.first_stage_state(parsed, pairs, STATE_BUCKET, counted)
+            if incremental:  # the pairs this run is for (the rest were lag partners)
+                pairs = _sql(pairs, f"SELECT * FROM t WHERE {counted}")
+        if not incremental:
+            state = fresh
+        else:  # the stored state, its changed months replaced
+            kept = stored.filter(
+                pc.invert(
+                    pc.is_in(
+                        _months_of(stored["__bucket"]),
+                        pa.array(sorted(dirty), pa.string()),
                     )
                 )
-                parts = [t for t in (kept, fresh) if t is not None and t.num_rows]
-                state = (
-                    pa.concat_tables(parts, promote_options="permissive")
-                    if parts
-                    else kept
-                )
-            if state is None:
-                raise PlanError("the evaluation produced no pairs")
-            stages = backend.summarize(
-                parsed, first_stage_from_state(backend, parsed, state)
             )
-        else:
-            stages = backend.aggregate(parsed, pairs)
-    except (SpecProblems, PlanError, ContractError, ValueError) as exc:
-        raise LoadFailed([str(exc)]) from None
+            parts = [t for t in (kept, fresh) if t is not None and t.num_rows]
+            state = (
+                pa.concat_tables(parts, promote_options="permissive") if parts else kept
+            )
+        if state is None:
+            raise PlanError("the evaluation produced no pairs")
+        stages = backend.summarize(
+            parsed, first_stage_from_state(backend, parsed, state)
+        )
+    else:
+        stages = backend.aggregate(parsed, pairs)
+
     out = store(client, project, "results", stages[-1], run)
     if run.get("pairs") and pairs is not None and pairs.num_rows:
-        replaced = None if months is None else months_filter(months)
+        replaced = months_filter(dirty) if incremental else None
         out["pairs"] = store(client, project, "pairs", pairs, run, replaced)
     if state is not None:
         out["state"] = {
             **store(client, project, "state", encode_state(state), run),
             "bucket": STATE_BUCKET,
         }
+        if dm is not None and dm_test:
+            out["dm"] = {"step": dm.step, "max_lag": dm.max_lag}
+        if _persistence(parsed):
+            out["persistence_reach"] = int(p_reach.total_seconds())
+    out["inputs"] = snapshots
+    if incremental:
+        out["changed"] = how["months"]
+        how = {**how, "months": sorted(dirty)}
+    return {**out, **{k: how[k] for k in ("mode", "why", "months") if k in how}}
+
+
+def run_evaluation(client: GrantClient, task: dict) -> dict:
+    """Do a run's task; returns its result (raises LoadFailed with what went wrong).
+
+    An incremental run that finds it can't be one after all runs in full."""
+    how = task["run"].get("incremental") or {"mode": "full", "why": "not decided"}
+    try:
+        try:
+            result = _evaluate(client, task, how)
+        except _Full as exc:
+            result = _evaluate(client, task, {"mode": "full", "why": str(exc)})
+    except (SpecProblems, PlanError, ContractError, ValueError) as exc:
+        raise LoadFailed([str(exc)]) from None
     return {
-        **out,
-        **how,
-        "inputs": snapshots,
+        **result,
+        "inputs": result.pop("inputs", None) or {},
         "engine_version": f"teehr-core {ENGINE_VERSION}",
     }
