@@ -47,6 +47,7 @@ OPERATION_IDS = {
     "start_run",
     "list_runs",
     "get_run",
+    "cancel_run",
     "list_units",
     "add_unit",
     "list_periods",

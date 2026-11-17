@@ -319,7 +319,8 @@ def delete_evaluation(
     if going:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"'{slug}' has {len(going)} run(s) going; wait for them to finish",
+            f"'{slug}' has {len(going)} run(s) going; cancel them "
+            "(POST .../runs/{id}/cancel) or wait for them to finish",
         )
     if not keep_results:
         names = [n for v in versions for n in run_tables(slug, v.version)]

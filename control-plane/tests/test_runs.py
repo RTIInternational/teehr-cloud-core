@@ -562,3 +562,21 @@ def test_persistence_and_dm_runs_are_incremental_and_match_full_ones(  # noqa: F
                 assert a[column] == pytest.approx(value, nan_ok=True), column
             else:
                 assert a[column] == value, column
+
+
+def test_cancel_a_run(client, lake, jobs):  # noqa: F811
+    from tests.test_datasets import BOB
+
+    kube, _ = jobs
+    saved(client)
+    run = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()
+    url = f"/v1/projects/flood/runs/{run['id']}/cancel"
+    add_member(client, "bob", "read")
+    assert client.post(url, headers=BOB).status_code == 403
+    resp = client.post(url, headers=ALICE)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "cancelled" and resp.json()["finished_at"]
+    assert kube.deleted == [f"upload-{len(kube.created) - 1}"]  # the run's Job
+    assert client.post(url, headers=ALICE).status_code == 409
+    # With nothing going, the evaluation can be deleted.
+    assert client.delete(f"{EVALUATIONS}/e", headers=ALICE).status_code == 204
