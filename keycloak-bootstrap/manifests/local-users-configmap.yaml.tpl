@@ -32,7 +32,8 @@ data:
             "/jupyter-admin",
             "/key-management-admin",
             "/prefect-admin",
-            "/webapi-admin"
+            "/webapi-admin",
+            "/control-plane-admins"
           ]
         },
         {
@@ -73,6 +74,7 @@ data:
           "groups": [
             "/basic-user",
             "/teehr-read-write",
+            "/control-plane-viewers",
             "/icechunk-read-only",
             "/jupyter-user"
           ]

@@ -34,8 +34,13 @@ environments:
         catalogType: rest
         catalogUri: http://polaris:8181/api/catalog
         catalogWarehouse: s3://warehouse/
-        skipCredentialSubscopingIndirection: "true"
-        storageStsUnavailable: "true"
+        # Polaris vends per-table, prefix-scoped credentials via STS, as on remote.
+        # RustFS implements STS AssumeRole with session policies (it is also the STS
+        # endpoint, since stsEndpoint defaults to the S3 endpoint). No role ARN:
+        # RustFS ignores it, and Polaris won't add one to an existing catalog.
+        catalogRoleArn: ""
+        skipCredentialSubscopingIndirection: "false"
+        storageStsUnavailable: "false"
         defaultRealm: teehr
         realmsCsv: teehr
         oauthServerUri: http://keycloak-service:8080/realms/teehr/protocol/openid-connect/token
@@ -53,6 +58,11 @@ environments:
       allowedOrigins: "https://dashboards.${var.hostname},https://api.${var.hostname}"
 providers:
   # The name of the provider plugin to use.
+      # Nightly Postgres dumps to S3 (db-backups, #173). Leave unset to disable.
+      dbBackups:
+        bucket: db-backups
+        endpoint: http://local-s3:9000
+        credentialsSecret: local-s3-secrets
   - name: local-kubernetes
     namespace: ${environment.namespace}
     environments: ["local"]

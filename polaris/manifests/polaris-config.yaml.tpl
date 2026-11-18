@@ -57,9 +57,19 @@ data:
     polaris.oidc.principal-roles-mapper.mappings[0].replacement=PRINCIPAL_ROLE:iceberg-catalog-admin
     polaris.oidc.principal-roles-mapper.mappings[1].regex=^teehr-(.+)$
     polaris.oidc.principal-roles-mapper.mappings[1].replacement=PRINCIPAL_ROLE:teehr-$1
+    # Where the control plane is (local; var.controlPlane.enabled): its service
+    # account acts as service_admin. Polaris activates a role only if the token
+    # carries it AND the named principal is bound to it (polaris-bootstrap
+    # acl-config), so the realm role alone isn't enough.
+    ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? 'polaris.oidc.principal-roles-mapper.mappings[2].regex=^polaris-service-admin$' : '# (service_admin mapping: no control plane)'}
+    ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? 'polaris.oidc.principal-roles-mapper.mappings[2].replacement=PRINCIPAL_ROLE:service_admin' : '# (service_admin mapping: no control plane)'}
 
     # Storage Properties Integration
     polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3","GCS","AZURE","FILE"]
     polaris.features."ALLOW_INSECURE_STORAGE_TYPES"=true
     polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION"=${var.polaris.skipCredentialSubscopingIndirection}
+    # DROP TABLE ... PURGE (drop and delete the table's files): on where the control
+    # plane is, which deletes a dataset's files with it (a drop still needs the
+    # caller's TABLE_DROP privilege).
+    polaris.features."DROP_WITH_PURGE_ENABLED"=${environment.name == 'local' || (var.controlPlane.enabled || false)}
     polaris.readiness.ignore-severe-issues=true

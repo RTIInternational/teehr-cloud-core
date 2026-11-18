@@ -9,6 +9,7 @@ spec:
       containers:
       # Plain S3 API, so it works against any S3-compatible backend.
       - name: create-bucket
+        # Keep the tag in step with db-backups/Dockerfile, which copies the CLI from this image.
         image: amazon/aws-cli:2.36.45
         command: ["/bin/sh", "-c"]
         args:
@@ -16,12 +17,16 @@ spec:
             set -eu
             S3="aws --endpoint-url $S3_ENDPOINT s3api"
             # create-bucket fails if the bucket exists, so check first.
-            if $S3 head-bucket --bucket warehouse 2>/dev/null; then
-              echo "bucket warehouse already exists"
-            else
-              $S3 create-bucket --bucket warehouse
-              echo "created bucket warehouse"
-            fi
+            # warehouse: the Iceberg warehouse; db-backups: Postgres dumps (#173);
+            # uploads: the control plane's upload staging (Phase 3).
+            for bucket in warehouse db-backups uploads; do
+              if $S3 head-bucket --bucket "$bucket" 2>/dev/null; then
+                echo "bucket $bucket already exists"
+              else
+                $S3 create-bucket --bucket "$bucket"
+                echo "created bucket $bucket"
+              fi
+            done
         env:
         - name: S3_ENDPOINT
           value: http://local-s3:9000

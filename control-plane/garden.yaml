@@ -1,0 +1,84 @@
+# Project control plane (epic #148).
+#
+# Always on local; on remote only where the deployment sets var.controlPlane.enabled
+# (with the IRSA role, staging bucket and control-plane-secrets it needs: #171). It
+# is a separate deployable that keeps its tables in its own Postgres schema on
+# app-pg, so it can be paused or removed without touching teehr-api.
+kind: Build
+type: container
+name: teehr-control-plane
+
+spec:
+  dockerfile: Dockerfile
+
+environments:
+  - local
+  - remote
+disabled: ${environment.name == 'remote' && !(var.controlPlane.enabled || false)}
+
+---
+
+kind: Deploy
+type: kubernetes
+name: teehr-control-plane
+environments:
+  - local
+  - remote
+disabled: ${environment.name == 'remote' && !(var.controlPlane.enabled || false)}
+
+dependencies:
+  - build.teehr-control-plane
+  - deploy.secrets
+  - deploy.app-database
+  - deploy.keycloak-bootstrap
+  - deploy.polaris-bootstrap
+
+spec:
+  manifestFiles:
+    - manifests/service.yaml
+
+  manifestTemplates:
+    - manifests/rbac.yaml.tpl
+    - manifests/configmap.yaml.tpl
+    - manifests/deployment.yaml.tpl
+    - manifests/access-reconcile-cronjob.yaml.tpl
+    - manifests/ingress.yaml.tpl
+
+  defaultTarget:
+    kind: Deployment
+    name: teehr-control-plane
+
+  sync:
+    paths:
+      - containerPath: /app/src
+        sourcePath: ./src
+        mode: one-way
+        exclude: ["__pycache__", "*.pyc"]
+    overrides:
+      - command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+---
+
+# Local only: public datasets (USGS, NWM 3.1, a gauges layer, a crosswalk) and a
+# demo project with two evaluations, run once, so there's something to test
+# against after every deploy (seed/seed.py; safe to run again).
+kind: Deploy
+type: exec
+name: control-plane-local-seed
+description: Seed the local control plane with public datasets and demo evaluations
+dependencies:
+  - deploy.teehr-control-plane
+  - deploy.keycloak-local-users-bootstrap
+environments:
+  - local
+spec:
+  deployCommand:
+    - bash
+    - -c
+    - >-
+      K="kubectl --context kind-kind -n ${environment.namespace}" &&
+      $K create configmap control-plane-seed --from-file=./seed --dry-run=client -o yaml | $K apply -f - &&
+      $K delete job control-plane-seed --ignore-not-found=true &&
+      sed "s|__IMAGE__|${actions.build.teehr-control-plane.outputs.deploymentImageId}|" ./manifests/seed-job.yaml | $K apply -f - &&
+      { $K wait --for=condition=Complete job/control-plane-seed --timeout=600s; status=$?;
+        $K logs job/control-plane-seed; exit $status; }

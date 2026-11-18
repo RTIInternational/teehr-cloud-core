@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teehr-control-plane"
+version = "0.1.0"
+description = "TEEHR project control plane: projects, members, datasets, runs"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "gunicorn>=21.2.0",
+    "sqlalchemy>=2.0.25",
+    "alembic>=1.13.0",
+    "psycopg[binary]>=3.1.18",
+    "PyJWT[crypto]>=2.10.0",
+    "httpx>=0.26.0",
+    # Iceberg table I/O as the caller (Phase 2); no query engine.
+    "pyiceberg[pyarrow,pyiceberg-core]>=0.12,<0.13",
+    "boto3>=1.34",
+    # Layer geometry: WKB/GeoJSON parsing, validity and bounds.
+    "shapely>=2.0",
+    # Layer uploads: GeoJSON, zipped Shapefile, GeoPackage (GDAL, bundled) and
+    # reprojection to EPSG:4326.
+    "pyogrio>=0.10",
+    "pyproj>=3.6",
+    # /data filters: the shared expression language (teehr-shared-eval-spec).
+    "sqlglot>=26",
+    # The shared data model, expression allow-list and spec engine (DuckDB: plans
+    # and runs evaluations). Pinned to a commit until
+    # teehr-core is released (an archive URL: the image has no git).
+    "teehr-core[engine] @ https://github.com/RTIInternational/teehr-core/archive/e2d77386096cd1f6cb236f8fb5fe185ea1266745.zip",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "pytest>=7.0.0",
+    "httpx>=0.26.0",
+]
+
+# The image runs the code from /app/src (PYTHONPATH=/app), as api/ does; the
+# install step only pulls in dependencies.
+[tool.setuptools]
+packages = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py311"
+exclude = [".git", ".ruff_cache", ".venv", "__pycache__", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP"]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # function call in default argument (FastAPI Depends)
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

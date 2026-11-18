@@ -38,8 +38,13 @@ spec:
               value: "300s"
             - name: KEYCLOAK_SSLVERIFY
               value: "false"
+            # Every import resets each listed user's realm roles to the file's
+            # (none), stripping the project roles the control plane gives them.
+            # The cache skips unchanged imports, but a realm import clears its
+            # checksums, so the Garden action also runs the control plane's access
+            # reconcile right after (keycloak-bootstrap/garden.yaml).
             - name: IMPORT_CACHE_ENABLED
-              value: "false"
+              value: "true"
           volumeMounts:
             - name: keycloak-local-users-config
               mountPath: /config
