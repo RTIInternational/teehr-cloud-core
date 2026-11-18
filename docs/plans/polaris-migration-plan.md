@@ -2,7 +2,7 @@
 
 > **Status: COMPLETED** — Last updated 2026-07-30.
 > `iceberg-rest` has been removed and Apache Polaris 1.5.0 is deployed and operational.
-> See [`polaris-access-control.md`](./polaris-access-control.md) for the implemented auth design.
+> See [`polaris-access-control.md`](../reference/polaris-access-control.md) for the implemented auth design.
 > This document is retained as a historical record of the migration plan and rationale.
 
 ---
