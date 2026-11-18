@@ -76,6 +76,10 @@ class FakeWarehouse:
         lake.shard_reads.append((read.project, read.name, read.keys))
         if key in lake.data:
             table = lake.data[key]
+        elif self.snapshots.get(f"{read.project}.{read.name}") in getattr(
+            lake.fake, "by_snapshot", {}
+        ):  # a run's table, at the snapshot it's pinned to
+            table = lake.fake.by_snapshot[self.snapshots[f"{read.project}.{read.name}"]]
         elif lake.fake.written.get(key):  # a run's table: the rows last written to it
             table = lake.fake.written[key][-1]
         else:
@@ -793,3 +797,22 @@ def test_a_jobs_write_report_is_checked_and_recorded_once(client, lake, jobs, ta
     first, again = report(), report()
     assert first.status_code == again.status_code == 201
     assert first.json()["id"] == again.json()["id"]
+
+
+def test_an_incremental_run_builds_on_the_last_succeeded_runs_state(
+    client, lake, jobs, tables
+):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    run_once(client, kube)
+    # A later run failed after committing its state: other state is current.
+    stored = tables.written[("flood", "state_e_v1")][-1]
+    tables.write("t", "flood", "state_e_v1", stored.slice(0, 0), "overwrite")
+
+    add_february(client, lake)
+    assert run_once(client, kube)["mode"] == "incremental"
+    incremental = _rows(tables.written[("flood", "results_e_v1")][-1])
+    run_once(client, kube, {"full": True})
+    _same(incremental, _rows(tables.written[("flood", "results_e_v1")][-1]))

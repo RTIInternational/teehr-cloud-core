@@ -551,9 +551,16 @@ def decode_state(table: pa.Table) -> pa.Table:
     return pa.Table.from_arrays(arrays, names=names)
 
 
-def _stored_state(wh: Warehouse, project: str, run: dict) -> pa.Table | None:
-    """The version's state as the last run left it (None if it can't be read)."""
+def _stored_state(
+    wh: Warehouse, project: str, run: dict, snapshot: int | None = None
+) -> pa.Table | None:
+    """The version's state as the last succeeded run left it, at its ``snapshot``
+    (a run that failed after committing state mustn't be built on; VeriRace does
+    the same), or the current one when that run didn't say. None if it can't be
+    read (an expired snapshot included)."""
     name = f"state_{run['evaluation']}_v{run['version']}"
+    if snapshot is not None:
+        wh.snapshots[f"{project}.{name}"] = int(snapshot)
     try:
         table = wh.read(Read(project, name, []))
     except Exception:  # noqa: BLE001 - missing, unreadable: the run goes full
@@ -751,7 +758,7 @@ def _evaluate(
     dm: DmSettings | None = None
     p_reach = timedelta(0)
     if incremental:
-        stored = _stored_state(wh, project, run)
+        stored = _stored_state(wh, project, run, how.get("state_snapshot"))
         if stored is None:
             raise _Full("the stored state couldn't be read")
         if how.get("dm"):

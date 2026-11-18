@@ -51,6 +51,7 @@ class FakeTables:
         self.writes = [*getattr(self, "writes", []), (mode, overwrite_filter, data)]
         self.written = getattr(self, "written", {})
         self.written.setdefault((namespace, name), []).append(data)
+        self.by_snapshot = {**getattr(self, "by_snapshot", {}), self.snapshot: data}
         return WriteResult(self.snapshot)
 
     def has_snapshot(self, token, namespace, name, snapshot_id):
