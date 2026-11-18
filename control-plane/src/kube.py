@@ -73,6 +73,16 @@ def job_manifest(
                         "name": "CONTROL_PLANE_INTERNAL_URL",
                         "value": settings.internal_url,
                     },
+                    *(
+                        [
+                            {
+                                "name": "RUN_ROWS_PER_SHARD",
+                                "value": str(settings.run_rows_per_shard),
+                            }
+                        ]
+                        if settings.run_rows_per_shard
+                        else []
+                    ),  # fmt: skip
                 ],
                 "resources": {
                     "requests": {"memory": settings.job_memory_request},

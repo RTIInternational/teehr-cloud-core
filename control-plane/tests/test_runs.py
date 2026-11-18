@@ -99,6 +99,9 @@ class FakeWarehouse:
         self.lake.reads.pop(), self.lake.shard_reads.pop()
         return n
 
+    def read_stats(self):
+        return {}
+
     def close(self):
         pass
 

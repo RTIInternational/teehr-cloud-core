@@ -77,6 +77,8 @@ class Warehouse:
     token: Callable[[], str]  # the caller's access token, fresh
     memory_limit: str | None = None
     snapshots: dict[str, int | None] = field(default_factory=dict)
+    # Per table: the reads, the files they planned (each, and distinct) and the bytes.
+    _planned: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         self._con = memory_connection()
@@ -139,6 +141,7 @@ class Warehouse:
             return schema.empty_table()
         scan = table.scan(row_filter=self._pushdown(read), snapshot_id=snapshot)
         tasks = list(scan.plan_files())
+        self._tally(f"{read.project}.{read.name}", tasks)
         if not tasks:
             return schema.empty_table()
         if any(task.delete_files for task in tasks):
@@ -150,6 +153,25 @@ class Warehouse:
             f"union_by_name = true){self._where(read)}"
         )
         return arrow_table(self._con, sql).cast(schema)
+
+    def _tally(self, ref: str, tasks: list) -> None:
+        t = self._planned.setdefault(ref, {"reads": 0, "file_reads": 0, "bytes": 0,
+                                           "paths": set()})  # fmt: skip
+        t["reads"] += 1
+        t["file_reads"] += len(tasks)
+        t["bytes"] += sum(task.file.file_size_in_bytes for task in tasks)
+        t["paths"].update(task.file.file_path for task in tasks)
+
+    def read_stats(self) -> dict[str, dict[str, int]]:
+        """Per table read: the reads, the distinct files they read, how many file
+        reads that took, and the bytes. ``file_reads`` near ``files`` means the
+        shards' keys sit in their own files (the table is sorted by them); near
+        ``files`` x ``reads``, every shard read every file."""
+        return {
+            ref: {"reads": t["reads"], "files": len(t["paths"]),
+                  "file_reads": t["file_reads"], "bytes_read": t["bytes"]}
+            for ref, t in self._planned.items()
+        }  # fmt: skip
 
     def _pushdown(self, read: Read) -> ice.BooleanExpression:
         parts: list[ice.BooleanExpression] = []

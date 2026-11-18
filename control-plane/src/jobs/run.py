@@ -793,6 +793,7 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     out["inputs"] = inputs.snapshots()
     if keys:
         out["shards"] = len(shards)
+    out["reads"] = wh.read_stats()
     if incremental:
         out["changed"] = how["months"]
         how = {**how, "months": sorted(dirty)}
