@@ -131,7 +131,9 @@ spec:
         resources:
           requests:
             cpu: 50m
-            memory: 128Mi
+            memory: 256Mi
           limits:
             cpu: 500m
-            memory: 512Mi
+            # Idles near 300Mi (pyarrow, PyIceberg, DuckDB loaded); /data reads
+            # and writes need room on top (#226).
+            memory: 2Gi

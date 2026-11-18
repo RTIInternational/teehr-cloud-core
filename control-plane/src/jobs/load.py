@@ -33,6 +33,14 @@ from src.uploads import read_csv_text
 ARROW = "application/vnd.apache.arrow.stream"
 CHUNK_BYTES = 48 * 1024 * 1024  # under the API's 64 MiB write limit
 STRING_TARGETS = ("series_key", "member", "quality")
+# How long a job keeps trying to reach the control plane (a restart takes ~30 s).
+RETRY_SECONDS = 120.0
+# The request never reached the control plane: any call can be sent again.
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+# The connection dropped mid-call: it may have landed, so only calls that are safe
+# to repeat are sent again.
+_DROPPED = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
+_WRITE_MODES_SAFE_TO_REPEAT = ("overwrite", "upsert")
 
 
 class LoadFailed(Exception):
@@ -50,15 +58,38 @@ class GrantClient:
     base_url: str
     grant: str
     http: httpx.Client | None = None
+    retry_seconds: float = RETRY_SECONDS
 
     def __post_init__(self):
         self.http = self.http or httpx.Client(timeout=120)
         self._token, self._expires = "", 0.0
 
+    def _send(
+        self, method: str, url: str, repeatable: bool, **kwargs
+    ) -> httpx.Response:
+        """One request, sent again while the control plane can't be reached (it
+        may be restarting): always when the request never reached it, and when the
+        connection dropped mid-call only if ``repeatable``."""
+        deadline, wait = time.monotonic() + self.retry_seconds, 1.0
+        while True:
+            try:
+                return self.http.request(method, url, **kwargs)
+            except (*_NOT_SENT, *_DROPPED) as exc:
+                if isinstance(exc, _DROPPED) and not repeatable:
+                    raise
+                if time.monotonic() + wait > deadline:
+                    raise
+                time.sleep(wait)
+                wait = min(wait * 2, 15.0)
+
     def _grant(self, method: str, path: str, **kwargs) -> httpx.Response:
-        resp = self.http.request(
+        # Every grant call is safe to repeat: a finish that landed before the
+        # connection dropped makes the grant stop working, so its repeat is refused
+        # (and the outcome is already recorded).
+        resp = self._send(
             method,
             f"{self.base_url}/v1/job-grants/{path}",
+            True,
             headers={"Authorization": f"Bearer {self.grant}"},
             **kwargs,
         )
@@ -91,17 +122,28 @@ class GrantClient:
         self._grant("POST", "progress", json={"rows_done": rows_done})
 
     def finish(self, status: str, **outcome) -> None:
-        self._grant("POST", "finish", json={"status": status, **outcome})
+        try:
+            self._grant("POST", "finish", json={"status": status, **outcome})
+        except httpx.HTTPStatusError as exc:
+            # Refused: the job has already ended (an earlier send of this landed
+            # before the connection dropped, or it was cancelled). Nothing to record.
+            if exc.response.status_code != 401:
+                raise
 
     def api(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Call the control plane's API as the caller (one retry with a fresh
-        token if it's refused)."""
+        token if it's refused). Reads, overwrites and upserts are sent again if the
+        connection drops mid-call; appends and creates aren't (they may have
+        landed)."""
         extra = kwargs.pop("headers", {})
+        mode = (kwargs.get("params") or {}).get("mode")
+        repeatable = method == "GET" or mode in _WRITE_MODES_SAFE_TO_REPEAT
         for fresh in (False, True):
             headers = {**extra, "Authorization": f"Bearer {self.token(fresh)}"}
-            resp = self.http.request(
-                method, f"{self.base_url}/v1{path}", headers=headers, **kwargs
-            )
+            resp = self._send(
+                method, f"{self.base_url}/v1{path}", repeatable,
+                headers=headers, **kwargs,
+            )  # fmt: skip
             if resp.status_code != 401:
                 return resp
         return resp
