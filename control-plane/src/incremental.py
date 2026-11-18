@@ -173,4 +173,6 @@ def decide(
         "dm": before.get("dm"),
         "persistence_reach": before.get("persistence_reach"),
         "since_run": str(previous.id),
+        # The state that run left: a later run that failed may have committed other.
+        "state_snapshot": (before.get("state") or {}).get("snapshot_id"),
     }
