@@ -212,11 +212,12 @@ In a notebook (dev kernel):
 from icechunk_access import list_icechunk_repos, open_icechunk_dataset, open_icechunk_repo
 
 list_icechunk_repos()                          # only repos this user may read
-ds = open_icechunk_dataset("ua_swann_4km")     # the repo's data as an xarray Dataset
+ds = open_icechunk_dataset("ua_swann_4km")     # the repo's data as an xarray Dataset, written steps only
 repo = open_icechunk_repo("isnobal_boise")     # PermissionError if not permitted
 ```
 
 - `list_icechunk_repos()` uses the dashboard's filtered dataset list, so listing doesn't create AWS credentials.
+- `open_icechunk_dataset()` keeps only time steps (or forecast cycles) with data; pass `written_only=False` for the repo's full time grid.
 - `open_icechunk_repo()` asks for credentials, and renews them every 15 minutes while reading, refreshing the user's Keycloak token each time.
 - If the Keycloak session has expired (idle 30 minutes, or 10 hours in total), it raises `SessionExpiredError`; restart the server from the hub control panel.
 - The client is the `teehr-icechunk-access` package in the JupyterHub image (`jupyterhub-docker/icechunk_access/`). It needs teehr with `teehr.utils.keycloak_auth`, so it fails to import in older-teehr kernels.
@@ -227,7 +228,7 @@ repo = open_icechunk_repo("isnobal_boise")     # PermissionError if not permitte
 
 - **Write access.** Notebook credentials are read-only; repos are written only by Prefect flows.
 - **Vector tiles in notebooks.** PMTiles archives sit outside the Icechunk prefix, so `layers` rules only affect the dashboard.
-- **Virtual references in notebooks that need source credentials.** iSnobal's virtual chunks are in a bucket that needs M3Works keys, so notebooks can read iSnobal only from `/raw_data`.
+- **Virtual references in notebooks that need source credentials.** iSnobal's virtual chunks are in a bucket that needs M3Works keys, so notebooks can read iSnobal only from `/data`.
 - **Hide repo names in S3 listings.** A default-role user's notebook credentials can list the Icechunk prefix and see restricted repo names, though not read them.
 - **Govern other credentials.** Anyone with their own IAM access to the bucket (keys from `aws configure` in `~/.aws/credentials`, `AWS_*` env vars, admin roles) bypasses the rules map.
 - **Derived Iceberg data.** Mean areal values and other tables written to Iceberg are governed by Polaris, not by these rules.

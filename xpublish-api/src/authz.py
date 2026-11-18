@@ -101,16 +101,16 @@ def unmatched(rules: AccessRules, kind: Kind, existing: list[str]) -> list[str]:
 # Every route under /api/datasets/{id}/ that xpublish-api serves (custom routes, the tiles and EDR
 # plugins). Anything else under that prefix is denied, so a route added by an xpublish or plugin
 # upgrade can't skip the check: when upgrading, list the new routes here and in the tests.
-DATASET_ROUTES = ("coords/", "variable-attrs", "edr/", "tiles/")
+DATASET_ROUTES = ("coords/", "variable-attrs", "metadata", "edr/", "tiles/")
 DENY = "deny"
-RAW_DATA_SUFFIX = "_raw_data"
+DATA_SUFFIX = "_data"
 
 
 def _repo_candidates(dataset_id: str) -> list[str]:
-    """Repos a dataset id can refer to; the provider matches the exact name, then strips ``_raw_data``."""
+    """Repos a dataset id can refer to; the provider matches the exact name, then strips ``_data``."""
     candidates = [dataset_id]
-    if dataset_id.endswith(RAW_DATA_SUFFIX) and dataset_id != RAW_DATA_SUFFIX:
-        candidates.append(dataset_id[: -len(RAW_DATA_SUFFIX)])
+    if dataset_id.endswith(DATA_SUFFIX) and dataset_id != DATA_SUFFIX:
+        candidates.append(dataset_id[: -len(DATA_SUFFIX)])
     return candidates
 
 
@@ -118,13 +118,13 @@ def request_target(path: str) -> tuple[Kind, list[str]] | str | None:
     """What a request reads: ``(kind, names)``, None for no repo or layer, or DENY for an unrecognised path.
 
     A request is allowed only if the user may read every name, so an ambiguous dataset id (a repo
-    itself named ``*_raw_data``) is checked against both repos it could mean.
+    itself named ``*_data``) is checked against both repos it could mean.
     """
     if path in ("/api/datasets", "/api/datasets/"):
         return DENY  # xpublish's built-in list of every dataset; the frontend uses /api/dataset-keys
     if path.startswith("/api/datasets/"):
         dataset_id, _, rest = path[len("/api/datasets/"):].partition("/")
-        if not dataset_id or not (rest == "variable-attrs" or rest.startswith(DATASET_ROUTES)):
+        if not dataset_id or not (rest in ("variable-attrs", "metadata") or rest.startswith(DATASET_ROUTES)):
             return DENY
         return "repos", _repo_candidates(dataset_id)
     if path.startswith("/api/dataset-variables/"):

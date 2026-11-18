@@ -12,7 +12,7 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "gunicorn>=21.2.0",
-    "python-jose[cryptography]>=3.3.0",
+    "PyJWT[crypto]>=2.10.0",
     "asyncpg>=0.29.0",
     "trino>=0.327.0",
     "sqlalchemy>=2.0.25",
@@ -24,7 +24,6 @@ dependencies = [
     "orjson>=3.9.15",
     "shapely==2.0.2",
     "pyproj==3.6.1",
-    "fiona>=1.9.6",
     "geopandas>=1.0.0,<2.0.0",
 ]
 

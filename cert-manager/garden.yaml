@@ -11,7 +11,7 @@ spec:
     repo: https://charts.jetstack.io
     # Keep in step with teehr-cloud-platform/terraform/cert-manager.tf.
     # v1.21 is tested on Kubernetes 1.33-1.36; KinD and the remote cluster are both on 1.36.
-    version: "v1.21.2"
+    version: "v1.21.3"
   namespace: cert-manager
   values:
     # installCRDs is deprecated as of chart v1.15

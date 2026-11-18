@@ -14,7 +14,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: polaris-bootstrap
-          image: prefecthq/prefect:3.2.0-python3.10
+          image: prefecthq/prefect:3.9.0-python3.12
           env:
             - name: POLARIS_MANAGEMENT_URL
               value: "http://polaris:8181"
@@ -375,10 +375,10 @@ spec:
                       principal_role = principal_cfg["principal_role"]
                       print(f"[polaris-bootstrap] Ensuring service principal: {principal_name}")
                       mgmt("post", realm, token, "/principals",
-                           json={"name": principal_name, "type": "USER", "properties": {}})
+                           json={"principal": {"name": principal_name, "properties": {}}})
                       mgmt("put", realm, token,
                            f"/principals/{principal_name}/principal-roles",
-                           json={"name": principal_role})
+                           json={"principalRole": {"name": principal_role}})
 
               print("[polaris-bootstrap] Bootstrap complete")
           volumeMounts:

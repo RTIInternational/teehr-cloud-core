@@ -3,6 +3,7 @@
 This directory contains **Python-based integration tests** running in KinD for:
 
 - the Polaris + Keycloak + Spark ecosystem (Iceberg access);
+- the project control plane (Phase 1 gate);
 - xpublish-api's Icechunk access rules.
 
 ## Test Files
@@ -13,6 +14,9 @@ This directory contains **Python-based integration tests** running in KinD for:
 - `polaris_roles_test.py` — Validates role-based access control setup
 - `spark_session_auth_test.py` — Validates Spark session creation and write permissions
 - `xpublish_access_test.py` — Validates Icechunk access rules enforced by xpublish-api
+- `control_plane_gate_test.py` — Phase 1 gate (`garden test control-plane-gate`): projects created through the control-plane API get an isolated namespace and storage prefix, non-members are denied, vended credentials reach only the member's own prefix, membership grants and revokes access, and system projects are read-all / ingest-write
+- `control_plane_data_gate_test.py` — Phase 2 gate (`garden test control-plane-data-gate`): members register typed timeseries and write and read them through the control-plane API as themselves (unit conversion, series keys, paged snapshot-pinned reads, a lineage record per write); non-members and read-only members are refused; the legacy `teehr` namespace and teehr-api are unchanged
+- `control_plane_upload_gate_test.py` — Phase 3 gate (`garden test control-plane-upload-gate`): a member stages timeseries, layer (GeoJSON, zipped Shapefile in another CRS, a GeoPackage layer, CSV points) and crosswalk files, inspects them and loads them as Kubernetes Jobs acting as themselves (units converted, reprojected to EPSG:4326, series located in a layer, unknown crosswalk keys noted); bad files fail before writing; loads can be cancelled and block project deletion; readers can list but not upload. Builds its own sample files
 
 ## What These Tests Do
 
@@ -48,7 +52,7 @@ These are **end-to-end integration tests** that validate:
 
 6. **Icechunk Access Rules** (`xpublish-access-enforcement`)
    - Creates two throwaway repos, `authz_test_open` and `authz_test_restricted`, and deletes them afterwards
-   - For `admin`, `poweruser`, `user` and `noaccess`: dataset listings, dataset routes (and `_raw_data` ids),
+   - For `admin`, `poweruser`, `user` and `noaccess`: dataset listings, dataset routes (and `_data` ids),
      the notebook credentials route and vector-tile listings match the deployed rules (xpublish-api's
      `TEEHR_ACCESS_RULES`)
    - `noaccess` has no data roles; no token or a malformed token is 401; `/health` lists no datasets;

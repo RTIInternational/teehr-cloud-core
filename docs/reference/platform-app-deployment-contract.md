@@ -80,6 +80,10 @@ so they have one source.
 | Key | Default behavior when unset |
 |---|---|
 | `irsa.jupyterRoleArn` | Jupyter's service account gets no IRSA role (no direct access to external, non-warehouse data). |
+| `controlPlane.enabled` | The project control plane isn't deployed, and its Keycloak clients, service-account roles and Polaris `service_admin` binding are off. Set `true` only with the keys below and a `control-plane-secrets` entry in the remote secrets (`client-secret`, `jobs-client-secret`, `job-token-key`). |
+| `irsa.controlPlaneRoleArn` | The control plane's service account has no IAM role, so uploads can't be staged. Terraform output `control_plane_role_arn`. |
+| `controlPlane.stagingBucket` | Uploads are disabled. Terraform output `upload_staging_bucket`. |
+| `controlPlane.projectCreatorRoles` | Any signed-in user may create a project. A dark launch sets `control-plane-admin`. |
 | `enableLocalDevFrontendClient` | Defaults to `false` in project environment variables. When set to `true`, enables the Keycloak client `teehr-frontend-local-dev` for localhost browser-based frontend development. Keep disabled unless local standalone frontend access is explicitly required for that environment. |
 
 When enabling `enableLocalDevFrontendClient`, pair it with explicit localhost entries in `allowedOrigins` for only the environments that require browser access from a local dev server.
@@ -87,7 +91,7 @@ When enabling `enableLocalDevFrontendClient`, pair it with explicit localhost en
 ### Where the Values Come From
 
 The teehr-cloud-platform Terraform outputs for the stack: `cluster_arn`, `ecr_registry`, `nfs_server_dns`,
-`polaris_role_arn`, `prefect_job_role_arn`, `xpublish_api_role_arn`, `iceberg_s3_warehouse_rw_role_arn`,
+`polaris_role_arn`, `prefect_job_role_arn`, `control_plane_role_arn`, `upload_staging_bucket`, `xpublish_api_role_arn`, `iceberg_s3_warehouse_rw_role_arn`,
 `iceberg_s3_warehouse_readonly_role_arn`, `icechunk_warehouse_bucket`, and its `teehr-hub-*.tfvars` (bucket
 names). The CI and admin roles are outputs of its `terraform/global` root.
 

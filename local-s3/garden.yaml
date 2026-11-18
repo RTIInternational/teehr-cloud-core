@@ -1,5 +1,5 @@
 # In-cluster S3 for local dev. Consumers rely only on http://local-s3:9000,
-# the local-s3-secrets secret and the warehouse bucket.
+# the local-s3-secrets secret and the warehouse and db-backups buckets.
 kind: Deploy
 type: kubernetes
 name: local-s3-deploy
@@ -15,7 +15,7 @@ environments:
 kind: Deploy
 type: kubernetes
 name: create-local-s3-bucket
-description: K8s Job Create local S3 warehouse bucket
+description: K8s Job Create local S3 buckets (warehouse, db-backups)
 spec:
   manifestFiles:
   - "./manifests/create-bucket.yaml"

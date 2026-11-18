@@ -4,11 +4,10 @@ import time
 from dataclasses import dataclass, field
 
 import httpx
+import jwt
 from fastapi import Depends, HTTPException, Request
-from jose import JWTError, jwt
 
 from .config import config
-
 
 logger = logging.getLogger("teehr-api.auth")
 
@@ -110,7 +109,7 @@ class KeycloakJWTValidator:
             decode_options = {"verify_aud": False}
             claims = jwt.decode(
                 token,
-                key,
+                jwt.PyJWK(key, algorithm="RS256").key,
                 algorithms=["RS256"],
                 issuer=config.KEYCLOAK_ISSUER_URL,
                 options=decode_options,
@@ -149,7 +148,7 @@ class KeycloakJWTValidator:
                 status_code=503,
                 detail="Authentication provider temporarily unavailable",
             ) from exc
-        except JWTError as exc:
+        except jwt.PyJWTError as exc:
             logger.warning("JWT validation failed")
             raise HTTPException(status_code=401, detail="Invalid access token") from exc
 

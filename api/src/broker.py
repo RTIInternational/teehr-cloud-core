@@ -3,12 +3,11 @@ import uuid
 from asyncio import Lock
 
 import httpx
+import jwt
 from fastapi import HTTPException
-from jose import JWTError, jwt
 
 from .config import config
 from .delegated_session_store import DelegatedSessionStore
-
 
 TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
@@ -103,11 +102,11 @@ async def exchange_token_for_polaris(
 
         # Prefer JWT exp claim when present.
         try:
-            claims = jwt.get_unverified_claims(access_token)
+            claims = jwt.decode(access_token, options={"verify_signature": False})
             exp = int(claims.get("exp", 0))
             if exp > 0:
                 expires_at_epoch_seconds = exp
-        except (JWTError, ValueError, TypeError):
+        except (jwt.PyJWTError, ValueError, TypeError):
             pass
 
         return {
@@ -239,7 +238,7 @@ async def exchange_token_for_polaris_via_broker_session(
             config.BROKER_SESSION_SIGNING_SECRET,
             algorithms=["HS256"],
         )
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid broker session token") from exc
 
     delegated_session_id = claims.get("sid")
@@ -277,11 +276,11 @@ async def exchange_token_for_polaris_via_broker_session(
     trace_id = uuid.uuid4().hex
     expires_at_epoch_seconds = int(time.time()) + clamp_requested_ttl(requested_ttl_seconds)
     try:
-        token_claims = jwt.get_unverified_claims(refreshed_subject_token)
+        token_claims = jwt.decode(refreshed_subject_token, options={"verify_signature": False})
         exp = int(token_claims.get("exp", 0))
         if exp > 0:
             expires_at_epoch_seconds = exp
-    except (JWTError, ValueError, TypeError):
+    except (jwt.PyJWTError, ValueError, TypeError):
         pass
 
     return {

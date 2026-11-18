@@ -1,0 +1,237 @@
+"""Membership becomes data access: Keycloak realm roles + Polaris principal bindings."""
+
+import httpx
+import pytest
+
+from tests.conftest import auth
+
+ALICE = auth("alice")
+
+READ, WRITE, ADMIN = (f"teehr-project-flood-{r}" for r in ("read", "write", "admin"))
+
+
+@pytest.fixture
+def project(client, polaris, keycloak):
+    body = client.post("/v1/projects", json={"name": "flood"}, headers=ALICE).json()
+    assert body["status"] == "ready"
+    return body
+
+
+def add(client, username, role):
+    return client.post(
+        "/v1/projects/flood/members",
+        json={"username": username, "role": role},
+        headers=ALICE,
+    )
+
+
+def test_creator_gets_admin_access(project, polaris, keycloak):
+    assert set(keycloak.roles) == {READ, WRITE, ADMIN}
+    assert keycloak.user_roles["alice"] == {ADMIN}
+    assert polaris.bindings["alice"] == {ADMIN}
+
+
+def test_add_member_by_username(client, project, polaris, keycloak):
+    resp = add(client, "bob", "read")
+    assert resp.status_code == 201
+    assert resp.json()["subject"] == "bob"
+    assert resp.json()["username"] == "bob"
+    assert keycloak.user_roles["bob"] == {READ}
+    assert polaris.bindings["bob"] == {READ}
+
+
+def test_unknown_username_is_404(client, project):
+    assert add(client, "ghost", "read").status_code == 404
+
+
+def test_role_change_swaps_access(client, project, polaris, keycloak):
+    add(client, "bob", "read")
+    assert add(client, "bob", "write").status_code == 200
+    assert keycloak.user_roles["bob"] == {WRITE}
+    assert polaris.bindings["bob"] == {WRITE}
+
+
+def test_removed_member_loses_access_in_both(client, project, polaris, keycloak):
+    add(client, "bob", "write")
+    assert (
+        client.delete("/v1/projects/flood/members/bob", headers=ALICE).status_code
+        == 204
+    )
+    assert keycloak.user_roles["bob"] == set()
+    assert polaris.bindings["bob"] == set()
+
+
+def test_member_deleted_from_keycloak_still_loses_polaris_access(
+    client, project, polaris, keycloak
+):
+    add(client, "bob", "write")
+    del keycloak.users["bob"]
+    assert (
+        client.delete("/v1/projects/flood/members/bob", headers=ALICE).status_code
+        == 204
+    )
+    assert polaris.bindings["bob"] == set()
+
+
+def test_other_projects_roles_are_left_alone(client, project, polaris, keycloak):
+    client.post("/v1/projects", json={"name": "drought"}, headers=ALICE)
+    add(client, "bob", "read")
+    client.post(
+        "/v1/projects/drought/members",
+        json={"username": "bob", "role": "write"},
+        headers=ALICE,
+    )
+    client.delete("/v1/projects/flood/members/bob", headers=ALICE)
+    assert keycloak.user_roles["bob"] == {"teehr-project-drought-write"}
+    assert polaris.bindings["bob"] == {"teehr-project-drought-write"}
+
+
+def test_deleting_project_removes_roles_everywhere(client, project, polaris, keycloak):
+    add(client, "bob", "read")
+    assert client.delete("/v1/projects/flood", headers=ALICE).status_code == 204
+    assert not set(keycloak.roles) & {READ, WRITE, ADMIN}
+    assert keycloak.user_roles["bob"] == set()
+    assert polaris.bindings["bob"] == set()
+    assert polaris.bindings["alice"] == set()
+
+
+def test_access_failure_saves_membership_and_marks_project_failed(
+    client, project, polaris, keycloak
+):
+    keycloak.fail_paths.add("/role-mappings/")
+    resp = add(client, "bob", "read")
+    assert resp.status_code == 502
+    assert "Retry" in resp.json()["detail"]
+    members = client.get("/v1/projects/flood/members", headers=ALICE).json()
+    assert "bob" in {m["subject"] for m in members}
+    assert client.get("/v1/projects/flood", headers=ALICE).json()["status"] == "failed"
+
+    keycloak.fail_paths.clear()
+    body = client.post("/v1/projects/flood/provision", headers=ALICE).json()
+    assert body["status"] == "ready"
+    assert keycloak.user_roles["bob"] == {READ}
+    assert polaris.bindings["bob"] == {READ}
+
+
+def test_without_keycloak_membership_is_recorded_only(client, polaris):
+    client.post("/v1/projects", json={"name": "flood"}, headers=ALICE)
+    resp = client.put(
+        "/v1/projects/flood/members/bob", json={"role": "read"}, headers=ALICE
+    )
+    assert resp.status_code == 201
+    assert polaris.bindings == {}
+
+
+def test_add_by_username_needs_keycloak(client, polaris):
+    client.post("/v1/projects", json={"name": "flood"}, headers=ALICE)
+    assert add(client, "bob", "read").status_code == 503
+
+
+def test_put_member_rejects_unknown_user_id(client, project, polaris):
+    # e.g. Swagger's placeholder "string"
+    resp = client.put(
+        "/v1/projects/flood/members/string", json={"role": "read"}, headers=ALICE
+    )
+    assert resp.status_code == 404
+    members = client.get("/v1/projects/flood/members", headers=ALICE).json()
+    assert "string" not in {m["subject"] for m in members}
+
+
+def test_put_member_by_id_takes_username_from_keycloak(client, project, polaris):
+    resp = client.put(
+        "/v1/projects/flood/members/bob",
+        json={"role": "read", "username": "wrong"},
+        headers=ALICE,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["username"] == "bob"
+    assert polaris.bindings["bob"] == {READ}
+
+
+def test_access_survives_a_polaris_and_keycloak_restart(
+    client, project, polaris, keycloak
+):
+    polaris.restart()
+    keycloak.revoke_tokens()
+    resp = client.post(
+        "/v1/projects/flood/members",
+        json={"username": "bob", "role": "read"},
+        headers=auth("alice"),
+    )
+    assert resp.status_code == 201
+    assert "teehr-project-flood-read" in polaris.bindings["bob"]
+
+
+def test_keycloak_rejects_wrong_client_secret():
+    from src.keycloak_admin import KeycloakAdmin, KeycloakError
+    from tests.fake_keycloak import REALM, FakeKeycloak
+
+    fake = FakeKeycloak()
+    admin = KeycloakAdmin(
+        "http://keycloak.test",
+        REALM,
+        "teehr-control-plane",
+        "wrong",
+        transport=httpx.MockTransport(fake.handle),
+    )
+    with pytest.raises(KeycloakError, match="token request failed"):
+        admin.ensure_realm_role("x")
+
+
+# --- reconcile: the membership table wins ----------------------------------------
+
+
+def reconcile(db_url, polaris, keycloak):
+    from src.db import make_engine
+    from src.provisioning import reconcile_access
+
+    return reconcile_access(make_engine(db_url), polaris.admin(), keycloak.admin())
+
+
+def test_reconcile_restores_roles_a_keycloak_import_stripped(
+    client, project, polaris, keycloak, db_url
+):
+    add(client, "bob", "write")
+    # What keycloak-config-cli does to the local users on import.
+    keycloak.user_roles["alice"].clear()
+    keycloak.user_roles["bob"].clear()
+    counts = reconcile(db_url, polaris, keycloak)
+    assert counts == {"projects": 1, "failed": 0, "removed": 0}
+    assert keycloak.user_roles["alice"] == {ADMIN}
+    assert keycloak.user_roles["bob"] == {WRITE}
+
+
+def test_reconcile_removes_roles_from_non_members(
+    client, project, polaris, keycloak, db_url
+):
+    # Given by hand in Keycloak and Polaris, not through membership.
+    keycloak.user_roles["carol"].add(READ)
+    polaris.principals.add("carol")
+    polaris.bindings["carol"] = {READ}
+    counts = reconcile(db_url, polaris, keycloak)
+    assert counts["removed"] == 1
+    assert READ not in keycloak.user_roles["carol"]
+    assert READ not in polaris.bindings["carol"]
+    assert keycloak.user_roles["alice"] == {ADMIN}  # members untouched
+
+
+def test_reconcile_carries_on_past_a_failing_project(
+    client, project, polaris, keycloak, db_url
+):
+    client.post("/v1/projects", json={"name": "drought"}, headers=ALICE)
+    keycloak.user_roles["alice"].clear()
+    keycloak.fail_paths.add("teehr-project-drought")
+    counts = reconcile(db_url, polaris, keycloak)
+    assert counts["failed"] == 1
+    assert ADMIN in keycloak.user_roles["alice"]  # flood still repaired
+    status = client.get("/v1/projects/drought", headers=ALICE).json()["status"]
+    assert status == "ready"  # a reconcile failure doesn't mark the project failed
+
+
+def test_reconcile_without_keycloak_does_nothing(client, polaris, db_url):
+    from src.db import make_engine
+    from src.provisioning import reconcile_access
+
+    assert reconcile_access(make_engine(db_url), polaris.admin(), None) == {
+        "projects": 0, "failed": 0, "removed": 0,
+    }  # fmt: skip

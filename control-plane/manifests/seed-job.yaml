@@ -1,0 +1,53 @@
+# Local only (control-plane-local-seed in garden.yaml): seed/seed.py, with the seed
+# directory mounted from the control-plane-seed ConfigMap. __IMAGE__ is the
+# control-plane image (it has httpx and pyarrow).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: control-plane-seed
+  labels:
+    app: control-plane-seed
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: control-plane-seed
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seed
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/seed/seed.py"]
+          env:
+            - name: API_URL
+              value: http://teehr-control-plane:8000
+            - name: TOKEN_URL
+              value: http://keycloak-service:8080/realms/teehr/protocol/openid-connect/token
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: seed
+              mountPath: /seed
+              readOnly: true
+      volumes:
+        - name: seed
+          configMap:
+            name: control-plane-seed

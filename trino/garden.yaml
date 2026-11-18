@@ -11,7 +11,7 @@ spec:
   chart:
     name: trino
     repo: https://trinodb.github.io/charts
-    version: 1.42.2
+    version: 1.45.0
 
   values:
     server:
@@ -87,7 +87,7 @@ spec:
   chart:
     name: trino
     repo: https://trinodb.github.io/charts
-    version: 1.42.2
+    version: 1.45.0
 
   values:
     server:

@@ -81,6 +81,7 @@ This should create all the services in the cluster.  To test, open a browser and
 127.0.0.1       s3.teehr.local.app.garden
 127.0.0.1       api.teehr.local.app.garden
 127.0.0.1       prefect.teehr.local.app.garden
+127.0.0.1       control-plane.teehr.local.app.garden
 ```
 
 ### Local S3 Console

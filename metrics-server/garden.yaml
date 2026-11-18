@@ -13,7 +13,7 @@
 #   chart:
 #     repo: https://kubernetes-sigs.github.io/metrics-server
 #     name: metrics-server
-#     version: 3.12.1
+#     version: 3.14.0
 #   namespace: kube-system
 #   values:
 #     args:
@@ -38,7 +38,7 @@ spec:
   chart:
     repo: https://kubernetes-sigs.github.io/metrics-server
     name: metrics-server
-    version: 3.12.1
+    version: 3.14.0
   namespace: kube-system
   values:
     resources:
