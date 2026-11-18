@@ -1,4 +1,4 @@
-# ADR-0015: Jobs write their data in-process; the control plane keeps the record
+# ADR-0016: Jobs write their data in-process; the control plane keeps the record
 
 - **Status:** Proposed
 - **Date:** 2026-11-18
