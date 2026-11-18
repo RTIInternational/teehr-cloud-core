@@ -1,6 +1,6 @@
 # ADR-0004: API as the access path — writes now, reads later
 
-- **Status:** Accepted (ratified by the team, 2026-11-13)
+- **Status:** Accepted (ratified by the team, 2026-11-13); job writes amended by ADR-0016 (2026-11-18)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0001 (layout), spike-1 (identity propagation)
@@ -46,3 +46,7 @@ unproven.
 - Depends on identity propagation to the data plane (spike-1) and the write gateway (Phase 2).
 - The sandbox is governed by the "Migrate forward" principle: temporary, not a second system to
   maintain forever.
+- **Amended 2026-11-18 (ADR-0016):** jobs the control plane starts write their data
+  in-process, with the same write code the gateway uses, and report each commit to the control
+  plane, which keeps the record (`dataset_writes`). Callers outside jobs still write only through
+  the API; table creation stays in the control plane.
