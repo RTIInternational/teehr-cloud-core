@@ -376,3 +376,19 @@ def _case(node: exp.Expression, table: pa.Table):
             pc.fill_null(_eval(condition, table), False), _eval(value, table), result
         )
     return result
+
+
+def overwrite_expression(
+    text: str | None, columns: list[dict]
+) -> BooleanExpression | None:
+    """An overwrite's filter as the table applies it (None: the whole table). It
+    must compile wholly to the table's terms (raises DataMismatch otherwise)."""
+    if not text:
+        return None
+    compiled = compile_filter(text, columns)
+    if compiled.residual is not None:
+        raise DataMismatch(
+            "an overwrite filter must compare columns with values (=, <, IN, "
+            "BETWEEN, IS NULL, AND/OR/NOT), so the table can apply it"
+        )
+    return compiled.pushdown

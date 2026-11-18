@@ -402,24 +402,56 @@ class Tables(Protocol):
     ) -> WriteResult:
         """Commit conformed data as the caller (one snapshot)."""
 
+    def has_snapshot(
+        self, token: str, namespace: str, name: str, snapshot_id: int
+    ) -> bool:
+        """Whether ``snapshot_id`` is one of the table's snapshots, as the caller."""
+
+
+def catalog_properties(
+    uri: str,
+    warehouse: str,
+    realm: str,
+    region: str = "us-east-1",
+    endpoint: str | None = None,
+    path_style: bool = False,
+) -> dict[str, str]:
+    """PyIceberg properties for Polaris's REST catalog (a token is added per call)."""
+    properties = {
+        "type": "rest",
+        "uri": uri,
+        "warehouse": warehouse,
+        "header.X-Polaris-Realm": realm,
+        # Storage credentials scoped to each table, from Polaris.
+        "header.X-Iceberg-Access-Delegation": "vended-credentials",
+        "s3.region": region,
+    }
+    if endpoint:
+        properties["s3.endpoint"] = endpoint
+    if path_style:
+        properties["s3.path-style-access"] = "true"
+    return properties
+
 
 class PolarisTables:
     """:class:`Tables` against Polaris's Iceberg REST catalog."""
 
     def __init__(self, settings: Settings):
-        self._properties = {
-            "type": "rest",
-            "uri": f"{settings.polaris_url.rstrip('/')}/api/catalog",
-            "warehouse": settings.polaris_catalog,
-            "header.X-Polaris-Realm": settings.polaris_realm,
-            # Storage credentials scoped to each table, from Polaris.
-            "header.X-Iceberg-Access-Delegation": "vended-credentials",
-            "s3.region": settings.storage_region,
-        }
-        if settings.storage_endpoint:
-            self._properties["s3.endpoint"] = settings.storage_endpoint
-        if settings.storage_path_style:
-            self._properties["s3.path-style-access"] = "true"
+        self._properties = catalog_properties(
+            f"{settings.polaris_url.rstrip('/')}/api/catalog",
+            settings.polaris_catalog,
+            settings.polaris_realm,
+            settings.storage_region,
+            settings.storage_endpoint,
+            settings.storage_path_style,
+        )
+
+    @classmethod
+    def at(cls, properties: dict[str, str]) -> "PolarisTables":
+        """Tables at a catalog given by its properties (a job's, ADR-0016)."""
+        tables = cls.__new__(cls)
+        tables._properties = dict(properties)
+        return tables
 
     def _catalog(self, token: str) -> Catalog:
         return load_catalog("polaris", **self._properties, token=token)
@@ -603,6 +635,15 @@ class PolarisTables:
             found = table.scan(row_filter=row_filter, selected_fields=(column,))
             present = set(pc.unique(found.to_arrow()[column]).to_pylist())
             return present & wanted
+
+        return self._guard(run)
+
+    def has_snapshot(
+        self, token: str, namespace: str, name: str, snapshot_id: int
+    ) -> bool:
+        def run() -> bool:
+            table = self._catalog(token).load_table((namespace, name))
+            return table.snapshot_by_id(snapshot_id) is not None
 
         return self._guard(run)
 

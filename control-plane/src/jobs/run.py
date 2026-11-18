@@ -12,8 +12,8 @@
    shard's state is kept and the parts merged per month.
 3. Add lineage to the results (``run_id``, ``spec_version``, ``engine_version``),
    have the results table created (``results_<slug>_v<version>``, job grant) and
-   write the rows through the write API as the caller: the first chunk replaces
-   an earlier run's rows, the rest append. When the spec keeps pairs
+   write the rows as the caller, in the job, replacing an earlier run's rows; the
+   control plane records each commit (ADR-0016: run data doesn't pass through it). When the spec keeps pairs
    (``output.pairs: all``), the paired rows go to ``pairs_<slug>_v<version>`` the
    same way.
 
@@ -29,8 +29,12 @@ says exactly what it read.
 """
 
 import json
+import logging
 import os
 import re
+import resource
+import sys
+import time
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -49,8 +53,20 @@ from teehr_core.spec import EvaluationSpec, GeneratedInput, load_spec
 from teehr_core.spec.models import AttributeField, WithinField
 
 from src.evaluations import SpecProblems, catalog_from
-from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
+from src.expressions import overwrite_expression
+from src.jobs.load import GrantClient, LoadFailed, _problem
 from src.jobs.reads import CatalogAccess, Read, Warehouse
+from src.tables import (
+    DataMismatch,
+    PolarisTables,
+    TableError,
+    TableForbidden,
+    Tables,
+    catalog_properties,
+    conform,
+)
+
+log = logging.getLogger("src.jobs")
 
 #: State is kept per month of value_time (a rerun recomputes changed months only).
 STATE_BUCKET = "month"
@@ -125,6 +141,12 @@ def rows_per_shard() -> int:
     return int(explicit) if explicit else shard_rows()
 
 
+def peak_memory_mb() -> float:
+    """The pod's peak memory so far (this process's, in MB)."""
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / 1e6 if sys.platform == "darwin" else peak / 1e3  # bytes / KiB
+
+
 def open_warehouse(client: GrantClient, task: dict) -> Warehouse:
     """The warehouse, read as the caller (tests replace this)."""
     if not task.get("catalog"):
@@ -148,8 +170,9 @@ class Inputs:
     A shard is a range of observed series keys. It reads the datasets keyed by the
     observed series for those keys, the predicted datasets for the series linked to
     them (by the relation, or by the series tables' shared attribute), and the
-    relation's rows for them. Anything else (layers, other tables) is read whole,
-    once.
+    relation's rows for them. Series tables are read once, for the run's keys, and
+    each shard takes its own rows from them. Anything else (layers, other tables) is
+    read whole, once.
     """
 
     def __init__(
@@ -172,6 +195,10 @@ class Inputs:
             ("right_key", "left_key") if reversed_ else ("left_key", "right_key")
         )
         self._whole: dict[tuple[str, str], pa.Table] = {}
+        self._keys: list[str] | None = None
+        self._keys_known = False
+        self._run_series: dict[str, pa.Table] = {}
+        self._predicted_rows: int | None = None
 
     def _read(
         self, ref: str, where: str | None, keys: Sequence[str] | None
@@ -205,6 +232,11 @@ class Inputs:
 
     def shard_keys(self) -> list[str] | None:
         """The observed series keys a run splits into shards (None: it can't)."""
+        if not self._keys_known:
+            self._keys, self._keys_known = self._find_keys(), True
+        return self._keys
+
+    def _find_keys(self) -> list[str] | None:
         if self.relation:
             rel = self._dataset_whole(self.relation)
             return sorted({str(k) for k in rel[self.obs_col].to_pylist()})
@@ -216,13 +248,37 @@ class Inputs:
         return None
 
     def predicted_rows(self) -> int:
-        """Rows of the predicted datasets a run reads (from the catalog)."""
-        total = 0
-        for ref in self.predicted & set(self.manifest["datasets"]):
-            d = self.manifest["datasets"][ref]
-            total += self.wh.rows(Read(d["project"], d["name"], d["columns"],
-                                       self._where(ref)))  # fmt: skip
-        return total
+        """Rows of the predicted datasets the run reads: its window's, of the series
+        linked to its keys (counted once)."""
+        if self._predicted_rows is None:
+            keys = self.shard_keys()
+            linked = self._linked(keys) if keys else None
+            total = 0
+            for ref in self.predicted & set(self.manifest["datasets"]):
+                d = self.manifest["datasets"][ref]
+                total += self.wh.count(Read(d["project"], d["name"], d["columns"],
+                                            self._where(ref), keys=linked))  # fmt: skip
+            self._predicted_rows = total
+        return self._predicted_rows
+
+    def _shard_series(self, ref: str, keys: Sequence[str]) -> pa.Table:
+        """``ref``'s series rows for ``keys``: the run's are read once (for every key
+        of its side), and each shard's taken from them."""
+        if ref not in self._run_series:
+            s = self.manifest["datasets"][ref]["series"]
+            all_obs = self.shard_keys()
+            run_keys = (
+                None if all_obs is None
+                else all_obs if ref in self.obs_keyed
+                else self._linked(all_obs)
+            )  # fmt: skip
+            self._run_series[ref] = self.wh.read(
+                Read(s["project"], s["name"], s["columns"], keys=run_keys)
+            )
+        rows = self._run_series[ref]
+        return rows.filter(
+            pc.is_in(rows["series_key"], pa.array(list(keys), pa.string()))
+        )
 
     def _linked(self, obs_keys: Sequence[str]) -> list[str]:
         """The predicted series linked to ``obs_keys``."""
@@ -277,8 +333,7 @@ class Inputs:
                 s = d["series"]
                 series[ref] = (
                     self.whole(s["project"], s["name"], s["columns"]) if keys is None
-                    else self.wh.read(Read(s["project"], s["name"], s["columns"],
-                                           keys=keys))
+                    else self._shard_series(ref, keys)
                 )  # fmt: skip
         return rows, series
 
@@ -338,37 +393,76 @@ def typed(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
     return pa.Table.from_arrays(arrays, names=table.column_names), columns
 
 
+def open_tables(task: dict) -> Tables:
+    """Table writes as the caller, at the run's catalog (tests replace this)."""
+    if not task.get("catalog"):
+        raise LoadFailed(["the control plane didn't say where the warehouse is"])
+    c = CatalogAccess.from_task(task["catalog"])
+    return PolarisTables.at(
+        catalog_properties(c.uri, c.warehouse, c.realm, c.region, c.endpoint,
+                           c.path_style)
+    )  # fmt: skip
+
+
 def write_table(
     client: GrantClient,
+    tables: Tables,
     project: str,
     name: str,
+    columns: list[dict],
     table: pa.Table,
     overwrite_filter: str | None = None,
     append: bool = False,
 ) -> int | None:
     """Replace a run table's rows (those ``overwrite_filter`` keeps, or all) with
-    ``table`` (chunked), or add ``table`` to them (``append``); the last snapshot."""
-    path = f"/projects/{project}/datasets/{name}/data"
-    snapshot = None
-    pieces = list(chunks(table)) if table.num_rows else [table]
-    for i, chunk in enumerate(pieces):
-        if chunk.num_rows == 0:
-            break  # nothing to write; an earlier run's rows stay
-        params = {"mode": "overwrite" if i == 0 and not append else "append"}
-        if i == 0 and overwrite_filter and not append:
-            params["filter"] = overwrite_filter
-        resp = client.api(
-            "POST", path, params=params, content=arrow_bytes(chunk),
-            headers={"Content-Type": ARROW},
-        )  # fmt: skip
-        if resp.status_code != 201:
-            raise LoadFailed([f"writing {name}: {_problem(resp)}"])
-        snapshot = resp.json().get("snapshot_id")
-    return snapshot
+    ``table``, or add ``table`` to them (``append``), in one snapshot; returns it.
+
+    The job commits the rows itself, as the caller, with the write gateway's own
+    code (conform, filter, PyIceberg write), then reports the commit, which the
+    control plane checks and records as the dataset's lineage (ADR-0016)."""
+    if table.num_rows == 0:
+        return None  # nothing to write; an earlier run's rows stay
+    mode = "append" if append else "overwrite"
+    started = time.monotonic()
+    try:
+        data = conform(table, columns, None)
+        expression = (
+            overwrite_expression(overwrite_filter, columns) if not append else None
+        )
+    except DataMismatch as exc:
+        raise LoadFailed([f"writing {name}: {exc}"]) from None
+    try:
+        try:
+            result = tables.write(client.token(), project, name, data, mode, expression)
+        except TableForbidden:  # the token may have gone stale: once more, fresh
+            result = tables.write(
+                client.token(fresh=True), project, name, data, mode, expression
+            )
+    except TableForbidden:
+        raise LoadFailed([f"writing {name}: the caller may not write it"]) from None
+    except TableError as exc:
+        raise LoadFailed([f"writing {name}: {exc}"]) from None
+    if result.snapshot_id is not None:
+        report = {
+            "dataset": name, "mode": mode, "filter": overwrite_filter if not append
+            else None, "rows": data.num_rows, "snapshot_id": result.snapshot_id,
+        }  # fmt: skip
+        try:
+            client._grant("POST", "writes", json=report)
+        except httpx.HTTPStatusError as exc:
+            raise LoadFailed(
+                [f"recording the write to {name}: {_problem(exc.response)}"]
+            ) from None
+    log.info(
+        "wrote %s: %s %d rows, snapshot %s (%.1fs)", name, mode, data.num_rows,
+        result.snapshot_id, time.monotonic() - started,
+    )  # fmt: skip
+    return result.snapshot_id
 
 
 def store(
     client: GrantClient,
+    tables: Tables,
     project: str,
     kind: str,
     table: pa.Table,
@@ -376,7 +470,7 @@ def store(
     overwrite_filter: str | None = None,
     append: bool = False,
 ) -> dict:
-    """Write one of the run's tables (results, pairs) with its lineage."""
+    """Write one of the run's tables (results, pairs, state) with its lineage."""
     rows, columns = typed(table, run)
     try:
         resp = client._grant(
@@ -385,7 +479,9 @@ def store(
     except httpx.HTTPStatusError as exc:
         raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
     dataset = resp.json()["dataset"]
-    snapshot = write_table(client, project, dataset, rows, overwrite_filter, append)
+    snapshot = write_table(
+        client, tables, project, dataset, columns, rows, overwrite_filter, append
+    )
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
 
 
@@ -455,9 +551,16 @@ def decode_state(table: pa.Table) -> pa.Table:
     return pa.Table.from_arrays(arrays, names=names)
 
 
-def _stored_state(wh: Warehouse, project: str, run: dict) -> pa.Table | None:
-    """The version's state as the last run left it (None if it can't be read)."""
+def _stored_state(
+    wh: Warehouse, project: str, run: dict, snapshot: int | None = None
+) -> pa.Table | None:
+    """The version's state as the last succeeded run left it, at its ``snapshot``
+    (a run that failed after committing state mustn't be built on; VeriRace does
+    the same), or the current one when that run didn't say. None if it can't be
+    read (an expired snapshot included)."""
     name = f"state_{run['evaluation']}_v{run['version']}"
+    if snapshot is not None:
+        wh.snapshots[f"{project}.{name}"] = int(snapshot)
     try:
         table = wh.read(Read(project, name, []))
     except Exception:  # noqa: BLE001 - missing, unreadable: the run goes full
@@ -640,7 +743,9 @@ def location_labels(
     return out
 
 
-def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict:
+def _evaluate(
+    client: GrantClient, tables: Tables, task: dict, how: dict, wh: Warehouse
+) -> dict:
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
     parsed = load_spec(spec)
@@ -653,7 +758,7 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     dm: DmSettings | None = None
     p_reach = timedelta(0)
     if incremental:
-        stored = _stored_state(wh, project, run)
+        stored = _stored_state(wh, project, run, how.get("state_snapshot"))
         if stored is None:
             raise _Full("the stored state couldn't be read")
         if how.get("dm"):
@@ -697,6 +802,10 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     if keys:
         predicted_rows = inputs.predicted_rows()
         shards = list(key_ranges(keys, predicted_rows / len(keys), rows_per_shard()))
+        log.info(
+            "%d observed series, %d predicted rows: %d shards of up to %d rows",
+            len(keys), predicted_rows, len(shards), rows_per_shard(),
+        )  # fmt: skip
     if dirty == set():
         shards = []  # nothing changed: the stored state is the state
 
@@ -706,7 +815,9 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     pairs_out: dict | None = None
     counted = months_sql(dirty) if incremental else None
     for i, shard in enumerate(shards):
+        started = time.monotonic()
         rows, series = inputs.load(shard)
+        rows_read = sum(t.num_rows for t in rows.values())
         if i == 0 and stateful and not incremental and dm_test:
             predicted = [rows[r] for r in _predicted(parsed) if r in rows]
             n = (
@@ -728,6 +839,12 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
         del rows, series
         pairs = backend.pairs(build_plan(parsed, catalog))
         del catalog
+        log.info(
+            "shard %d/%d: %s observed series, %d rows read, %d pairs, %.1fs, "
+            "peak memory %.0f MB", i + 1, len(shards),
+            "all" if shard is None else len(shard), rows_read, pairs.num_rows,
+            time.monotonic() - started, peak_memory_mb(),
+        )  # fmt: skip
         if not stateful:
             all_pairs = pairs
             break
@@ -740,7 +857,7 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
         if run.get("pairs") and pairs.num_rows:
             first = pairs_out is None
             replaced = months_filter(dirty) if incremental and first else None
-            written = store(client, project, "pairs", pairs, run, replaced,
+            written = store(client, tables, project, "pairs", pairs, run, replaced,
                             append=not first)  # fmt: skip
             pairs_out = (
                 written if first
@@ -776,14 +893,14 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     else:
         stages = backend.aggregate(parsed, all_pairs)
         if run.get("pairs") and all_pairs is not None and all_pairs.num_rows:
-            pairs_out = store(client, project, "pairs", all_pairs, run)
+            pairs_out = store(client, tables, project, "pairs", all_pairs, run)
 
-    out = store(client, project, "results", stages[-1], run)
+    out = store(client, tables, project, "results", stages[-1], run)
     if pairs_out is not None:
         out["pairs"] = pairs_out
     if state is not None:
         out["state"] = {
-            **store(client, project, "state", encode_state(state), run),
+            **store(client, tables, project, "state", encode_state(state), run),
             "bucket": STATE_BUCKET,
         }
         if dm is not None and dm_test:
@@ -806,11 +923,13 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
     An incremental run that finds it can't be one after all runs in full."""
     how = task["run"].get("incremental") or {"mode": "full", "why": "not decided"}
     wh = open_warehouse(client, task)
+    tables = open_tables(task)
     try:
         try:
-            result = _evaluate(client, task, how, wh)
+            result = _evaluate(client, tables, task, how, wh)
         except _Full as exc:
-            result = _evaluate(client, task, {"mode": "full", "why": str(exc)}, wh)
+            full = {"mode": "full", "why": str(exc)}
+            result = _evaluate(client, tables, task, full, wh)
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
     finally:

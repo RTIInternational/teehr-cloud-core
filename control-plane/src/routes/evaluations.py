@@ -394,7 +394,7 @@ def run_tables(slug: str, version: int) -> list[str]:
     operation_id="start_run",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=RunOut,
-    responses=_errors(401, 403, 404, 429, 502, 503),
+    responses=_errors(401, 403, 404, 409, 429, 502, 503),
 )
 def start_run(
     name: ProjectName,
@@ -415,8 +415,9 @@ def start_run(
     A run is incremental when it can be: the version keeps state and only some
     months of its inputs changed since its last run (timeseries writes record the
     months they touch); it then recomputes only those. ``full`` recomputes all;
-    the run's ``result.mode`` says which it did, and why when full. Needs the write
-    role."""
+    the run's ``result.mode`` says which it did, and why when full. A version runs
+    one at a time (409 while it has a run queued or running: its runs replace the
+    same tables). Needs the write role."""
     project, my_role = _authorize(session, name, identity, settings, Role.WRITE)
     if (
         my_role is not None
@@ -445,6 +446,21 @@ def start_run(
     version = next((v for v in versions if v.version == wanted), None)
     if evaluation is None or version is None:
         raise _not_found()
+    going = session.scalars(
+        select(Run).where(
+            Run.evaluation_version_id == version.id,
+            Run.status.in_(("queued", "running")),
+        )
+    ).all()
+    for other in going:
+        sync(session, kube, other)  # a run whose pod died unreported is failed
+        if other.status in ("queued", "running"):
+            raise APIError(
+                status.HTTP_409_CONFLICT,
+                f"Version {version.version} of '{slug}' has a run {other.status} "
+                f"({other.id}); wait for it to finish or cancel it",
+                code="run_in_progress",
+            )
     try:
         planned = plan(session, project, version.spec)
     except SpecProblems as exc:

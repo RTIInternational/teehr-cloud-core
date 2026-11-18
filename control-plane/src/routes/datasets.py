@@ -53,7 +53,7 @@ from src.dataset_types import (
 )
 from src.domains import convert, lookup
 from src.errors import APIError
-from src.expressions import compile_filter
+from src.expressions import compile_filter, overwrite_expression
 from src.formats import (
     ARROW_STREAM,
     JSON,
@@ -810,15 +810,7 @@ def write_dataset(
                     " (null where there's no value)"
                 )
         data = conform(data, columns, timezone)
-        expression = None
-        if filter:
-            compiled = compile_filter(filter, columns)
-            if compiled.residual is not None:
-                raise DataMismatch(
-                    "an overwrite filter must compare columns with values (=, <, IN, "
-                    "BETWEEN, IS NULL, AND/OR/NOT), so the table can apply it"
-                )
-            expression = compiled.pushdown
+        expression = overwrite_expression(filter, columns)
         if mode == "upsert" or typed:
             repeated = duplicate_keys(data, record.key_columns or [])
             if repeated:

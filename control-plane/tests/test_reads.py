@@ -253,3 +253,63 @@ def test_read_stats_count_files_once_and_every_read_of_them():
         }
     finally:
         wh.close()
+
+
+@pytest.fixture
+def iceberg(tmp_path):
+    """A warehouse over a local Iceberg catalog: ``p.fcst`` in three files, one per
+    key range (a*, b*, c*), so a read's keys can rule files out by their bounds."""
+    from pyiceberg.catalog.sql import SqlCatalog
+
+    from src.jobs.reads import CatalogAccess, Warehouse
+
+    catalog = SqlCatalog(
+        "t", uri=f"sqlite:///{tmp_path}/c.db", warehouse=f"file://{tmp_path}/w"
+    )
+    catalog.create_namespace("p")
+    base = datetime(2024, 1, 1, tzinfo=UTC)
+    schema = pa.schema(
+        [("series_key", pa.string()), ("value_time", pa.timestamp("us", tz="UTC")),
+         ("value", pa.float64())]
+    )  # fmt: skip
+    table = catalog.create_table(("p", "fcst"), schema=schema)
+    for prefix in "abc":
+        table.append(pa.table({
+            "series_key": [f"{prefix}{i}" for i in range(3) for _ in range(24)],
+            "value_time": [base + timedelta(hours=h) for _ in range(3) for h in range(24)],
+            "value": [float(h) for _ in range(3) for h in range(24)],
+        }, schema=schema))  # fmt: skip
+    wh = Warehouse(CatalogAccess("http://unused", "t", "teehr"), lambda: "token")
+    wh._catalog, wh._catalog_token = catalog, "token"
+    yield wh
+    wh.close()
+
+
+COLS = [{"name": "series_key", "type": "string"},
+        {"name": "value_time", "type": "timestamptz"}]  # fmt: skip
+
+
+def test_shard_reads_plan_once_and_read_only_files_that_can_hold_their_keys(iceberg):
+    from src.jobs.reads import Read
+
+    day = "value_time < '2024-01-01T12:00:00Z'"
+    b = iceberg.read(Read("p", "fcst", COLS, day, keys=["b1", "b2"]))
+    assert sorted(set(b["series_key"].to_pylist())) == ["b1", "b2"]
+    assert b.num_rows == 2 * 12
+    iceberg.read(Read("p", "fcst", COLS, day, keys=["a0", "c2"]))
+    assert iceberg.read(Read("p", "fcst", COLS, day, keys=["zz"])).num_rows == 0
+
+    assert len(iceberg._plans) == 1  # one plan for the table and filter
+    assert iceberg.read_stats()["p.fcst"] == {
+        "reads": 3, "files": 3, "file_reads": 1 + 2 + 0,
+        "bytes_read": iceberg.read_stats()["p.fcst"]["bytes_read"],
+    }  # fmt: skip
+
+
+def test_count_is_the_rows_a_read_keeps_not_its_files(iceberg):
+    from src.jobs.reads import Read
+
+    day = "value_time < '2024-01-01T12:00:00Z'"
+    assert iceberg.rows(Read("p", "fcst", COLS, day)) == 3 * 3 * 24  # whole files
+    assert iceberg.count(Read("p", "fcst", COLS, day)) == 3 * 3 * 12
+    assert iceberg.count(Read("p", "fcst", COLS, day, keys=["a1", "c0"])) == 2 * 12

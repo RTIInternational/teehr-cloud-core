@@ -5405,7 +5405,7 @@
         ]
       },
       "post": {
-        "description": "Run a version of the evaluation (default the latest) as a job acting as\nyou: it reads the inputs, runs the spec and writes results_<slug>_v<version>\n(replacing an earlier run's). The spec is planned again first, against the\ndatasets as they are now (422 if it no longer plans).\n\nA run is incremental when it can be: the version keeps state and only some\nmonths of its inputs changed since its last run (timeseries writes record the\nmonths they touch); it then recomputes only those. ``full`` recomputes all;\nthe run's ``result.mode`` says which it did, and why when full. Needs the write\nrole.",
+        "description": "Run a version of the evaluation (default the latest) as a job acting as\nyou: it reads the inputs, runs the spec and writes results_<slug>_v<version>\n(replacing an earlier run's). The spec is planned again first, against the\ndatasets as they are now (422 if it no longer plans).\n\nA run is incremental when it can be: the version keeps state and only some\nmonths of its inputs changed since its last run (timeseries writes record the\nmonths they touch); it then recomputes only those. ``full`` recomputes all;\nthe run's ``result.mode`` says which it did, and why when full. A version runs\none at a time (409 while it has a run queued or running: its runs replace the\nsame tables). Needs the write role.",
         "operationId": "start_run",
         "parameters": [
           {
@@ -5490,6 +5490,16 @@
               }
             },
             "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
           },
           "422": {
             "content": {
