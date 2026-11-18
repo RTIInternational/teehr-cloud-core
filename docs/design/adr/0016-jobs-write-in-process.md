@@ -1,6 +1,6 @@
 # ADR-0016: Jobs write their data in-process; the control plane keeps the record
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified by the team, 2026-11-18)
 - **Date:** 2026-11-18
 - **Deciders:** TEEHR team
 - **Related:** #148, #228, ADR-0004 (amended by this), ADR-0014 (jobs), #223 (jobs read
