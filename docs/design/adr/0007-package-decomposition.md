@@ -1,6 +1,6 @@
 # ADR-0007: Decompose `teehr` by function, package by dependency weight
 
-- **Status:** Accepted (ratified by the team, 2026-11-13)
+- **Status:** Accepted (ratified by the team, 2026-11-13); how it's carried out: ADR-0015 (proposed)
 - **Date:** 2026-11-10
 - **Deciders:** TEEHR team
 - **Related:** #133, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0002 (metric engine), ADR-0008 (repo topology)
