@@ -816,3 +816,17 @@ def test_an_incremental_run_builds_on_the_last_succeeded_runs_state(
     incremental = _rows(tables.written[("flood", "results_e_v1")][-1])
     run_once(client, kube, {"full": True})
     _same(incremental, _rows(tables.written[("flood", "results_e_v1")][-1]))
+
+
+def test_a_version_runs_one_at_a_time(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    saved(client)
+    start = lambda: client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)  # noqa: E731
+    assert start().status_code == 202
+    second = start()
+    assert second.status_code == 409 and second.json()["code"] == "run_in_progress"
+
+    kube.jobs.pop(next(iter(kube.jobs)))  # its pod died without reporting
+    assert start().status_code == 202  # the dead run no longer holds the version
+    run_job(client, kube)
+    assert start().status_code == 202  # nor does a finished one
