@@ -9,6 +9,7 @@ spec:
       containers:
       # Plain S3 API, so it works against any S3-compatible backend.
       - name: create-bucket
+        # Keep the tag in step with db-backups/Dockerfile, which copies the CLI from this image.
         image: amazon/aws-cli:2.36.45
         command: ["/bin/sh", "-c"]
         args:
