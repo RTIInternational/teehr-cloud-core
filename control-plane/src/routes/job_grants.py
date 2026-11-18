@@ -124,6 +124,19 @@ def task(
     run = _run(session, job)
     if job.kind == "run" and run is not None:
         body["run"] = {"id": str(run.id), **(run.task or {})}
+        # Where the job reads its inputs from, as the caller (src/jobs/reads.py).
+        body["catalog"] = (
+            {
+                "uri": f"{settings.polaris_url.rstrip('/')}/api/catalog",
+                "warehouse": settings.polaris_catalog,
+                "realm": settings.polaris_realm,
+                "region": settings.storage_region,
+                "endpoint": settings.storage_endpoint,
+                "path_style": settings.storage_path_style,
+            }
+            if settings.polaris_url
+            else None
+        )
     if job.status == JobStatus.QUEUED:
         now = datetime.now(UTC)
         job.status, job.started_at = JobStatus.RUNNING, now

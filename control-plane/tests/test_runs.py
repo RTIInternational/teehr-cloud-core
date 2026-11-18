@@ -35,6 +35,7 @@ class Lake:
 
     def __init__(self, client, fake):
         self.client, self.fake, self.data, self.reads = client, fake, {}, []
+        self.shard_reads = []
         fake.read, fake.count = self.read, lambda *a, **k: 0
 
     def put(self, name, table):
@@ -57,6 +58,54 @@ class Lake:
         return ReadResult(table.slice(0, limit), 7_000 + len(name))
 
 
+class FakeWarehouse:
+    """The run job's warehouse over the ``Lake``'s tables: keys and filters applied
+    (in DuckDB, as the real one does), each table at one snapshot."""
+
+    def __init__(self, lake):
+        self.lake, self.snapshots = lake, {}
+
+    def read(self, read):
+        from teehr_core.engine.connect import arrow_table, memory_connection, register
+        from teehr_core.engine.shards import in_list
+        from teehr_core.spec.expressions import to_duckdb
+
+        lake, key = self.lake, (read.project, read.name)
+        lake.reads.append((read.project, read.name, read.where))
+        lake.shard_reads.append((read.project, read.name, read.keys))
+        if key in lake.data:
+            table = lake.data[key]
+        elif lake.fake.written.get(key):  # a run's table: the rows last written to it
+            table = lake.fake.written[key][-1]
+        else:
+            raise KeyError(f"no table {key}")
+        self.snapshots.setdefault(f"{read.project}.{read.name}", 7_000 + len(read.name))
+        where = []
+        if read.keys is not None:
+            where.append(f"{read.key} {in_list(sorted(set(read.keys)))}")
+        if read.where:
+            where.append(f"({to_duckdb(read.where)})")
+        if not where:
+            return table
+        con = memory_connection()
+        con.execute("SET TimeZone = 'UTC'")
+        register(con, "t", table)
+        return arrow_table(con, f"SELECT * FROM t WHERE {' AND '.join(where)}").cast(
+            table.schema
+        )
+
+    def rows(self, read):  # from the catalog: not a read
+        n = self.read(read).num_rows
+        self.lake.reads.pop(), self.lake.shard_reads.pop()
+        return n
+
+    def read_stats(self):
+        return {}
+
+    def close(self):
+        pass
+
+
 def _series(keys):
     return pa.table(
         {"series_key": keys, **{c: pa.array([None] * len(keys), pa.string())
@@ -66,8 +115,11 @@ def _series(keys):
 
 
 @pytest.fixture
-def lake(client, datasets, jobs):  # noqa: F811
+def lake(client, datasets, jobs, monkeypatch):  # noqa: F811
     store = Lake(client, datasets)
+    monkeypatch.setattr(
+        "src.jobs.run.open_warehouse", lambda client, task: FakeWarehouse(store)
+    )
     hours = [T0 + timedelta(hours=h) for h in range(4)]
     store.put("usgs_obs", pa.table({
         "series_key": [k for k in OBS for _ in hours],
@@ -562,6 +614,107 @@ def test_persistence_and_dm_runs_are_incremental_and_match_full_ones(  # noqa: F
                 assert a[column] == pytest.approx(value, nan_ok=True), column
             else:
                 assert a[column] == value, column
+
+
+# --- shards ---------------------------------------------------------------------
+
+
+def _same(a, b):
+    assert len(a) == len(b) > 0
+    for x, y in zip(a, b, strict=True):
+        for column, value in y.items():
+            if column == "run_id":
+                continue
+            if isinstance(value, float):
+                assert x[column] == pytest.approx(value, nan_ok=True), column
+            else:
+                assert x[column] == value, column
+
+
+LEAD = {"name": "lead", "fn": "lead_time_bins", "width": "PT2H"}
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["by_series", "by_lead_time", "rollup", "persistence_dm"],
+)
+def test_a_run_in_shards_gives_the_same_results(
+    client,
+    lake,
+    jobs,
+    tables,
+    monkeypatch,
+    shape,  # noqa: F811
+):
+    kube, _ = jobs
+    body = spec(fields=[LEAD])
+    stage = body["aggregate"][0]
+    stage["metrics"] = ["count", "rmse", "kge", "relative_median"]
+    if shape == "by_lead_time":  # spans series: every shard has a part of each group
+        stage["group_by"] = ["secondary_dataset", "lead"]
+    elif shape == "rollup":
+        body["aggregate"] = [{"rollup": ["primary_series_key", "lead"],
+                              "metrics": ["count", "rmse"]}]  # fmt: skip
+    elif shape == "persistence_dm":
+        body["inputs"]["secondary"] = [
+            {"dataset": "nwm_sr"},
+            {"generate": "persistence", "like": "nwm_sr", "max_age": "PT6H"},
+        ]
+        stage["metrics"] = ["count", "rmse"]
+        stage["skill"] = {
+            "reference": "persistence:nwm_sr", "metrics": ["rmse"], "test": "dm",
+        }  # fmt: skip
+    saved(client, body)
+
+    whole = run_once(client, kube)
+    assert "shards" in whole and whole["shards"] == 1
+    want = _rows(tables.written[("flood", "results_e_v1")][-1])
+
+    monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")  # a shard per series
+    lake.shard_reads.clear()
+    sharded = run_once(client, kube, {"full": True})
+    assert sharded["shards"] == 2
+    _same(_rows(tables.written[("flood", "results_e_v1")][-1]), want)
+    assert sharded["state"]["rows"] == whole["state"]["rows"]  # merged per month
+
+    # Each shard read its own series only.
+    obs = [keys for _, n, keys in lake.shard_reads if n == "usgs_obs"]
+    sim = [keys for _, n, keys in lake.shard_reads if n == "nwm_sr"]
+    assert sorted(map(tuple, obs)) == [("usgs-a",), ("usgs-b",)]
+    assert sorted(map(tuple, sim)) == [("nwm-1",), ("nwm-2",)]
+
+
+def test_a_run_in_shards_keeps_every_shards_pairs(
+    client, lake, jobs, tables, monkeypatch
+):  # noqa: F811
+    kube, _ = jobs
+    body = spec(output={"pairs": "all"})
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")
+    result = run_once(client, kube)
+    assert result["shards"] == 2 and result["pairs"]["rows"] == 8
+    pairs = tables.written[("flood", "pairs_e_v1")]
+    assert [t.num_rows for t in pairs] == [4, 4]  # a shard's, then the other's added
+
+
+def test_grouping_sets_that_dont_nest_keep_state_for_every_set(
+    client, lake, jobs, tables
+):  # noqa: F811
+    kube, _ = jobs
+    body = spec(fields=[LEAD])
+    body["aggregate"] = [{
+        "grouping_sets": [["primary_series_key"], ["lead"]],
+        "metrics": ["count", "rmse"],
+    }]  # fmt: skip
+    saved(client, body)
+    result = run_once(client, kube)
+    assert result["mode"] == "full" and result["state"]["rows"] > 0
+    rows = tables.written[("flood", "results_e_v1")][-1].to_pylist()
+    by_gauge = [r for r in rows if r["primary_series_key"] != "(all)"]
+    by_lead = [r for r in rows if r["lead"] != "(all)"]
+    assert {r["primary_series_key"] for r in by_gauge} == {"usgs-a", "usgs-b"}
+    assert sum(r["count"] for r in by_gauge) == sum(r["count"] for r in by_lead) == 8
 
 
 def test_cancel_a_run(client, lake, jobs):  # noqa: F811

@@ -635,3 +635,17 @@ def test_non_iso_times_need_a_time_format(client, staging, jobs, tables):  # noq
     assert [t.isoformat() for t in data["value_time"].to_pylist()] == [
         "2026-01-02T13:00:00+00:00", "2026-01-02T14:00:00+00:00"
     ]  # fmt: skip
+
+
+def test_a_set_shard_size_reaches_the_job_pod():
+    from src.config import Settings
+    from src.kube import job_manifest
+
+    def env(settings):
+        pod = job_manifest(settings, "run", "j" * 36, "tjg_x")["spec"]["template"]
+        return {e["name"]: e["value"] for e in pod["spec"]["containers"][0]["env"]}
+
+    base = Settings(database_url="sqlite://")
+    assert "RUN_ROWS_PER_SHARD" not in env(base)  # sized from the pod's memory
+    sized = dataclasses.replace(base, run_rows_per_shard=5_000_000)
+    assert env(sized)["RUN_ROWS_PER_SHARD"] == "5000000"

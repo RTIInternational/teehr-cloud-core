@@ -228,3 +228,28 @@ def test_stale_token_gets_the_refresh_code(client, lake):
     resp = read(client)
     assert resp.status_code == 403
     assert resp.json()["code"] == "token_refresh_required"
+
+
+def test_read_stats_count_files_once_and_every_read_of_them():
+    from types import SimpleNamespace
+
+    from src.jobs.reads import CatalogAccess, Warehouse
+
+    def task(path, size):
+        return SimpleNamespace(
+            file=SimpleNamespace(file_path=path, file_size_in_bytes=size)
+        )
+
+    wh = Warehouse(
+        CatalogAccess("http://polaris/api/catalog", "w", "teehr"), lambda: "t"
+    )
+    try:
+        wh._tally("p.fcst", [task("s3://a", 10), task("s3://b", 20)])  # shard 1
+        wh._tally("p.fcst", [task("s3://b", 20), task("s3://c", 5)])  # shard 2
+        wh._tally("p.obs", [])
+        assert wh.read_stats() == {
+            "p.fcst": {"reads": 2, "files": 3, "file_reads": 4, "bytes_read": 55},
+            "p.obs": {"reads": 1, "files": 0, "file_reads": 0, "bytes_read": 0},
+        }
+    finally:
+        wh.close()
