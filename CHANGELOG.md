@@ -13,7 +13,7 @@
 ### Why
 - Large mean areal backfills (AORC, GEFS) run as Spark `mapInArrow` tasks that read the source grids directly.
 
-## Unreleased (prefer IPv6 in images)
+## 2026-11-10 (#141 prefer IPv6 in images)
 
 ### Summary
 - The xpublish-api, Jupyter driver and Spark executor images prefer IPv6 for hosts that offer it, so on a
@@ -28,7 +28,7 @@
 - glibc puts IPv4 first for pods, whose IPv6 address is private (`fd00::`). Clusters without IPv6 (FVED, kind)
   are unaffected.
 
-## Unreleased (backfill users into a group)
+## 2026-10-23 (backfill users into a group)
 
 ### Summary
 - `scripts/add-users-to-group.sh` adds every existing realm user to a Keycloak group (default
@@ -44,7 +44,7 @@
 - `defaultGroups` only applies to new users. teehr-hub's users all predate `/icechunk-read-only`, too many to add
   in the Keycloak console by hand.
 
-## Unreleased (deploy targets)
+## 2026-10-19 (#98 deploy targets)
 
 ### Summary
 - Cluster-specific deployment values now come from a per-cluster deploy target file, so one deployment can target
@@ -77,5 +77,5 @@
 - Cleaned stale references in docs/configs and removed no-longer-needed helper/config files tied to old flow.
 
 ### Why
-- Split the application code from the platform code to allow the application to more cleanly be extended to other platforms. 
+- Split the application code from the platform code to allow the application to more cleanly be extended to other platforms.
 - Keep `teehr-hub` focused on application deployment and local development workflows.
