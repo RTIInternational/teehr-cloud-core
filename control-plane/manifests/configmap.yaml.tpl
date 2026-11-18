@@ -61,4 +61,12 @@ data:
   # JOB_TOKEN_KEY (control-plane-secrets); without it, ingest says not configured.
   JOB_IMAGE: "${actions.build.teehr-control-plane.outputs.deploymentImageId}"
   JOB_NAMESPACE: "${environment.namespace}"
+  # Job pod sizing, per deployment (var.controlPlane.job*, .runRowsPerShard);
+  # empty: the code's defaults (1Gi request, 4Gi limit, no CPU request, DuckDB's
+  # threads, shards sized from memory).
+  JOB_MEMORY_REQUEST: "${var.controlPlane.jobMemoryRequest || ''}"
+  JOB_MEMORY_LIMIT: "${var.controlPlane.jobMemoryLimit || ''}"
+  JOB_CPU_REQUEST: "${var.controlPlane.jobCpuRequest || ''}"
+  JOB_THREADS: "${var.controlPlane.jobThreads || ''}"
+  RUN_ROWS_PER_SHARD: "${var.controlPlane.runRowsPerShard || ''}"
   CONTROL_PLANE_INTERNAL_URL: "http://teehr-control-plane:8000"

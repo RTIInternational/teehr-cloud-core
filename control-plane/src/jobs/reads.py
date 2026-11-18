@@ -59,6 +59,12 @@ def _may_hold(data_file: Any, field_id: int, wanted: list[bytes]) -> bool:
     return i < len(wanted) and (upper is None or wanted[i] <= upper)
 
 
+def _overlaps(wanted: list[str], low: str | None, high: str | None) -> bool:
+    """Whether sorted ``wanted`` has a key in [low, high] (a missing bound: open)."""
+    i = bisect.bisect_left(wanted, low) if low is not None else 0
+    return i < len(wanted) and (high is None or wanted[i] <= high)
+
+
 @dataclass(frozen=True)
 class CatalogAccess:
     """Where the warehouse catalog is and how its storage is reached (the run's task
@@ -97,9 +103,15 @@ class Warehouse:
     access: CatalogAccess
     token: Callable[[], str]  # the caller's access token, fresh
     memory_limit: str | None = None
+    threads: int | None = None  # DuckDB's (S3 requests run on them); None: its default
     snapshots: dict[str, int | None] = field(default_factory=dict)
-    # Per table: the reads, the files they planned (each, and distinct) and the bytes.
+    # Per table: the reads, the files and row groups they read (each, and distinct)
+    # and the bytes.
     _planned: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    # Per file: its row groups' key bounds and compressed bytes (from its footer).
+    _groups: dict[str, list[tuple[str | None, str | None, int]]] = field(
+        default_factory=dict, repr=False
+    )
     # Loaded tables (with when), and each table's files per filter (at its snapshot).
     _tables: dict[str, tuple[Table, float]] = field(default_factory=dict, repr=False)
     _plans: dict[tuple[str, str | None], list] = field(default_factory=dict, repr=False)
@@ -108,6 +120,10 @@ class Warehouse:
         self._con = memory_connection()
         limit = self.memory_limit or default_memory_limit(RUN_SHARE)
         self._con.execute(f"SET TimeZone = 'UTC'; SET memory_limit = '{limit}'")
+        # Footers read for the row-group stats are reused by the read that follows.
+        self._con.execute("SET parquet_metadata_cache = true")
+        if self.threads:
+            self._con.execute(f"SET threads = {int(self.threads)}")
         self._con.install_extension("httpfs")
         self._con.load_extension("httpfs")
         self._catalog: Catalog | None = None
@@ -207,13 +223,16 @@ class Warehouse:
         schema = table.schema().as_arrow()
         if tasks is None:
             return schema.empty_table()
-        self._tally(f"{read.project}.{read.name}", tasks)
+        ref = f"{read.project}.{read.name}"
         if not tasks:
+            self._tally(ref, tasks)
             return schema.empty_table()
         if any(task.delete_files for task in tasks):
+            self._tally(ref, tasks)
             _, snapshot = self.table(read.project, read.name)
             scan = table.scan(row_filter=self._pushdown(read), snapshot_id=snapshot)
             return self._read_with_deletes(read, scan.to_arrow())
+        self._tally(ref, tasks, self._groups_read(tasks, read))
         sql = f"SELECT {self._columns(schema)} FROM {self._source(tasks)}{self._where(read)}"
         return arrow_table(self._con, sql).cast(schema)
 
@@ -222,22 +241,64 @@ class Warehouse:
         files = ", ".join(lit(t.file.file_path) for t in tasks)
         return f"read_parquet([{files}], union_by_name = true)"
 
-    def _tally(self, ref: str, tasks: list) -> None:
-        t = self._planned.setdefault(ref, {"reads": 0, "file_reads": 0, "bytes": 0,
-                                           "paths": set()})  # fmt: skip
+    def _groups_read(self, tasks: list, read: Read) -> list[tuple[str, int, int]]:
+        """The row groups of ``tasks``' files a read of ``read``'s keys can't skip
+        (by their key bounds, as DuckDB skips them): (file, row group, bytes)."""
+        paths = [t.file.file_path for t in tasks]
+        missing = [p for p in paths if p not in self._groups]
+        if missing:
+            files = ", ".join(lit(p) for p in missing)
+            rows = self._con.execute(
+                "SELECT file_name, row_group_id, any_value(stats_min_value) FILTER "
+                f"(path_in_schema = {lit(read.key)}), any_value(stats_max_value) FILTER "
+                f"(path_in_schema = {lit(read.key)}), sum(total_compressed_size) "
+                f"FROM parquet_metadata([{files}]) GROUP BY ALL ORDER BY ALL"
+            ).fetchall()
+            # DuckDB names a local file without its file:// (tests).
+            named = {p.removeprefix("file://"): p for p in missing}
+            for path in missing:
+                self._groups[path] = []
+            for name, _, low, high, size in rows:
+                path = named.get(name, name)
+                self._groups.setdefault(path, []).append((low, high, int(size or 0)))
+        wanted = sorted(set(read.keys)) if read.keys is not None else None
+        out = []
+        for path in paths:
+            for i, (low, high, size) in enumerate(self._groups.get(path, [])):
+                if wanted is None or _overlaps(wanted, low, high):
+                    out.append((path, i, size))
+        return out
+
+    def _tally(
+        self, ref: str, tasks: list, groups: list[tuple[str, int, int]] | None = None
+    ) -> None:
+        t = self._planned.setdefault(ref, {
+            "reads": 0, "file_reads": 0, "file_bytes": 0, "paths": set(),
+            "group_reads": 0, "groups": set(), "bytes": 0,
+        })  # fmt: skip
         t["reads"] += 1
         t["file_reads"] += len(tasks)
-        t["bytes"] += sum(task.file.file_size_in_bytes for task in tasks)
+        t["file_bytes"] += sum(task.file.file_size_in_bytes for task in tasks)
         t["paths"].update(task.file.file_path for task in tasks)
+        if groups is None:  # not known (deletes): the files, whole
+            t["bytes"] += sum(task.file.file_size_in_bytes for task in tasks)
+            return
+        t["group_reads"] += len(groups)
+        t["groups"].update((path, i) for path, i, _ in groups)
+        t["bytes"] += sum(size for _, _, size in groups)
 
     def read_stats(self) -> dict[str, dict[str, int]]:
-        """Per table read: the reads, the distinct files they read, how many file
-        reads that took, and the bytes. ``file_reads`` near ``files`` means the
-        shards' keys sit in their own files (the table is sorted by them); near
-        ``files`` x ``reads``, every shard read every file."""
+        """Per table read: the reads; the distinct files and row groups they read,
+        and how many file and row-group reads that took; the bytes of the files and
+        of the row groups read. A read reads the row groups of its files that its
+        keys can't rule out, so ``row_group_reads`` near ``row_groups`` means the
+        shards' keys sit in their own row groups; near ``row_groups`` x ``reads``,
+        every shard read every one. ``bytes_read`` is what they hold (compressed)."""
         return {
             ref: {"reads": t["reads"], "files": len(t["paths"]),
-                  "file_reads": t["file_reads"], "bytes_read": t["bytes"]}
+                  "file_reads": t["file_reads"], "row_groups": len(t["groups"]),
+                  "row_group_reads": t["group_reads"], "file_bytes": t["file_bytes"],
+                  "bytes_read": t["bytes"]}
             for ref, t in self._planned.items()
         }  # fmt: skip
 

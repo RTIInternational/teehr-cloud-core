@@ -91,6 +91,11 @@ class Settings:
     job_namespace: str | None = None
     job_memory_request: str = "1Gi"
     job_memory_limit: str = "4Gi"
+    # CPU the job pod requests (e.g. "2"); None: none (it gets what's free).
+    job_cpu_request: str | None = None
+    # DuckDB threads for a job's reads (S3 requests run on them); None: DuckDB's
+    # default (the cores it sees).
+    job_threads: int | None = None
     # Predicted rows a run's shard holds; None = sized from the job's memory.
     run_rows_per_shard: int | None = None
     job_ttl_seconds: int = 86_400
@@ -188,6 +193,8 @@ def get_settings() -> Settings:
         job_namespace=os.getenv("JOB_NAMESPACE") or None,
         job_memory_request=os.getenv("JOB_MEMORY_REQUEST") or "1Gi",
         job_memory_limit=os.getenv("JOB_MEMORY_LIMIT") or "4Gi",
+        job_cpu_request=os.getenv("JOB_CPU_REQUEST") or None,
+        job_threads=int(os.getenv("JOB_THREADS") or 0) or None,
         run_rows_per_shard=int(os.getenv("RUN_ROWS_PER_SHARD") or 0) or None,
         job_ttl_seconds=int(os.getenv("JOB_TTL_SECONDS") or 86_400),
         max_active_jobs_per_project=int(os.getenv("MAX_ACTIVE_JOBS_PER_PROJECT") or 2),
