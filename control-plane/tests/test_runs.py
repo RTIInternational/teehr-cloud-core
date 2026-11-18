@@ -12,7 +12,8 @@ from pyiceberg.io.pyarrow import expression_to_pyarrow
 
 from src.jobs.load import GrantClient
 from src.jobs.run import run_evaluation
-from src.tables import ReadResult, iceberg_schema
+from src.main import app
+from src.tables import ReadResult, get_tables, iceberg_schema
 from tests.test_datasets import ALICE, add_member
 from tests.test_datasets import tables as tables  # noqa: F401  (fixture)
 from tests.test_ingest import ALICE_NOW, grant_of
@@ -122,6 +123,10 @@ def lake(client, datasets, jobs, monkeypatch):  # noqa: F811
     store = Lake(client, datasets)
     monkeypatch.setattr(
         "src.jobs.run.open_warehouse", lambda client, task: FakeWarehouse(store)
+    )
+    # The job writes its tables itself (ADR-0016), to the same fake tables.
+    monkeypatch.setattr(
+        "src.jobs.run.open_tables", lambda task: app.dependency_overrides[get_tables]()
     )
     hours = [T0 + timedelta(hours=h) for h in range(4)]
     store.put("usgs_obs", pa.table({
@@ -736,3 +741,55 @@ def test_cancel_a_run(client, lake, jobs):  # noqa: F811
     assert client.post(url, headers=ALICE).status_code == 409
     # With nothing going, the evaluation can be deleted.
     assert client.delete(f"{EVALUATIONS}/e", headers=ALICE).status_code == 204
+
+
+def test_a_run_writes_its_tables_itself_and_the_control_plane_records_them(
+    client, lake, jobs, tables, monkeypatch
+):  # noqa: F811
+    kube, _ = jobs
+    body = spec(output={"pairs": "all"})
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+
+    def through_data(*args, **kwargs):
+        raise AssertionError("a run's data went through the control plane's /data")
+
+    monkeypatch.setattr(GrantClient, "api", through_data)  # ADR-0016
+    result = run_once(client, kube)
+
+    for kind, written in (
+        ("results", result),
+        ("pairs", result["pairs"]),
+        ("state", result["state"]),
+    ):
+        writes = client.get(
+            f"/v1/projects/flood/datasets/{written['dataset']}/writes", headers=ALICE
+        ).json()
+        assert [(w["mode"], w["rows"], w["snapshot_id"]) for w in writes] == [
+            ("overwrite", written["rows"], str(written["snapshot_id"]))
+        ], kind
+
+
+def test_a_jobs_write_report_is_checked_and_recorded_once(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    run_once(client, kube)  # creates and writes results_e_v1
+    client.post(f"{EVALUATIONS}/e/runs", json={"full": True}, headers=ALICE_NOW)
+    job = GrantClient("http://testserver", grant_of(kube.created[-1]), http=client)
+    job.task()
+
+    def report(dataset="results_e_v1", snapshot_id=None):
+        return client.post(
+            "/v1/job-grants/writes",
+            headers={"Authorization": f"Bearer {job.grant}"},
+            json={"dataset": dataset, "mode": "overwrite", "rows": 1,
+                  "snapshot_id": snapshot_id or tables.snapshot},
+        )  # fmt: skip
+
+    assert report("usgs_obs").status_code == 403  # not one of the run's tables
+    assert report(snapshot_id=1).status_code == 409  # no such snapshot
+    first, again = report(), report()
+    assert first.status_code == again.status_code == 201
+    assert first.json()["id"] == again.json()["id"]

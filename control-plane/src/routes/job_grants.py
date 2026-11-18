@@ -12,6 +12,9 @@ user token. A grant works only while its job is queued or running:
   ``pairs``, ``state``: ``<kind>_<slug>_v<version>``), created as the caller and
   registered (runs may write them; the caller needn't be able to register untyped
   datasets).
+- ``POST /v1/job-grants/writes``: a write the job committed to one of its run's
+  tables itself (ADR-0016): checked against the table's snapshots and recorded as
+  the dataset's lineage, as a write through ``/data`` is.
 
 Internal: not in the published API.
 """
@@ -35,7 +38,16 @@ from src.delegation import (
 )
 from src.errors import APIError
 from src.jobs import by_grant, end
-from src.models import Dataset, Job, JobStatus, Project, Run, Upload, UploadStatus
+from src.models import (
+    Dataset,
+    DatasetWrite,
+    Job,
+    JobStatus,
+    Project,
+    Run,
+    Upload,
+    UploadStatus,
+)
 from src.routes.projects import SessionDep, SettingsDep
 from src.schemas import DatasetColumn
 from src.staging import Staging, get_staging
@@ -288,3 +300,72 @@ def run_table(
     )
     session.commit()
     return {"dataset": name, "created": True}
+
+
+class WriteReport(BaseModel):
+    dataset: str = Field(max_length=255)
+    mode: Literal["append", "overwrite"]
+    filter: str | None = Field(default=None, max_length=2000)
+    rows: int = Field(ge=0)
+    snapshot_id: int
+
+
+@router.post("/writes", status_code=status.HTTP_201_CREATED)
+def record_write(
+    body: WriteReport,
+    job: JobDep,
+    session: SessionDep,
+    delegation: Annotated[Delegation | None, Depends(get_delegation)],
+    sealer: Annotated[Sealer | None, Depends(get_sealer)],
+    tables: Annotated[Tables | None, Depends(get_tables)],
+) -> dict:
+    """Record a write the job committed to one of its run's tables (ADR-0016), once
+    its snapshot is on the table. Reporting the same snapshot again is a no-op."""
+    run = _run(session, job)
+    if job.kind != "run" or run is None or not run.task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a run's job")
+    own = {f"{k}_{run.task['evaluation']}_v{run.task['version']}" for k in RUN_TABLES}
+    if body.dataset not in own:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not one of this run's tables")
+    if tables is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No table storage")
+    project = session.get(Project, job.project_id)
+    record = session.scalar(
+        select(Dataset).where(
+            Dataset.project_id == project.id, Dataset.name == body.dataset
+        )
+    )
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No dataset '{body.dataset}'")
+    done = session.scalar(
+        select(DatasetWrite).where(
+            DatasetWrite.dataset_id == record.id,
+            DatasetWrite.snapshot_id == body.snapshot_id,
+        )
+    )
+    if done is None:
+        token = _caller_token(job, session, delegation, sealer)
+        try:
+            found = tables.has_snapshot(
+                token, project.name, body.dataset, body.snapshot_id
+            )
+        except TableError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "The catalog could not be read"
+            ) from exc
+        if not found:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"'{body.dataset}' has no snapshot {body.snapshot_id}",
+            )
+        done = DatasetWrite(
+            dataset_id=record.id,
+            mode=body.mode,
+            filter=body.filter,
+            rows=body.rows,
+            snapshot_id=body.snapshot_id,
+            written_by=job.created_by,
+        )
+        session.add(done)
+    session.commit()
+    return {"id": str(done.id), "snapshot_id": done.snapshot_id}

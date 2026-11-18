@@ -12,8 +12,8 @@
    shard's state is kept and the parts merged per month.
 3. Add lineage to the results (``run_id``, ``spec_version``, ``engine_version``),
    have the results table created (``results_<slug>_v<version>``, job grant) and
-   write the rows through the write API as the caller: the first chunk replaces
-   an earlier run's rows, the rest append. When the spec keeps pairs
+   write the rows as the caller, in the job, replacing an earlier run's rows; the
+   control plane records each commit (ADR-0016: run data doesn't pass through it). When the spec keeps pairs
    (``output.pairs: all``), the paired rows go to ``pairs_<slug>_v<version>`` the
    same way.
 
@@ -53,8 +53,18 @@ from teehr_core.spec import EvaluationSpec, GeneratedInput, load_spec
 from teehr_core.spec.models import AttributeField, WithinField
 
 from src.evaluations import SpecProblems, catalog_from
-from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
+from src.expressions import overwrite_expression
+from src.jobs.load import GrantClient, LoadFailed, _problem
 from src.jobs.reads import CatalogAccess, Read, Warehouse
+from src.tables import (
+    DataMismatch,
+    PolarisTables,
+    TableError,
+    TableForbidden,
+    Tables,
+    catalog_properties,
+    conform,
+)
 
 log = logging.getLogger("src.jobs")
 
@@ -383,37 +393,76 @@ def typed(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
     return pa.Table.from_arrays(arrays, names=table.column_names), columns
 
 
+def open_tables(task: dict) -> Tables:
+    """Table writes as the caller, at the run's catalog (tests replace this)."""
+    if not task.get("catalog"):
+        raise LoadFailed(["the control plane didn't say where the warehouse is"])
+    c = CatalogAccess.from_task(task["catalog"])
+    return PolarisTables.at(
+        catalog_properties(c.uri, c.warehouse, c.realm, c.region, c.endpoint,
+                           c.path_style)
+    )  # fmt: skip
+
+
 def write_table(
     client: GrantClient,
+    tables: Tables,
     project: str,
     name: str,
+    columns: list[dict],
     table: pa.Table,
     overwrite_filter: str | None = None,
     append: bool = False,
 ) -> int | None:
     """Replace a run table's rows (those ``overwrite_filter`` keeps, or all) with
-    ``table`` (chunked), or add ``table`` to them (``append``); the last snapshot."""
-    path = f"/projects/{project}/datasets/{name}/data"
-    snapshot = None
-    pieces = list(chunks(table)) if table.num_rows else [table]
-    for i, chunk in enumerate(pieces):
-        if chunk.num_rows == 0:
-            break  # nothing to write; an earlier run's rows stay
-        params = {"mode": "overwrite" if i == 0 and not append else "append"}
-        if i == 0 and overwrite_filter and not append:
-            params["filter"] = overwrite_filter
-        resp = client.api(
-            "POST", path, params=params, content=arrow_bytes(chunk),
-            headers={"Content-Type": ARROW},
-        )  # fmt: skip
-        if resp.status_code != 201:
-            raise LoadFailed([f"writing {name}: {_problem(resp)}"])
-        snapshot = resp.json().get("snapshot_id")
-    return snapshot
+    ``table``, or add ``table`` to them (``append``), in one snapshot; returns it.
+
+    The job commits the rows itself, as the caller, with the write gateway's own
+    code (conform, filter, PyIceberg write), then reports the commit, which the
+    control plane checks and records as the dataset's lineage (ADR-0016)."""
+    if table.num_rows == 0:
+        return None  # nothing to write; an earlier run's rows stay
+    mode = "append" if append else "overwrite"
+    started = time.monotonic()
+    try:
+        data = conform(table, columns, None)
+        expression = (
+            overwrite_expression(overwrite_filter, columns) if not append else None
+        )
+    except DataMismatch as exc:
+        raise LoadFailed([f"writing {name}: {exc}"]) from None
+    try:
+        try:
+            result = tables.write(client.token(), project, name, data, mode, expression)
+        except TableForbidden:  # the token may have gone stale: once more, fresh
+            result = tables.write(
+                client.token(fresh=True), project, name, data, mode, expression
+            )
+    except TableForbidden:
+        raise LoadFailed([f"writing {name}: the caller may not write it"]) from None
+    except TableError as exc:
+        raise LoadFailed([f"writing {name}: {exc}"]) from None
+    if result.snapshot_id is not None:
+        report = {
+            "dataset": name, "mode": mode, "filter": overwrite_filter if not append
+            else None, "rows": data.num_rows, "snapshot_id": result.snapshot_id,
+        }  # fmt: skip
+        try:
+            client._grant("POST", "writes", json=report)
+        except httpx.HTTPStatusError as exc:
+            raise LoadFailed(
+                [f"recording the write to {name}: {_problem(exc.response)}"]
+            ) from None
+    log.info(
+        "wrote %s: %s %d rows, snapshot %s (%.1fs)", name, mode, data.num_rows,
+        result.snapshot_id, time.monotonic() - started,
+    )  # fmt: skip
+    return result.snapshot_id
 
 
 def store(
     client: GrantClient,
+    tables: Tables,
     project: str,
     kind: str,
     table: pa.Table,
@@ -421,7 +470,7 @@ def store(
     overwrite_filter: str | None = None,
     append: bool = False,
 ) -> dict:
-    """Write one of the run's tables (results, pairs) with its lineage."""
+    """Write one of the run's tables (results, pairs, state) with its lineage."""
     rows, columns = typed(table, run)
     try:
         resp = client._grant(
@@ -430,7 +479,9 @@ def store(
     except httpx.HTTPStatusError as exc:
         raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
     dataset = resp.json()["dataset"]
-    snapshot = write_table(client, project, dataset, rows, overwrite_filter, append)
+    snapshot = write_table(
+        client, tables, project, dataset, columns, rows, overwrite_filter, append
+    )
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
 
 
@@ -685,7 +736,9 @@ def location_labels(
     return out
 
 
-def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict:
+def _evaluate(
+    client: GrantClient, tables: Tables, task: dict, how: dict, wh: Warehouse
+) -> dict:
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
     parsed = load_spec(spec)
@@ -797,7 +850,7 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
         if run.get("pairs") and pairs.num_rows:
             first = pairs_out is None
             replaced = months_filter(dirty) if incremental and first else None
-            written = store(client, project, "pairs", pairs, run, replaced,
+            written = store(client, tables, project, "pairs", pairs, run, replaced,
                             append=not first)  # fmt: skip
             pairs_out = (
                 written if first
@@ -833,14 +886,14 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     else:
         stages = backend.aggregate(parsed, all_pairs)
         if run.get("pairs") and all_pairs is not None and all_pairs.num_rows:
-            pairs_out = store(client, project, "pairs", all_pairs, run)
+            pairs_out = store(client, tables, project, "pairs", all_pairs, run)
 
-    out = store(client, project, "results", stages[-1], run)
+    out = store(client, tables, project, "results", stages[-1], run)
     if pairs_out is not None:
         out["pairs"] = pairs_out
     if state is not None:
         out["state"] = {
-            **store(client, project, "state", encode_state(state), run),
+            **store(client, tables, project, "state", encode_state(state), run),
             "bucket": STATE_BUCKET,
         }
         if dm is not None and dm_test:
@@ -863,11 +916,13 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
     An incremental run that finds it can't be one after all runs in full."""
     how = task["run"].get("incremental") or {"mode": "full", "why": "not decided"}
     wh = open_warehouse(client, task)
+    tables = open_tables(task)
     try:
         try:
-            result = _evaluate(client, task, how, wh)
+            result = _evaluate(client, tables, task, how, wh)
         except _Full as exc:
-            result = _evaluate(client, task, {"mode": "full", "why": str(exc)}, wh)
+            full = {"mode": "full", "why": str(exc)}
+            result = _evaluate(client, tables, task, full, wh)
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
     finally:

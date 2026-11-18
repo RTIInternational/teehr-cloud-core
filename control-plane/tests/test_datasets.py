@@ -53,6 +53,13 @@ class FakeTables:
         self.written.setdefault((namespace, name), []).append(data)
         return WriteResult(self.snapshot)
 
+    def has_snapshot(self, token, namespace, name, snapshot_id):
+        self.calls.append(("has_snapshot", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        first = 9_000_000_000_000_000_001
+        return first <= snapshot_id <= getattr(self, "snapshot", first - 1)
+
     def existing_keys(self, token, namespace, name, column, values):
         self.calls.append(("existing_keys", token, namespace, name))
         if self.fail_with:
