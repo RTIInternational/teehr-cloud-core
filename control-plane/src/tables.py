@@ -8,6 +8,7 @@ PyIceberg does the table work (catalog calls, Parquet I/O, commits); there is no
 query engine here. Routes depend on :func:`get_tables`, which tests replace.
 """
 
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -101,6 +102,27 @@ _IN_FILTER_MAX = 5000
 
 WriteMode = Literal["append", "overwrite", "upsert"]
 PartitionTransform = Literal["month", "year"]
+
+
+#: How every new table's files are laid out, unless its layout says otherwise:
+#: files of about 64 MB, in row groups of a few series each, so a read of a range of
+#: series keys skips most of a file (shards are key ranges; VeriRace measured 150k-row
+#: row groups). Spark (sorted rewrites) sizes row groups in uncompressed bytes,
+#: PyIceberg (the API's and jobs' writes) in rows. Starting points, not tuned.
+LAYOUT_DEFAULTS = {
+    "write.target-file-size-bytes": str(64 * 1024**2),
+    "write.parquet.row-group-size-bytes": str(8 * 1024**2),
+    "write.parquet.row-group-limit": "150000",
+}
+# PyIceberg warns that it doesn't size row groups in bytes; the row limit applies.
+warnings.filterwarnings(
+    "ignore", message=r".*write\.parquet\.row-group-size-bytes.*not implemented"
+)
+
+
+def table_properties(layout: "Layout") -> dict[str, str]:
+    """A new table's properties: the layout defaults, then the layout's own."""
+    return {**LAYOUT_DEFAULTS, **(layout.properties or {})}
 
 
 @dataclass(frozen=True)
@@ -473,7 +495,7 @@ class PolarisTables:
                 schema=schema,
                 partition_spec=_partition_spec(schema, layout.partition),
                 sort_order=_sort_order(schema, layout.sort),
-                properties=layout.properties or {},
+                properties=table_properties(layout),
             )
         except (ForbiddenError, UnauthorizedError) as exc:
             raise TableForbidden(str(exc)) from exc
