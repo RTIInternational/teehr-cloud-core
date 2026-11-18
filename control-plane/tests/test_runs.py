@@ -99,6 +99,9 @@ class FakeWarehouse:
         self.lake.reads.pop(), self.lake.shard_reads.pop()
         return n
 
+    def count(self, read):  # the rows a read keeps (the real one counts in files)
+        return self.rows(read)
+
     def read_stats(self):
         return {}
 

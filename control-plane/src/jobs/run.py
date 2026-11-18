@@ -29,8 +29,12 @@ says exactly what it read.
 """
 
 import json
+import logging
 import os
 import re
+import resource
+import sys
+import time
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -51,6 +55,8 @@ from teehr_core.spec.models import AttributeField, WithinField
 from src.evaluations import SpecProblems, catalog_from
 from src.jobs.load import ARROW, GrantClient, LoadFailed, _problem, arrow_bytes, chunks
 from src.jobs.reads import CatalogAccess, Read, Warehouse
+
+log = logging.getLogger("src.jobs")
 
 #: State is kept per month of value_time (a rerun recomputes changed months only).
 STATE_BUCKET = "month"
@@ -125,6 +131,12 @@ def rows_per_shard() -> int:
     return int(explicit) if explicit else shard_rows()
 
 
+def peak_memory_mb() -> float:
+    """The pod's peak memory so far (this process's, in MB)."""
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / 1e6 if sys.platform == "darwin" else peak / 1e3  # bytes / KiB
+
+
 def open_warehouse(client: GrantClient, task: dict) -> Warehouse:
     """The warehouse, read as the caller (tests replace this)."""
     if not task.get("catalog"):
@@ -148,8 +160,9 @@ class Inputs:
     A shard is a range of observed series keys. It reads the datasets keyed by the
     observed series for those keys, the predicted datasets for the series linked to
     them (by the relation, or by the series tables' shared attribute), and the
-    relation's rows for them. Anything else (layers, other tables) is read whole,
-    once.
+    relation's rows for them. Series tables are read once, for the run's keys, and
+    each shard takes its own rows from them. Anything else (layers, other tables) is
+    read whole, once.
     """
 
     def __init__(
@@ -172,6 +185,10 @@ class Inputs:
             ("right_key", "left_key") if reversed_ else ("left_key", "right_key")
         )
         self._whole: dict[tuple[str, str], pa.Table] = {}
+        self._keys: list[str] | None = None
+        self._keys_known = False
+        self._run_series: dict[str, pa.Table] = {}
+        self._predicted_rows: int | None = None
 
     def _read(
         self, ref: str, where: str | None, keys: Sequence[str] | None
@@ -205,6 +222,11 @@ class Inputs:
 
     def shard_keys(self) -> list[str] | None:
         """The observed series keys a run splits into shards (None: it can't)."""
+        if not self._keys_known:
+            self._keys, self._keys_known = self._find_keys(), True
+        return self._keys
+
+    def _find_keys(self) -> list[str] | None:
         if self.relation:
             rel = self._dataset_whole(self.relation)
             return sorted({str(k) for k in rel[self.obs_col].to_pylist()})
@@ -216,13 +238,37 @@ class Inputs:
         return None
 
     def predicted_rows(self) -> int:
-        """Rows of the predicted datasets a run reads (from the catalog)."""
-        total = 0
-        for ref in self.predicted & set(self.manifest["datasets"]):
-            d = self.manifest["datasets"][ref]
-            total += self.wh.rows(Read(d["project"], d["name"], d["columns"],
-                                       self._where(ref)))  # fmt: skip
-        return total
+        """Rows of the predicted datasets the run reads: its window's, of the series
+        linked to its keys (counted once)."""
+        if self._predicted_rows is None:
+            keys = self.shard_keys()
+            linked = self._linked(keys) if keys else None
+            total = 0
+            for ref in self.predicted & set(self.manifest["datasets"]):
+                d = self.manifest["datasets"][ref]
+                total += self.wh.count(Read(d["project"], d["name"], d["columns"],
+                                            self._where(ref), keys=linked))  # fmt: skip
+            self._predicted_rows = total
+        return self._predicted_rows
+
+    def _shard_series(self, ref: str, keys: Sequence[str]) -> pa.Table:
+        """``ref``'s series rows for ``keys``: the run's are read once (for every key
+        of its side), and each shard's taken from them."""
+        if ref not in self._run_series:
+            s = self.manifest["datasets"][ref]["series"]
+            all_obs = self.shard_keys()
+            run_keys = (
+                None if all_obs is None
+                else all_obs if ref in self.obs_keyed
+                else self._linked(all_obs)
+            )  # fmt: skip
+            self._run_series[ref] = self.wh.read(
+                Read(s["project"], s["name"], s["columns"], keys=run_keys)
+            )
+        rows = self._run_series[ref]
+        return rows.filter(
+            pc.is_in(rows["series_key"], pa.array(list(keys), pa.string()))
+        )
 
     def _linked(self, obs_keys: Sequence[str]) -> list[str]:
         """The predicted series linked to ``obs_keys``."""
@@ -277,8 +323,7 @@ class Inputs:
                 s = d["series"]
                 series[ref] = (
                     self.whole(s["project"], s["name"], s["columns"]) if keys is None
-                    else self.wh.read(Read(s["project"], s["name"], s["columns"],
-                                           keys=keys))
+                    else self._shard_series(ref, keys)
                 )  # fmt: skip
         return rows, series
 
@@ -697,6 +742,10 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     if keys:
         predicted_rows = inputs.predicted_rows()
         shards = list(key_ranges(keys, predicted_rows / len(keys), rows_per_shard()))
+        log.info(
+            "%d observed series, %d predicted rows: %d shards of up to %d rows",
+            len(keys), predicted_rows, len(shards), rows_per_shard(),
+        )  # fmt: skip
     if dirty == set():
         shards = []  # nothing changed: the stored state is the state
 
@@ -706,7 +755,9 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
     pairs_out: dict | None = None
     counted = months_sql(dirty) if incremental else None
     for i, shard in enumerate(shards):
+        started = time.monotonic()
         rows, series = inputs.load(shard)
+        rows_read = sum(t.num_rows for t in rows.values())
         if i == 0 and stateful and not incremental and dm_test:
             predicted = [rows[r] for r in _predicted(parsed) if r in rows]
             n = (
@@ -728,6 +779,12 @@ def _evaluate(client: GrantClient, task: dict, how: dict, wh: Warehouse) -> dict
         del rows, series
         pairs = backend.pairs(build_plan(parsed, catalog))
         del catalog
+        log.info(
+            "shard %d/%d: %s observed series, %d rows read, %d pairs, %.1fs, "
+            "peak memory %.0f MB", i + 1, len(shards),
+            "all" if shard is None else len(shard), rows_read, pairs.num_rows,
+            time.monotonic() - started, peak_memory_mb(),
+        )  # fmt: skip
         if not stateful:
             all_pairs = pairs
             break

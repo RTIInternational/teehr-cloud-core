@@ -4,10 +4,12 @@ Run jobs used to read their inputs through ``/data``, which materializes every p
 in the control plane and re-reads from the start for each one: a day of a big
 forecast took the control plane down. Here the job reads the tables itself:
 
-- **PyIceberg plans.** It loads each table from Polaris as the caller (ADR-0004), with
-  storage credentials Polaris vends for that table, and lists the data files a read
-  can match at the snapshot the run is pinned to: partitions and files whose column
-  statistics rule the filter out are skipped.
+- **PyIceberg plans, once per table and filter.** It loads each table from Polaris as
+  the caller (ADR-0004), with storage credentials Polaris vends for that table, and
+  lists the data files the filter can match at the snapshot the run is pinned to:
+  partitions and files whose column statistics rule it out are skipped. A shard's
+  read then takes, from that plan, the files whose key bounds can hold one of its
+  keys (#228): no catalog round trip per shard.
 - **DuckDB reads** those Parquet files, applying the filter and the key list as it
   goes, so only the rows a read keeps reach Arrow.
 
@@ -17,7 +19,10 @@ them; the control plane's own writes don't make any.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
+import logging
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +41,22 @@ from src.expressions import compile_filter
 from src.tables import DataMismatch
 
 __all__ = ["CatalogAccess", "Read", "Warehouse"]
+
+log = logging.getLogger("src.jobs")
+
+#: How long a loaded table (and the storage credentials vended with it) is reused
+#: before it's loaded again; vended credentials last an hour or more.
+TABLE_TTL_SECONDS = 15 * 60
+
+
+def _may_hold(data_file: Any, field_id: int, wanted: list[bytes]) -> bool:
+    """Whether a data file's bounds for a string column can hold one of ``wanted``
+    (sorted, UTF-8). Bounds may be truncated, but stay bounds (a lower one is a
+    prefix, an upper one is rounded up); a file without them may hold anything."""
+    lower = (data_file.lower_bounds or {}).get(field_id)
+    upper = (data_file.upper_bounds or {}).get(field_id)
+    i = bisect.bisect_left(wanted, lower) if lower is not None else 0
+    return i < len(wanted) and (upper is None or wanted[i] <= upper)
 
 
 @dataclass(frozen=True)
@@ -79,6 +100,9 @@ class Warehouse:
     snapshots: dict[str, int | None] = field(default_factory=dict)
     # Per table: the reads, the files they planned (each, and distinct) and the bytes.
     _planned: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    # Loaded tables (with when), and each table's files per filter (at its snapshot).
+    _tables: dict[str, tuple[Table, float]] = field(default_factory=dict, repr=False)
+    _plans: dict[tuple[str, str | None], list] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         self._con = memory_connection()
@@ -113,46 +137,90 @@ class Warehouse:
         return self._catalog
 
     def table(self, project: str, name: str) -> tuple[Table, int | None]:
-        """The table (loaded now: its vended credentials are fresh) and its pinned
-        snapshot (its current one, the first time it's read)."""
-        table = self.catalog().load_table((project, name))
+        """The table and its pinned snapshot (its current one, the first time it's
+        read). Loaded once, and again when its vended credentials may be stale."""
         ref = f"{project}.{name}"
+        cached = self._tables.get(ref)
+        if cached is None or time.monotonic() - cached[1] > TABLE_TTL_SECONDS:
+            table = self.catalog().load_table((project, name))
+            self._tables[ref] = (table, time.monotonic())
+            self._storage(table)
+        table = self._tables[ref][0]
         if ref not in self.snapshots:
             current = table.current_snapshot()
             self.snapshots[ref] = current.snapshot_id if current else None
         return table, self.snapshots[ref]
 
+    def _plan(self, read: Read, table: Table, snapshot: int) -> list:
+        """The files ``read``'s filter can match (keys aside), planned once."""
+        ref = f"{read.project}.{read.name}"
+        key = (ref, read.where)
+        if key not in self._plans:
+            started = time.monotonic()
+            scan = table.scan(
+                row_filter=self._pushdown(read, keys=False), snapshot_id=snapshot
+            )
+            self._plans[key] = list(scan.plan_files())
+            tasks = self._plans[key]
+            log.info(
+                "planned %s: %d files, %.1f MB, %d rows (%.1fs)", ref, len(tasks),
+                sum(t.file.file_size_in_bytes for t in tasks) / 1e6,
+                sum(t.file.record_count for t in tasks), time.monotonic() - started,
+            )  # fmt: skip
+        return self._plans[key]
+
+    def _files(self, read: Read) -> tuple[Table, list | None]:
+        """The table, and the files ``read`` can match (None: it has no snapshot):
+        the plan's, narrowed to those whose ``key`` bounds can hold one of its keys."""
+        table, snapshot = self.table(read.project, read.name)
+        if snapshot is None:
+            return table, None
+        tasks = self._plan(read, table, snapshot)
+        if read.keys is None:
+            return table, tasks
+        wanted = sorted({k.encode() for k in read.keys})
+        field_id = table.schema().find_field(read.key).field_id
+        return table, [t for t in tasks if _may_hold(t.file, field_id, wanted)]
+
     def rows(self, read: Read) -> int:
         """The rows the files ``read`` can match hold (from the catalog: none are read).
         An upper bound: files are counted whole."""
-        table, snapshot = self.table(read.project, read.name)
-        if snapshot is None:
+        _, tasks = self._files(read)
+        return sum(task.file.record_count for task in tasks or [])
+
+    def count(self, read: Read) -> int:
+        """The rows ``read`` keeps: counted in its files (only the columns the filter
+        and keys need are read), or their catalog row count when it has deletes."""
+        table, tasks = self._files(read)
+        if not tasks:
             return 0
-        scan = table.scan(row_filter=self._pushdown(read), snapshot_id=snapshot)
-        return sum(task.file.record_count for task in scan.plan_files())
+        if any(task.delete_files for task in tasks):
+            return sum(task.file.record_count for task in tasks)
+        sql = f"SELECT count(*) FROM {self._source(tasks)}{self._where(read)}"
+        return int(self._con.execute(sql).fetchone()[0])
 
     # -- reading ---------------------------------------------------------------------
 
     def read(self, read: Read) -> pa.Table:
         """The rows ``read`` keeps, as Arrow."""
-        table, snapshot = self.table(read.project, read.name)
+        table, tasks = self._files(read)
         schema = table.schema().as_arrow()
-        if snapshot is None:
+        if tasks is None:
             return schema.empty_table()
-        scan = table.scan(row_filter=self._pushdown(read), snapshot_id=snapshot)
-        tasks = list(scan.plan_files())
         self._tally(f"{read.project}.{read.name}", tasks)
         if not tasks:
             return schema.empty_table()
         if any(task.delete_files for task in tasks):
+            _, snapshot = self.table(read.project, read.name)
+            scan = table.scan(row_filter=self._pushdown(read), snapshot_id=snapshot)
             return self._read_with_deletes(read, scan.to_arrow())
-        self._storage(table)
-        files = ", ".join(lit(t.file.file_path) for t in tasks)
-        sql = (
-            f"SELECT {self._columns(schema)} FROM read_parquet([{files}], "
-            f"union_by_name = true){self._where(read)}"
-        )
+        sql = f"SELECT {self._columns(schema)} FROM {self._source(tasks)}{self._where(read)}"
         return arrow_table(self._con, sql).cast(schema)
+
+    @staticmethod
+    def _source(tasks: list) -> str:
+        files = ", ".join(lit(t.file.file_path) for t in tasks)
+        return f"read_parquet([{files}], union_by_name = true)"
 
     def _tally(self, ref: str, tasks: list) -> None:
         t = self._planned.setdefault(ref, {"reads": 0, "file_reads": 0, "bytes": 0,
@@ -173,9 +241,9 @@ class Warehouse:
             for ref, t in self._planned.items()
         }  # fmt: skip
 
-    def _pushdown(self, read: Read) -> ice.BooleanExpression:
+    def _pushdown(self, read: Read, keys: bool = True) -> ice.BooleanExpression:
         parts: list[ice.BooleanExpression] = []
-        if read.keys is not None:
+        if keys and read.keys is not None:
             keys = sorted(set(read.keys))
             parts.append(ice.In(read.key, keys) if keys else ice.AlwaysFalse())
         if read.where:
