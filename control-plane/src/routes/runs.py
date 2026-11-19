@@ -17,6 +17,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
+from teehr_core.spec import load_spec
 
 from src.errors import problem
 from src.evaluations import SpecProblems, plan
@@ -24,8 +25,9 @@ from src.formats import ARROW_STREAM, PARQUET
 from src.jobs import ACTIVE as ACTIVE_JOBS
 from src.jobs import cancel, reconcile
 from src.kube import Kube, KubeError, get_kube
-from src.models import Job, Role, Run
-from src.routes.datasets import TablesDep, read_dataset
+from src.models import EvaluationVersion, Job, Role, Run
+from src.places import placer
+from src.routes.datasets import TablesDep, _read_dataset, _require_tables
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -78,6 +80,12 @@ class PlanOut(BaseModel):
     inputs: list[PlannedInputOut]
     relation: PlannedRelationOut | None
     stages: list[PlannedStageOut]
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What the spec does that it may not expect, e.g. that every run is full"
+        ),
+    )
 
 
 @router.post(
@@ -222,9 +230,21 @@ def read_run_results(
     limit: Annotated[int | None, Query(ge=1, description="Rows per page")] = None,
     cursor: Annotated[str | None, Query(description="From the previous page")] = None,
     count: Annotated[bool, Query(description="Also count the matching rows")] = False,
+    geometry: Annotated[
+        bool,
+        Query(
+            description=(
+                "With output.geometry: give each row its place (and output.attributes); "
+                "false leaves them out"
+            )
+        ),
+    ] = True,
 ):
     """A succeeded run's results: its rows of its version's results table (which
-    keeps every run's), paged as reading a dataset. Needs the read role."""
+    keeps every run's), paged as reading a dataset. With ``output.geometry`` each
+    row gets its place: GeoJSON geometry in JSON rows, a feature collection for
+    ``Accept: application/geo+json``, GeoParquet / GeoArrow for Parquet and Arrow.
+    Needs the read role."""
     project, _ = _authorize(session, name, identity, settings, Role.READ)
     run = session.get(Run, run_id)
     if run is None or run.project_id != project.id:
@@ -237,10 +257,16 @@ def read_run_results(
             detail=f"The run is {run.status}; its results come once it succeeds",
         )
     mine = f"run_id = '{run.id}'"
-    return read_dataset(
+    place = None
+    version = session.get(EvaluationVersion, run.evaluation_version_id)
+    if geometry and version is not None:
+        place = placer(
+            session, project, identity, _require_tables(tables), load_spec(version.spec)
+        )
+    return _read_dataset(
         request, name, dataset, session, identity, settings, tables,
         columns=columns, filter=f"({filter}) AND {mine}" if filter else mine,
-        limit=limit, cursor=cursor, count=count, bbox=None,
+        limit=limit, cursor=cursor, count=count, bbox=None, place=place,
     )  # fmt: skip
 
 

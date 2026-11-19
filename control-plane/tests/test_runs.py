@@ -283,13 +283,13 @@ def test_starting_a_run(client, lake, jobs):  # noqa: F811
     assert kube.created == []
 
 
-def test_location_fields_label_series_by_their_locations(client, lake, jobs, tables):  # noqa: F811
+def _located(client, lake):
+    """Observed series at gauges (g-a, g-b; huc2 02, 05), inside basins."""
     import shapely
 
     from tests.test_layers import layer, timeseries
     from tests.test_runs_plan import crosswalk
 
-    kube, _ = jobs
     layer(client, "gauges", attributes=[{"name": "huc2", "type": "string"}])
     layer(client, "basins")
     timeseries(client, "obs_located", location_layer="gauges")
@@ -318,6 +318,10 @@ def test_location_fields_label_series_by_their_locations(client, lake, jobs, tab
         ("b-overlap", shapely.box(0, 0, 10, 10), None),  # contains both: larger key
     ]).drop_columns(["huc2"]))  # fmt: skip
 
+
+def test_location_fields_label_series_by_their_locations(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    _located(client, lake)
     body = spec(primary="obs_located", relation="located_nwm", fields=[
         {"name": "huc", "fn": "attribute", "attribute": "huc2", "of": "location"},
         {"name": "basin", "fn": "within", "layer": "basins"},
@@ -1126,3 +1130,69 @@ def test_a_runs_results_come_once_it_succeeds(client, lake, jobs):  # noqa: F811
         f"/v1/projects/flood/runs/{uuid.uuid4()}/results", headers=ALICE
     )
     assert missing.status_code == 404
+
+
+def test_results_come_with_their_places(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    _located(client, lake)
+    body = spec(primary="obs_located", relation="located_nwm")
+    body["aggregate"][0]["group_by"] = ["primary_series_key"]
+    body["aggregate"][0]["metrics"] = ["count"]
+    body["output"] = {"geometry": "primary_series_key", "attributes": ["huc2"]}
+    saved(client, body)
+    run_id = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()["id"]
+    run_job(client, kube)
+    url = f"/v1/projects/flood/runs/{run_id}/results"
+
+    rows = client.get(url, headers=ALICE).json()["rows"]
+    places = {r["primary_series_key"]: (r["huc2"], r["geometry"]) for r in rows}
+    a, b = sorted(OBS)  # located at g-a (1, 1) and g-b (5, 5)
+    assert places == {
+        a: ("02", {"type": "Point", "coordinates": [1.0, 1.0]}),
+        b: ("05", {"type": "Point", "coordinates": [5.0, 5.0]}),
+    }
+    features = client.get(
+        url, headers={**ALICE, "Accept": "application/geo+json"}
+    ).json()
+    assert features["type"] == "FeatureCollection" and len(features["features"]) == 2
+    assert {f["properties"]["huc2"] for f in features["features"]} == {"02", "05"}
+    arrow = client.get(
+        url, headers={**ALICE, "Accept": "application/vnd.apache.arrow.stream"}
+    )
+    table = pa.ipc.open_stream(arrow.content).read_all()
+    assert table.schema.field("geometry").type == pa.binary()
+    plain = client.get(url, params={"geometry": "false"}, headers=ALICE).json()["rows"]
+    assert "geometry" not in plain[0] and "huc2" not in plain[0]
+    # A dataset read of the results table has no places (it's the stored rows).
+    stored = client.get("/v1/projects/flood/datasets/results_e_v1/data", headers=ALICE)
+    assert "geometry" not in stored.json()["rows"][0]
+
+
+def test_results_placed_by_a_within_field_get_its_polygons(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    _located(client, lake)
+    body = spec(primary="obs_located", relation="located_nwm",
+                fields=[{"name": "basin", "fn": "within", "layer": "basins"}])  # fmt: skip
+    body["aggregate"][0]["group_by"] = ["basin"]
+    body["aggregate"][0]["metrics"] = ["count"]
+    body["output"] = {"geometry": "basin"}
+    saved(client, body)
+    run_id = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()["id"]
+    run_job(client, kube)
+    rows = client.get(f"/v1/projects/flood/runs/{run_id}/results", headers=ALICE).json()
+    shapes = {r["basin"]: r["geometry"]["type"] for r in rows["rows"]}
+    assert shapes == {"b-overlap": "Polygon", "b-east": "Polygon"}
+
+
+def test_unknown_output_attributes_say_so(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    _located(client, lake)
+    body = spec(primary="obs_located", relation="located_nwm")
+    body["aggregate"][0]["group_by"] = ["primary_series_key"]
+    body["aggregate"][0]["metrics"] = ["count"]
+    body["output"] = {"geometry": "primary_series_key", "attributes": ["nope"]}
+    saved(client, body)
+    run_id = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()["id"]
+    run_job(client, kube)
+    resp = client.get(f"/v1/projects/flood/runs/{run_id}/results", headers=ALICE)
+    assert resp.status_code == 422 and "layer 'gauges' has no nope" in resp.text

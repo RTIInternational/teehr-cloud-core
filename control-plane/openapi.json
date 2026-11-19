@@ -1485,6 +1485,14 @@
             ],
             "description": "The evaluation unit (output.unit, else the primary's)",
             "title": "Unit"
+          },
+          "warnings": {
+            "description": "What the spec does that it may not expect, e.g. that every run is full",
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -6833,7 +6841,7 @@
     },
     "/v1/projects/{name}/runs/{run_id}/results": {
       "get": {
-        "description": "A succeeded run's results: its rows of its version's results table (which\nkeeps every run's), paged as reading a dataset. Needs the read role.",
+        "description": "A succeeded run's results: its rows of its version's results table (which\nkeeps every run's), paged as reading a dataset. With ``output.geometry`` each\nrow gets its place: GeoJSON geometry in JSON rows, a feature collection for\n``Accept: application/geo+json``, GeoParquet / GeoArrow for Parquet and Arrow.\nNeeds the read role.",
         "operationId": "read_run_results",
         "parameters": [
           {
@@ -6941,6 +6949,18 @@
               "default": false,
               "description": "Also count the matching rows",
               "title": "Count",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "With output.geometry: give each row its place (and output.attributes); false leaves them out",
+            "in": "query",
+            "name": "geometry",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "With output.geometry: give each row its place (and output.attributes); false leaves them out",
+              "title": "Geometry",
               "type": "boolean"
             }
           }

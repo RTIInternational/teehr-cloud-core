@@ -150,7 +150,8 @@ control-plane DB.
 
 `results` keeps every run's rows, `run_id` saying which (each run replaces only its own rows, as
 VeriRace's results do). Read as a dataset it shows them all; `GET .../runs/{id}/results` reads one
-run's. `pairs` and `state` hold the latest run's (an incremental run replaces the months it
+run's, and with `output.geometry` gives each row its place (the observed series' location, or a
+`within` field's polygon) and `output.attributes`, looked up per page: they aren't stored. `pairs` and `state` hold the latest run's (an incremental run replaces the months it
 recomputes); they're large, and incremental runs build on one current state.
 
 ## Lineage
