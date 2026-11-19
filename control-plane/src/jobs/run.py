@@ -41,6 +41,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from teehr_core import __version__ as ENGINE_VERSION
 from teehr_core.durations import parse_duration
 from teehr_core.engine import ContractError, DuckDBBackend, PlanError, build_plan
@@ -407,6 +408,34 @@ def open_tables(task: dict) -> Tables:
     )  # fmt: skip
 
 
+def _as_caller(client: GrantClient, name: str, call):
+    """``call(token)`` as the caller: once more with a fresh token if it's refused
+    (the token may have gone stale), table errors as LoadFailed."""
+    try:
+        try:
+            return call(client.token())
+        except TableForbidden:
+            return call(client.token(fresh=True))
+    except TableForbidden:
+        raise LoadFailed([f"writing {name}: the caller may not write it"]) from None
+    except TableError as exc:
+        raise LoadFailed([f"writing {name}: {exc}"]) from None
+
+
+def _report(
+    client: GrantClient, name: str, mode: str, where: str | None, rows: int, snap: int
+) -> None:
+    """Report a commit to the control plane, which records it (ADR-0016)."""
+    report = {"dataset": name, "mode": mode, "filter": where, "rows": rows,
+              "snapshot_id": snap}  # fmt: skip
+    try:
+        client._grant("POST", "writes", json=report)
+    except httpx.HTTPStatusError as exc:
+        raise LoadFailed(
+            [f"recording the write to {name}: {_problem(exc.response)}"]
+        ) from None
+
+
 def write_table(
     client: GrantClient,
     tables: Tables,
@@ -434,33 +463,29 @@ def write_table(
         )
     except DataMismatch as exc:
         raise LoadFailed([f"writing {name}: {exc}"]) from None
-    try:
-        try:
-            result = tables.write(client.token(), project, name, data, mode, expression)
-        except TableForbidden:  # the token may have gone stale: once more, fresh
-            result = tables.write(
-                client.token(fresh=True), project, name, data, mode, expression
-            )
-    except TableForbidden:
-        raise LoadFailed([f"writing {name}: the caller may not write it"]) from None
-    except TableError as exc:
-        raise LoadFailed([f"writing {name}: {exc}"]) from None
+    result = _as_caller(
+        client, name,
+        lambda token: tables.write(token, project, name, data, mode, expression),
+    )  # fmt: skip
     if result.snapshot_id is not None:
-        report = {
-            "dataset": name, "mode": mode, "filter": overwrite_filter if not append
-            else None, "rows": data.num_rows, "snapshot_id": result.snapshot_id,
-        }  # fmt: skip
-        try:
-            client._grant("POST", "writes", json=report)
-        except httpx.HTTPStatusError as exc:
-            raise LoadFailed(
-                [f"recording the write to {name}: {_problem(exc.response)}"]
-            ) from None
+        where = overwrite_filter if not append else None
+        _report(client, name, mode, where, data.num_rows, result.snapshot_id)
     log.info(
         "wrote %s: %s %d rows, snapshot %s (%.1fs)", name, mode, data.num_rows,
         result.snapshot_id, time.monotonic() - started,
     )  # fmt: skip
     return result.snapshot_id
+
+
+def run_table(client: GrantClient, kind: str, columns: list[dict]) -> str:
+    """Have one of the run's tables created (or confirmed); its dataset name."""
+    try:
+        resp = client._grant(
+            "POST", "run-table", json={"kind": kind, "columns": columns}
+        )
+    except httpx.HTTPStatusError as exc:
+        raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
+    return resp.json()["dataset"]
 
 
 def store(
@@ -475,17 +500,137 @@ def store(
 ) -> dict:
     """Write one of the run's tables (results, pairs, state) with its lineage."""
     rows, columns = typed(table, run)
-    try:
-        resp = client._grant(
-            "POST", "run-table", json={"kind": kind, "columns": columns}
-        )
-    except httpx.HTTPStatusError as exc:
-        raise LoadFailed([f"the {kind} table: {_problem(exc.response)}"]) from None
-    dataset = resp.json()["dataset"]
+    dataset = run_table(client, kind, columns)
     snapshot = write_table(
         client, tables, project, dataset, columns, rows, overwrite_filter, append
     )
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
+
+
+def _parquet_bytes(table: pa.Table) -> bytes:
+    sink = pa.BufferOutputStream()
+    pq.write_table(table, sink, compression="zstd")
+    return sink.getvalue().to_pybytes()
+
+
+class ShardOutputs:
+    """What a run's shards make, kept outside the pod that made it (ADR-0017):
+
+    - **pairs**, as Parquet files in the pairs table's location, not yet part of it;
+      :meth:`commit_pairs` adds them all in one commit (replacing what the run
+      replaces), so a run that fails leaves the pairs table as it was;
+    - **state parts**, as work files in the staging bucket (the control plane gives
+      URLs to put and get them); :meth:`state_parts` reads them back to merge.
+
+    Files are named by run, shard and attempt, so a retried shard's files never mix
+    with an abandoned try's. :meth:`discard` deletes what wasn't committed.
+    """
+
+    def __init__(
+        self, client: GrantClient, tables: Tables, project: str, run: dict,
+        attempt: int = 1,
+    ):  # fmt: skip
+        self.client, self.tables, self.project, self.run = client, tables, project, run
+        self.attempt = attempt
+        self.pairs_dataset: str | None = None
+        self.pairs_columns: list[dict] = []
+        self.pair_files: list[str] = []
+        self.pair_rows = 0
+        self.state_names: list[str] = []
+
+    def _name(self, index: int) -> str:
+        return f"shard-{index:05d}-a{self.attempt}.parquet"
+
+    def add_pairs(self, index: int, pairs: pa.Table) -> None:
+        if pairs.num_rows == 0:
+            return
+        rows, columns = typed(pairs, self.run)
+        if self.pairs_dataset is None:
+            self.pairs_dataset = run_table(self.client, "pairs", columns)
+            self.pairs_columns = columns
+        name = self.pairs_dataset
+        try:
+            data = conform(rows, columns, None)
+        except DataMismatch as exc:
+            raise LoadFailed([f"writing {name}: {exc}"]) from None
+        file_name = f"run-{self.run['id']}/{self._name(index)}"
+        path = _as_caller(
+            self.client, name,
+            lambda token: self.tables.write_file(token, self.project, name, data,
+                                                 file_name),
+        )  # fmt: skip
+        self.pair_files.append(path)
+        self.pair_rows += data.num_rows
+
+    def add_state(self, index: int, part: pa.Table) -> None:
+        name = f"state/{self._name(index)}"
+        url = self._urls(put=[name])["put"][name]
+        self.client.put(url, _parquet_bytes(part))
+        self.state_names.append(name)
+
+    def state_parts(self) -> list[pa.Table]:
+        if not self.state_names:
+            return []
+        urls = self._urls(get=self.state_names)["get"]
+        return [pq.read_table(pa.BufferReader(self.client.get(urls[n])))
+                for n in self.state_names]  # fmt: skip
+
+    def _urls(self, put=(), get=()) -> dict:
+        try:
+            body = {"put": list(put), "get": list(get)}
+            return self.client._grant("POST", "work", json=body).json()
+        except httpx.HTTPStatusError as exc:
+            raise LoadFailed(
+                [f"the run's work files: {_problem(exc.response)}"]
+            ) from None
+
+    def commit_pairs(self, overwrite_filter: str | None) -> dict | None:
+        """Add the shards' pairs files to the pairs table in one commit, replacing
+        the rows ``overwrite_filter`` keeps (all, when None)."""
+        if not self.pair_files:
+            return None  # no pairs: an earlier run's stay
+        name, started = self.pairs_dataset, time.monotonic()
+        try:
+            expression = overwrite_expression(overwrite_filter, self.pairs_columns)
+        except DataMismatch as exc:
+            raise LoadFailed([f"writing {name}: {exc}"]) from None
+        result = _as_caller(
+            self.client, name,
+            lambda token: self.tables.commit_files(token, self.project, name,
+                                                   self.pair_files, expression),
+        )  # fmt: skip
+        files, self.pair_files = len(self.pair_files), []  # the table's now
+        if result.snapshot_id is not None:
+            _report(self.client, name, "overwrite", overwrite_filter, self.pair_rows,
+                    result.snapshot_id)  # fmt: skip
+        log.info(
+            "committed %s: %d rows in %d files, snapshot %s (%.1fs)", name,
+            self.pair_rows, files, result.snapshot_id,
+            time.monotonic() - started,
+        )  # fmt: skip
+        return {
+            "dataset": name,
+            "rows": self.pair_rows,
+            "snapshot_id": result.snapshot_id,
+        }
+
+    def discard(self) -> None:
+        """Delete files written but not committed, and the work files (best effort:
+        the control plane deletes work files when the job finishes too)."""
+        if self.pair_files and self.pairs_dataset:
+            try:
+                self.tables.delete_files(self.client.token(), self.project,
+                                         self.pairs_dataset, self.pair_files)  # fmt: skip
+            except Exception:  # noqa: BLE001
+                log.warning("couldn't delete %d uncommitted pairs files",
+                            len(self.pair_files))  # fmt: skip
+            self.pair_files = []
+        if self.state_names:
+            try:
+                self.client._grant("DELETE", "work")
+            except Exception:  # noqa: BLE001
+                pass
+            self.state_names = []
 
 
 def keeps_state(spec: EvaluationSpec) -> bool:
@@ -747,7 +892,12 @@ def location_labels(
 
 
 def _evaluate(
-    client: GrantClient, tables: Tables, task: dict, how: dict, wh: Warehouse
+    client: GrantClient,
+    tables: Tables,
+    task: dict,
+    how: dict,
+    wh: Warehouse,
+    outputs: ShardOutputs,
 ) -> dict:
     run, project = task["run"], task["project"]
     manifest, spec = run["manifest"], run["spec"]
@@ -813,7 +963,6 @@ def _evaluate(
         shards = []  # nothing changed: the stored state is the state
 
     backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
-    parts: list[pa.Table] = []
     all_pairs: pa.Table | None = None
     pairs_out: dict | None = None
     counted = months_sql(dirty) if incremental else None
@@ -852,25 +1001,18 @@ def _evaluate(
             all_pairs = pairs
             break
         if pairs.num_rows:
-            parts.append(
-                backend.first_stage_state(parsed, pairs, STATE_BUCKET, counted)
+            outputs.add_state(
+                i, backend.first_stage_state(parsed, pairs, STATE_BUCKET, counted)
             )
             if incremental:  # the pairs this run is for (the rest were lag partners)
                 pairs = _sql(pairs, f"SELECT * FROM t WHERE {counted}")
-        if run.get("pairs") and pairs.num_rows:
-            first = pairs_out is None
-            replaced = months_filter(dirty) if incremental and first else None
-            written = store(client, tables, project, "pairs", pairs, run, replaced,
-                            append=not first)  # fmt: skip
-            pairs_out = (
-                written if first
-                else {**written, "rows": pairs_out["rows"] + written["rows"]}
-            )  # fmt: skip
+        if run.get("pairs"):
+            outputs.add_pairs(i, pairs)
         del pairs
 
     state = None
     if stateful:
-        fresh = merge_shards(parsed, parts)
+        fresh = merge_shards(parsed, outputs.state_parts())
         if not incremental:
             state = fresh
         else:  # the stored state, its changed months replaced
@@ -898,6 +1040,8 @@ def _evaluate(
         if run.get("pairs") and all_pairs is not None and all_pairs.num_rows:
             pairs_out = store(client, tables, project, "pairs", all_pairs, run)
 
+    if stateful:  # computed: now the shards' pairs, in one commit
+        pairs_out = outputs.commit_pairs(months_filter(dirty) if incremental else None)
     out = store(client, tables, project, "results", stages[-1], run)
     if pairs_out is not None:
         out["pairs"] = pairs_out
@@ -927,15 +1071,20 @@ def run_evaluation(client: GrantClient, task: dict) -> dict:
     how = task["run"].get("incremental") or {"mode": "full", "why": "not decided"}
     wh = open_warehouse(client, task)
     tables = open_tables(task)
+    project, run = task["project"], task["run"]
+    outputs = ShardOutputs(client, tables, project, run)
     try:
         try:
-            result = _evaluate(client, tables, task, how, wh)
+            result = _evaluate(client, tables, task, how, wh, outputs)
         except _Full as exc:
+            outputs.discard()
+            outputs = ShardOutputs(client, tables, project, run)
             full = {"mode": "full", "why": str(exc)}
-            result = _evaluate(client, tables, task, full, wh)
+            result = _evaluate(client, tables, task, full, wh, outputs)
     except (SpecProblems, PlanError, ContractError, ValueError) as exc:
         raise LoadFailed([str(exc)]) from None
     finally:
+        outputs.discard()  # what wasn't committed, and the work files
         wh.close()
     return {
         **result,

@@ -106,6 +106,19 @@ class GrantClient:
             for part in resp.iter_bytes(1024 * 1024):
                 file.write(part)
 
+    def put(self, url: str, data: bytes) -> None:
+        """PUT a work file to its (presigned) URL; repeated if the send drops."""
+        resp = self._send("PUT", url, True, content=data)
+        if resp.status_code not in (200, 201, 204):
+            raise LoadFailed([f"couldn't store a work file (HTTP {resp.status_code})"])
+
+    def get(self, url: str) -> bytes:
+        """GET a work file from its (presigned) URL."""
+        resp = self._send("GET", url, True)
+        if resp.status_code != 200:
+            raise LoadFailed([f"couldn't read a work file (HTTP {resp.status_code})"])
+        return resp.content
+
     def task(self) -> dict:
         return self._grant("GET", "task").json()
 

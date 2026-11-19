@@ -12,6 +12,9 @@ user token. A grant works only while its job is queued or running:
   ``pairs``, ``state``: ``<kind>_<slug>_v<version>``), created as the caller and
   registered (runs may write them; the caller needn't be able to register untyped
   datasets).
+- ``POST /v1/job-grants/work``, ``DELETE /v1/job-grants/work``: URLs to put and get
+  a run's work files (its shards' state parts, ADR-0017) in the staging bucket, under
+  ``runs/<run id>/``, and their deletion (also when the job finishes).
 - ``POST /v1/job-grants/writes``: a write the job committed to one of its run's
   tables itself (ADR-0016): checked against the table's snapshots and recorded as
   the dataset's lineage, as a write through ``/data`` is.
@@ -19,6 +22,7 @@ user token. A grant works only while its job is queued or running:
 Internal: not in the published API.
 """
 
+import re
 import time
 from datetime import UTC, datetime
 from typing import Annotated, Literal
@@ -181,8 +185,13 @@ class Finish(BaseModel):
 
 
 @router.post("/finish", status_code=status.HTTP_204_NO_CONTENT)
-def finish(body: Finish, job: JobDep, session: SessionDep) -> Response:
-    """The job's outcome. Its grant stops working."""
+def finish(
+    body: Finish,
+    job: JobDep,
+    session: SessionDep,
+    staging: Annotated[Staging | None, Depends(get_staging)],
+) -> Response:
+    """The job's outcome. Its grant stops working; a run's work files go."""
     ok = body.status == "succeeded"
     end(job, JobStatus.SUCCEEDED if ok else JobStatus.FAILED, body.error)
     upload = _upload(session, job)
@@ -195,6 +204,11 @@ def finish(body: Finish, job: JobDep, session: SessionDep) -> Response:
         )
         upload.finished_at = job.finished_at
     run = _run(session, job)
+    if run is not None and staging is not None:
+        try:
+            staging.delete_prefix(_work_prefix(run))
+        except Exception:  # noqa: BLE001 - leftovers don't change the outcome
+            pass
     if run is not None:
         run.status = job.status.value
         run.result, run.error, run.finished_at = (
@@ -369,3 +383,61 @@ def record_write(
         session.add(done)
     session.commit()
     return {"id": str(done.id), "snapshot_id": done.snapshot_id}
+
+
+_WORK_NAME = re.compile(r"^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-][A-Za-z0-9_.\-]*)*$")
+WORK_URL_TTL = 6 * 3600
+
+
+def _work_prefix(run: Run) -> str:
+    return f"runs/{run.id}/"
+
+
+class WorkFiles(BaseModel):
+    put: list[str] = Field(default_factory=list, max_length=1000)
+    get: list[str] = Field(default_factory=list, max_length=10_000)
+
+
+def _run_staging(
+    job: Job, session: Session, staging: Staging | None
+) -> tuple[Run, Staging]:
+    run = _run(session, job)
+    if job.kind != "run" or run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a run's job")
+    if staging is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No staging")
+    return run, staging
+
+
+@router.post("/work")
+def work_urls(
+    body: WorkFiles,
+    job: JobDep,
+    session: SessionDep,
+    staging: Annotated[Staging | None, Depends(get_staging)],
+) -> dict:
+    """URLs to put and get the run's work files (names relative to its prefix)."""
+    run, staging = _run_staging(job, session, staging)
+    bad = [n for n in body.put + body.get if not _WORK_NAME.match(n) or len(n) > 200]
+    if bad:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"Bad work file name: {bad[0]}"
+        )
+    prefix = _work_prefix(run)
+    return {
+        "put": {
+            n: staging.internal_upload_url(prefix + n, WORK_URL_TTL) for n in body.put
+        },
+        "get": {n: staging.download_url(prefix + n, WORK_URL_TTL) for n in body.get},
+    }
+
+
+@router.delete("/work")
+def delete_work(
+    job: JobDep,
+    session: SessionDep,
+    staging: Annotated[Staging | None, Depends(get_staging)],
+) -> dict:
+    """Delete the run's work files."""
+    run, staging = _run_staging(job, session, staging)
+    return {"deleted": staging.delete_prefix(_work_prefix(run))}

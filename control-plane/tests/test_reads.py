@@ -354,3 +354,48 @@ def test_new_tables_get_the_layout_defaults_and_writes_follow_them(
         pq.ParquetFile(f.removeprefix("file://")).num_row_groups for f in files
     )
     assert groups == 3  # 25 rows at 10 a row group
+
+
+def test_shard_files_are_committed_once_replacing_what_the_filter_keeps(tmp_path):
+    import os
+
+    from pyiceberg.expressions import EqualTo
+
+    from src import tables as t
+
+    tables = t.PolarisTables.at({
+        "type": "sql", "uri": f"sqlite:///{tmp_path}/c.db",
+        "warehouse": f"file://{tmp_path}/w",
+    })  # fmt: skip
+    tables._catalog("token").create_namespace("p")
+    columns = [{"name": "month", "type": "string"}, {"name": "v", "type": "int64"}]
+    tables.create_table("token", "p", "pairs", columns, None, t.Layout())
+
+    def rows(month, *values):
+        return pa.table({"month": [month] * len(values),
+                         "v": pa.array(values, pa.int64())})  # fmt: skip
+
+    tables.write("token", "p", "pairs", rows("jan", 1, 2), "append")
+    tables.write("token", "p", "pairs", rows("feb", 3), "append")
+    before = tables._catalog("token").load_table(("p", "pairs")).current_snapshot()
+
+    # Two shards' files for February; nothing is in the table until the commit.
+    paths = [
+        tables.write_file("token", "p", "pairs", rows("feb", 30), "run-x/shard-1.parquet"),
+        tables.write_file("token", "p", "pairs", rows("feb", 31), "run-x/shard-2.parquet"),
+    ]  # fmt: skip
+    table = tables._catalog("token").load_table(("p", "pairs"))
+    assert table.current_snapshot().snapshot_id == before.snapshot_id
+    result = tables.commit_files("token", "p", "pairs", paths, EqualTo("month", "feb"))
+
+    table = table.refresh()
+    assert table.current_snapshot().snapshot_id == result.snapshot_id
+    got = sorted(table.scan().to_arrow().to_pylist(), key=lambda r: r["v"])
+    assert [(r["month"], r["v"]) for r in got] == [
+        ("jan", 1), ("jan", 2), ("feb", 30), ("feb", 31)
+    ]  # fmt: skip
+
+    # A file that won't be committed is deleted.
+    stray = tables.write_file("token", "p", "pairs", rows("feb", 9), "run-y/s.parquet")
+    tables.delete_files("token", "p", "pairs", [stray])
+    assert not os.path.exists(stray.removeprefix("file://"))

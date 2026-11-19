@@ -429,6 +429,26 @@ class Tables(Protocol):
     ) -> bool:
         """Whether ``snapshot_id`` is one of the table's snapshots, as the caller."""
 
+    def write_file(
+        self, token: str, namespace: str, name: str, data: pa.Table, file_name: str
+    ) -> str:
+        """Write conformed rows as a Parquet file in the table's data location, not
+        yet part of the table (ADR-0017: a shard's output); returns its path."""
+
+    def commit_files(
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        paths: list[str],
+        overwrite_filter: BooleanExpression | None = None,
+    ) -> WriteResult:
+        """Replace the rows ``overwrite_filter`` keeps (all, when None) with the
+        rows of files :meth:`write_file` wrote, in one commit, as the caller."""
+
+    def delete_files(self, token: str, namespace: str, name: str, paths: list[str]):
+        """Delete files :meth:`write_file` wrote that won't be committed."""
+
 
 def catalog_properties(
     uri: str,
@@ -666,6 +686,53 @@ class PolarisTables:
         def run() -> bool:
             table = self._catalog(token).load_table((namespace, name))
             return table.snapshot_by_id(snapshot_id) is not None
+
+        return self._guard(run)
+
+    def write_file(
+        self, token: str, namespace: str, name: str, data: pa.Table, file_name: str
+    ) -> str:
+        import pyarrow.parquet as pq
+
+        def run() -> str:
+            table = self._catalog(token).load_table((namespace, name))
+            path = f"{table.metadata.location.rstrip('/')}/data/{file_name}"
+            rows = int(
+                table.properties.get(
+                    "write.parquet.row-group-limit",
+                    LAYOUT_DEFAULTS["write.parquet.row-group-limit"],
+                )
+            )
+            with table.io.new_output(path).create(overwrite=True) as out:
+                pq.write_table(data, out, row_group_size=rows, compression="zstd")
+            return path
+
+        return self._guard(run)
+
+    def commit_files(
+        self,
+        token: str,
+        namespace: str,
+        name: str,
+        paths: list[str],
+        overwrite_filter: BooleanExpression | None = None,
+    ) -> WriteResult:
+        def run() -> WriteResult:
+            table = self._catalog(token).load_table((namespace, name))
+            with table.transaction() as tx:
+                tx.delete(overwrite_filter or AlwaysTrue())
+                if paths:
+                    tx.add_files(paths)
+            snapshot = table.current_snapshot()
+            return WriteResult(snapshot.snapshot_id if snapshot else None)
+
+        return self._guard(run)
+
+    def delete_files(self, token: str, namespace: str, name: str, paths: list[str]):
+        def run() -> None:
+            table = self._catalog(token).load_table((namespace, name))
+            for path in paths:
+                table.io.delete(path)
 
         return self._guard(run)
 

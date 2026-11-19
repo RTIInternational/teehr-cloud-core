@@ -26,6 +26,9 @@ class FakeStaging:
     def upload_url(self, key, ttl_seconds):
         return f"https://staging.test/{key}?ttl={ttl_seconds}"
 
+    def internal_upload_url(self, key, ttl_seconds):
+        return f"http://staging.internal/{key}?ttl={ttl_seconds}"
+
     def download_url(self, key, ttl_seconds):
         return f"https://staging.test/{key}?get"
 
