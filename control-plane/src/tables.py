@@ -107,11 +107,13 @@ PartitionTransform = Literal["month", "year"]
 #: How every new table's files are laid out, unless its layout says otherwise:
 #: files of about 64 MB, in row groups of a few series each, so a read of a range of
 #: series keys skips most of a file (shards are key ranges; VeriRace measured 150k-row
-#: row groups). Spark (sorted rewrites) sizes row groups in uncompressed bytes,
-#: PyIceberg (the API's and jobs' writes) in rows. Starting points, not tuned.
+#: row groups). Spark (sorted rewrites) sizes row groups in encoded bytes, PyIceberg
+#: (the API's and jobs' writes) in rows. Encoded series data is small: 8 MB made
+#: ~6M-row groups of nwm30_medium_range, so a 1.7M-row shard read ~6 of them; 1 MB
+#: makes them under 1M rows. Starting points, not tuned.
 LAYOUT_DEFAULTS = {
     "write.target-file-size-bytes": str(64 * 1024**2),
-    "write.parquet.row-group-size-bytes": str(8 * 1024**2),
+    "write.parquet.row-group-size-bytes": str(1024**2),
     "write.parquet.row-group-limit": "150000",
 }
 # PyIceberg warns that it doesn't size row groups in bytes; the row limit applies.
