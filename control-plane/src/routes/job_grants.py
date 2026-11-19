@@ -147,19 +147,20 @@ def task(
     run = _run(session, job)
     if job.kind == "run" and run is not None:
         body["run"] = {"id": str(run.id), **(run.task or {})}
-        # Where the job reads its inputs from, as the caller (src/jobs/reads.py).
-        body["catalog"] = (
-            {
-                "uri": f"{settings.polaris_url.rstrip('/')}/api/catalog",
-                "warehouse": settings.polaris_catalog,
-                "realm": settings.polaris_realm,
-                "region": settings.storage_region,
-                "endpoint": settings.storage_endpoint,
-                "path_style": settings.storage_path_style,
-            }
-            if settings.polaris_url
-            else None
-        )
+    # Where the job reads and writes tables, as the caller (src/jobs/reads.py,
+    # src/jobs/writes.py).
+    body["catalog"] = (
+        {
+            "uri": f"{settings.polaris_url.rstrip('/')}/api/catalog",
+            "warehouse": settings.polaris_catalog,
+            "realm": settings.polaris_realm,
+            "region": settings.storage_region,
+            "endpoint": settings.storage_endpoint,
+            "path_style": settings.storage_path_style,
+        }
+        if settings.polaris_url
+        else None
+    )
     if job.status == JobStatus.QUEUED:
         now = datetime.now(UTC)
         job.status, job.started_at = JobStatus.RUNNING, now
@@ -325,10 +326,27 @@ def run_table(
 
 class WriteReport(BaseModel):
     dataset: str = Field(max_length=255)
-    mode: Literal["append", "overwrite"]
+    mode: Literal["append", "overwrite", "upsert"]
     filter: str | None = Field(default=None, max_length=2000)
     rows: int = Field(ge=0)
     snapshot_id: int
+    months: list[str] | None = Field(default=None, max_length=100_000)
+    unit: str | None = Field(default=None, max_length=64)
+    series_added: int | None = Field(default=None, ge=0)
+
+
+def _job_datasets(session: Session, job: Job) -> set[str]:
+    """The datasets a job writes: its run's tables, or its upload's dataset."""
+    if job.kind == "run":
+        run = _run(session, job)
+        if run is not None and run.task:
+            t = run.task
+            return {f"{k}_{t['evaluation']}_v{t['version']}" for k in RUN_TABLES}
+    if job.kind == "upload":
+        upload = _upload(session, job)
+        if upload is not None and upload.dataset:
+            return {upload.dataset["name"]}
+    return set()
 
 
 @router.post("/writes", status_code=status.HTTP_201_CREATED)
@@ -340,14 +358,14 @@ def record_write(
     sealer: Annotated[Sealer | None, Depends(get_sealer)],
     tables: Annotated[Tables | None, Depends(get_tables)],
 ) -> dict:
-    """Record a write the job committed to one of its run's tables (ADR-0016), once
-    its snapshot is on the table. Reporting the same snapshot again is a no-op."""
-    run = _run(session, job)
-    if job.kind != "run" or run is None or not run.task:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a run's job")
-    own = {f"{k}_{run.task['evaluation']}_v{run.task['version']}" for k in RUN_TABLES}
+    """Record a write the job committed (ADR-0016) to one of its run's tables or
+    its upload's dataset, once its snapshot is on the table. Reporting the same
+    snapshot again is a no-op."""
+    own = _job_datasets(session, job)
+    if not own:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "The job writes no datasets")
     if body.dataset not in own:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not one of this run's tables")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not one of this job's datasets")
     if tables is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No table storage")
     project = session.get(Project, job.project_id)
@@ -384,6 +402,9 @@ def record_write(
             mode=body.mode,
             filter=body.filter,
             rows=body.rows,
+            months=body.months,
+            unit=body.unit,
+            series_added=body.series_added,
             snapshot_id=body.snapshot_id,
             written_by=job.created_by,
         )

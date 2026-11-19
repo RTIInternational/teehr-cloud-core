@@ -25,7 +25,14 @@ from pyiceberg.exceptions import (
     TableAlreadyExistsError,
     UnauthorizedError,
 )
-from pyiceberg.expressions import AlwaysTrue, BooleanExpression, In
+from pyiceberg.expressions import (
+    AlwaysTrue,
+    And,
+    BooleanExpression,
+    GreaterThanOrEqual,
+    In,
+    LessThanOrEqual,
+)
 from pyiceberg.partitioning import (
     UNPARTITIONED_PARTITION_SPEC,
     PartitionField,
@@ -196,6 +203,55 @@ def keep_unprovided(
     return pa.Table.from_arrays(
         [joined.column(c) for c in data.column_names], schema=data.schema
     )
+
+
+def key_range(data: pa.Table, key_columns: list[str]) -> BooleanExpression:
+    """A filter keeping every stored row that could share a key with ``data``: the
+    first text key column's values, within each other key column's range (times,
+    dates, numbers). Small however many rows ``data`` has (PyIceberg's upsert ORs a
+    clause per row)."""
+    parts: list[BooleanExpression] = []
+    listed = False
+    for name in key_columns:
+        column = data[name]
+        kind = column.type
+        if pa.types.is_timestamp(kind):  # as microseconds, which Iceberg takes
+            column = pc.cast(column.cast(pa.timestamp("us", kind.tz)), pa.int64())
+        elif pa.types.is_date32(kind):  # as days
+            column = pc.cast(column, pa.int32())
+        if pa.types.is_integer(column.type) or pa.types.is_floating(column.type):
+            bounds = pc.min_max(column)
+            parts += [GreaterThanOrEqual(name, bounds["min"].as_py()),
+                      LessThanOrEqual(name, bounds["max"].as_py())]  # fmt: skip
+        elif not listed and (
+            pa.types.is_string(column.type) or pa.types.is_large_string(column.type)
+        ):
+            parts.append(In(name, pc.unique(column).to_pylist()))
+            listed = True
+    out: BooleanExpression = AlwaysTrue()
+    for part in parts:
+        out = And(out, part)
+    return out
+
+
+def _upsert(table, data: pa.Table) -> None:
+    """Upsert ``data`` on the table's identifier fields, in one commit: the stored
+    rows in its :func:`key_range` that it doesn't replace are kept, and that range
+    is overwritten with them and ``data``."""
+    schema = table.schema()
+    ids = schema.identifier_field_ids
+    key = [f.name for f in schema.fields if f.field_id in ids]
+    if not key:
+        raise TableError("upsert needs a table with key columns")
+    where = key_range(data, key)
+    stored = table.scan(row_filter=where).to_arrow()
+    if stored.num_rows == 0:
+        table.overwrite(data, overwrite_filter=where)  # nothing to keep
+        return
+    stored = stored.select(data.column_names).cast(data.schema)
+    kept = stored.join(data.select(key), keys=key, join_type="left anti")
+    rows = pa.concat_tables([data, kept.select(data.column_names).cast(data.schema)])
+    table.overwrite(rows, overwrite_filter=where)
 
 
 def _partition_spec(
@@ -543,7 +599,7 @@ class PolarisTables:
             if mode == "append":
                 table.append(data)
             elif mode == "upsert":  # on the table's identifier fields
-                table.upsert(data)
+                _upsert(table, data)
             else:
                 table.overwrite(data, overwrite_filter=overwrite_filter or AlwaysTrue())
             snapshot = table.current_snapshot()
