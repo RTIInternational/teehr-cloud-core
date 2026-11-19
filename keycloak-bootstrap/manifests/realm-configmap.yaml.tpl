@@ -10,6 +10,9 @@ data:
       "realm": "teehr",
       "enabled": true,
       "accessTokenLifespan": 300,
+      "offlineSessionIdleTimeout": 31536000,
+      "offlineSessionMaxLifespanEnabled": true,
+      "offlineSessionMaxLifespan": 31536000,
       "loginTheme": "teehr",
       "registrationAllowed": true,
       "loginWithEmailAllowed": true,
@@ -179,7 +182,8 @@ data:
           "directAccessGrantsEnabled": false,
           "attributes": {
             "standard.token.exchange.enabled": "true",
-            "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
+            "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION",
+            "oauth2.device.authorization.grant.enabled": "true"
           },
           "secret": "${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? '$(env:CONTROL_PLANE_JOBS_CLIENT_SECRET)' : ''}",
           "protocolMappers": [
