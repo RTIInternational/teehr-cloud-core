@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src import shards
+from src import sessions, shards
 from src.config import Settings
 from src.dataset_types import TABLE
 from src.delegation import (
@@ -99,25 +99,14 @@ def token(
     session: SessionDep,
     delegation: Annotated[Delegation | None, Depends(get_delegation)],
     sealer: Annotated[Sealer | None, Depends(get_sealer)],
+    fresh: bool = False,
 ) -> dict:
-    """A fresh access token as the caller, from their stored refresh token."""
-    if delegation is None or sealer is None or not job.refresh_token:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE, "Jobs aren't configured"
-        )
-    try:
-        tokens = delegation.refresh(sealer.open(job.refresh_token))
-    except DelegationError as exc:
-        raise APIError(
-            status.HTTP_401_UNAUTHORIZED,
-            "The caller's login session has ended; the job can't act as them",
-            code=SESSION_ENDED,
-        ) from exc
-    job.refresh_token = sealer.seal(tokens.refresh_token)  # it may rotate
-    session.commit()
+    """An access token as the caller, from their delegated session (cached;
+    ``fresh`` mints a new one, e.g. after the caller's roles changed)."""
+    token, expires = _caller_token(job, session, delegation, sealer, fresh)
     return {
-        "access_token": tokens.access_token,
-        "expires_in": max(0, int(tokens.expires_at - time.time())),
+        "access_token": token,
+        "expires_in": max(0, int(expires.timestamp() - time.time())),
     }
 
 
@@ -241,22 +230,25 @@ class RunTable(BaseModel):
 
 
 def _caller_token(
-    job: Job, session: Session, delegation: Delegation | None, sealer: Sealer | None
-) -> str:
-    if delegation is None or sealer is None or not job.refresh_token:
+    job: Job,
+    session: Session,
+    delegation: Delegation | None,
+    sealer: Sealer | None,
+    fresh: bool = False,
+) -> tuple[str, datetime]:
+    """An access token as the job's caller, and its expiry."""
+    if delegation is None or sealer is None or job.session is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "Jobs aren't configured"
         )
     try:
-        tokens = delegation.refresh(sealer.open(job.refresh_token))
+        return sessions.access_token(session, job.session, delegation, sealer, fresh)
     except DelegationError as exc:
         raise APIError(
             status.HTTP_401_UNAUTHORIZED,
             "The caller's login session has ended; the job can't act as them",
             code=SESSION_ENDED,
         ) from exc
-    job.refresh_token = sealer.seal(tokens.refresh_token)
-    return tokens.access_token
 
 
 @router.post("/run-table")
@@ -289,7 +281,7 @@ def run_table(
                 "earlier engine's?); delete it and run again",
             )
         return {"dataset": name, "created": False}
-    token = _caller_token(job, session, delegation, sealer)
+    token, _ = _caller_token(job, session, delegation, sealer)
     try:
         tables.create_table(token, project.name, name, columns, None)
     except TableExists as exc:
@@ -392,7 +384,7 @@ def record_write(
         )
     )
     if done is None:
-        token = _caller_token(job, session, delegation, sealer)
+        token, _ = _caller_token(job, session, delegation, sealer)
         try:
             found = tables.has_snapshot(
                 token, project.name, body.dataset, body.snapshot_id

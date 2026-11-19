@@ -17,6 +17,7 @@ from src.config import Settings
 from src.delegation import Delegation, Sealer
 from src.kube import Kube, job_manifest, job_state
 from src.models import Job, JobStatus, Project
+from src.sessions import JOB, open_session, revoke
 
 GRANT_PREFIX = "tjg_"
 GRANT_TTL = timedelta(hours=24)
@@ -58,13 +59,16 @@ def start_job(
         )
     tokens = delegation.exchange(caller_token)
     grant = GRANT_PREFIX + secrets.token_urlsafe(32)
+    expires = datetime.now(UTC) + GRANT_TTL
     job = Job(
         kind=kind,
         project_id=project.id,
         created_by=caller,
         grant_hash=grant_hash(grant),
-        grant_expires_at=datetime.now(UTC) + GRANT_TTL,
-        refresh_token=sealer.seal(tokens.refresh_token),
+        grant_expires_at=expires,
+        session=open_session(
+            sealer, subject=caller, kind=JOB, tokens=tokens, expires_at=expires
+        ),
     )
     session.add(job)
     session.flush()
@@ -87,11 +91,13 @@ def by_grant(session: Session, token: str) -> Job | None:
 
 
 def end(job: Job, status: JobStatus, error: str | None = None) -> None:
-    """Mark a job ended; its grant and stored token stop working."""
+    """Mark a job ended; its grant stops working, and its own session (not one it
+    shares, such as a personal token's) is revoked."""
     job.status = status
     job.error = error
     job.finished_at = datetime.now(UTC)
-    job.refresh_token = None
+    if job.session is not None and job.session.kind == JOB:
+        revoke(job.session)
 
 
 def reconcile(kube: Kube | None, job: Job) -> bool:

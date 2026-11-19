@@ -76,7 +76,8 @@ class FakeDelegation:
         if self.fail:
             raise DelegationError("no exchange")
         self.exchanged.append(user_token)
-        return Tokens("unused", time.time() + 300, "refresh-for-alice")
+        # Like Keycloak: an access token as the caller, and a refresh token.
+        return Tokens(user_token, time.time() + 300, "refresh-for-alice")
 
     def refresh(self, refresh_token):
         if self.ended:
@@ -155,8 +156,9 @@ def test_ingest_starts_a_job_acting_as_the_caller(client, staging, jobs):
     with db() as session:
         job = session.scalar(select(Job))
         assert job.k8s_name == "upload-0" and job.created_by == "alice"
-        # Stored encrypted, and only the grant's hash.
-        assert "refresh-for-alice" not in job.refresh_token
+        # Stored encrypted in the job's session, and only the grant's hash.
+        assert job.session.kind == "job" and job.session.subject == "alice"
+        assert "refresh-for-alice" not in job.session.refresh_token
         assert grant_of(manifest) not in job.grant_hash
 
 
@@ -321,10 +323,12 @@ def test_a_grant_gets_the_task_and_tokens_until_the_job_ends(client, staging, jo
     assert resp.status_code == 204
     upload = client.get(f"{UPLOADS}/{upload_id}", headers=ALICE).json()
     assert upload["status"] == "succeeded" and upload["result"] == {"rows": 3}
-    # A finished job's grant is dead, and its stored token gone.
+    # A finished job's grant is dead, and its session revoked.
     assert grant_call(client, grant, "POST", "token").status_code == 401
     with db() as session:
-        assert session.scalar(select(Job)).refresh_token is None
+        job = session.scalar(select(Job))
+        assert job.session.revoked_at is not None
+        assert job.session.refresh_token is None and job.session.access_token is None
 
 
 def test_unknown_grants_and_user_tokens_are_refused(client, staging, jobs):
@@ -346,9 +350,34 @@ def test_a_token_without_the_project_role_is_refused_up_front(client, staging, j
 def test_session_ended(client, staging, jobs):
     kube, delegation = jobs
     ingest(client, inspected(client, staging))
+    grant = grant_of(kube.created[0])
     delegation.ended = True
-    resp = grant_call(client, grant_of(kube.created[0]), "POST", "token")
+    # The cached access token is served until near its end (ADR-0018); the next
+    # refresh finds the session over.
+    assert grant_call(client, grant, "POST", "token").status_code == 200
+    resp = grant_call(client, grant, "POST", "token", params={"fresh": "true"})
     assert resp.status_code == 401 and resp.json()["code"] == "session_ended"
+
+
+def test_tokens_are_cached_until_near_their_end(client, staging, jobs, monkeypatch):
+    from src import sessions
+
+    kube, delegation = jobs
+    ingest(client, inspected(client, staging))
+    grant = grant_of(kube.created[0])
+    refreshes = []
+    real = delegation.refresh
+    delegation.refresh = lambda t: refreshes.append(t) or real(t)
+
+    first = grant_call(client, grant, "POST", "token").json()
+    again = grant_call(client, grant, "POST", "token").json()
+    assert refreshes == [] and again["access_token"] == first["access_token"]
+    # Within the margin of its expiry, a new one is minted (and cached).
+    monkeypatch.setattr(sessions, "MARGIN", sessions.timedelta(minutes=10))
+    grant_call(client, grant, "POST", "token")
+    assert len(refreshes) == 1
+    grant_call(client, grant, "POST", "token", params={"fresh": "true"})
+    assert len(refreshes) == 2
 
 
 def test_a_job_whose_pod_died_fails_with_the_reason(client, staging, jobs):

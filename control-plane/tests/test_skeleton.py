@@ -57,3 +57,45 @@ def test_migrations_upgrade_and_downgrade(tmp_path):
     assert "alembic_version" in tables
 
     command.downgrade(cfg, "base")
+
+
+def test_jobs_tokens_move_into_sessions_and_back(tmp_path):
+    import uuid
+
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path / 'cp.db'}"
+    cfg = alembic_config(url)
+    command.upgrade(cfg, "0017")
+    engine = make_engine(url)
+    job, project = uuid.uuid4().hex, uuid.uuid4().hex
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO projects (id, name, kind, status, created_by) "
+                "VALUES (:p, 'flood', 'TENANT', 'READY', 'alice')"
+            ),
+            {"p": project},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO jobs (id, kind, project_id, created_by, status, "
+                "grant_hash, grant_expires_at, refresh_token) VALUES (:id, 'run', "
+                ":p, 'alice', 'RUNNING', 'h', '2030-01-01 00:00:00', 'sealed')"
+            ),
+            {"id": job, "p": project},
+        )
+
+    command.upgrade(cfg, "0018")
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT s.subject, s.kind, s.refresh_token FROM jobs j "
+                "JOIN delegated_sessions s ON s.id = j.session_id"
+            )
+        ).one()
+    assert tuple(row) == ("alice", "job", "sealed")
+
+    command.downgrade(cfg, "0017")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT refresh_token FROM jobs")).scalar() == "sealed"
