@@ -16,10 +16,9 @@ Three things act as a user without the user's browser in the loop, each built se
   stored encrypted, refreshed on every request, for Spark in Jupyter.
 - **API keys** (legacy API, `/auth/api-keys`): hashed keys, offered to admins only.
 
-Neither delegation caches access tokens or serializes refreshes. Today that is harmless: the realm
-doesn't rotate refresh tokens (`revokeRefreshToken` is off), so concurrent refreshes all succeed.
-It becomes a problem if rotation is turned on, and costs a Keycloak call per request regardless;
-runs across pods (ADR-0017) multiply those calls.
+Neither delegation caches access tokens: every request is a Keycloak refresh, and runs across
+pods (ADR-0017) multiply those calls. Concurrent refreshes are safe because the realm doesn't
+rotate refresh tokens (`revokeRefreshToken` is off: a used refresh token stays valid).
 
 What's missing: every user creating tokens for scripts, CI and agents (not admins only), and a
 command-line login (`teehr auth login`) that sends the user to the browser and back, as
@@ -32,14 +31,17 @@ The fork: one credentials model in the control plane, or a mechanism per use.
 ## Decision
 
 **The control plane keeps delegated sessions: stored, sealed refresh tokens for a user, from which
-it hands out short-lived access tokens, cached and refreshed under a lock. Job grants and personal
-access tokens are secrets that map to one. The CLI logs in with the OAuth device flow and holds
-its own tokens.**
+it hands out short-lived access tokens, cached. Job grants and personal access tokens are secrets
+that map to one. The CLI logs in with the OAuth device flow and holds its own tokens.**
+
+**Assumption: refresh tokens aren't rotated** (`revokeRefreshToken` stays off in the realm). So
+any number of pods or processes may refresh one session at once, and nothing here locks.
 
 - **Delegated sessions.** One table: the user, the kind (job, personal token), the sealed refresh
   token, the cached access token and its expiry, created / expires / revoked. An access token is
-  served from the cache while it has more than a minute left; otherwise the session's row is
-  locked, refreshed once, and the new tokens stored. Job grants move onto this.
+  served from the cache while it has more than a minute left; otherwise the session is refreshed
+  and the new access token cached (two refreshes racing both succeed; the later one is kept).
+  Job grants move onto this.
 - **Personal access tokens, for every user.** Any signed-in user creates, lists and revokes their
   own: a name, an expiry (capped), scopes (read, write), optionally limited to some projects. The
   secret (prefixed, e.g. `tpat_`) is shown once and stored hashed. Admins can list and revoke
@@ -51,18 +53,20 @@ its own tokens.**
 - **The CLI.** `teehr auth login` runs the device flow against a public Keycloak client with
   device grants enabled: it prints a code, opens the browser, and polls until the user approves.
   Tokens are kept per API URL in the user's config directory (readable by them only) and
-  refreshed by the CLI, under a file lock so processes sharing them don't race.
+  refreshed by the CLI (processes sharing them may refresh at once; see the assumption).
   `teehr auth login --token` stores a personal token instead (CI); `teehr auth token` prints a
   current access token; `teehr tokens create|list|revoke` manage personal tokens.
 - **Legacy pieces stay as they are** (the broker's delegated sessions, admin API keys) and are
-  retired with direct Jupyter access and the legacy API, not migrated.
+  retired with direct Jupyter access and the legacy API, not migrated. **The frontend doesn't
+  change until then:** its admin API-keys page stays on the legacy API; personal tokens are
+  created through the control plane's API (`/docs`) and the CLI.
 - **Order:** delegated sessions with job grants on them (before runs fan out widely), personal
   tokens for every user, then the CLI login.
 
 ## Consequences
 
 - **Positive:** one place that holds refresh tokens, seals them, caches access tokens and can
-  revoke them; turning on refresh-token rotation becomes safe. Every user can automate without an
+  revoke them. Every user can automate without an
   admin. Jobs, personal tokens and the CLI all act as the real user, so Polaris enforces their
   roles as everywhere else (ADR-0004).
 - **Negative / cost:** offline sessions are long-lived credentials; they need caps, expiry,
@@ -70,6 +74,8 @@ its own tokens.**
   personal-token request. Realm changes (offline access, a device-flow client, session limits).
 - **Tradeoff accepted:** a personal token's scopes and projects bind at the control plane's API;
   an access token minted from it for direct catalog access carries the user's roles (see Notes).
+  Refresh tokens stay unrotated, so a leaked one stays valid until its session ends or is
+  revoked; sealing them and keeping them in the control plane only is the mitigation.
 
 ## Alternatives considered
 
@@ -94,4 +100,6 @@ its own tokens.**
 - Open: should a read-scoped personal token mint catalog tokens at all, since the minted token
   carries the user's full roles? Until downscoped tokens exist, only write-scoped personal tokens
   may.
-- The frontend's admin API-keys page becomes everyone's personal-tokens page.
+- If refresh-token rotation is ever turned on, sessions need a lock (refresh once, under a row
+  lock) and the CLI a file lock; revisit this ADR then.
+- When the legacy API is retired, the frontend's API-keys page moves to personal tokens.

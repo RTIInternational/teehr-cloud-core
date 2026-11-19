@@ -1,6 +1,6 @@
 # ADR-0017: A run's shards run across pods, from a queue the control plane keeps
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified by the team, 2026-11-18)
 - **Date:** 2026-11-18
 - **Deciders:** TEEHR team
 - **Related:** #148, #228, ADR-0014 (jobs; amended by this), ADR-0016 (jobs write in-process),
@@ -55,7 +55,7 @@ through the job grant. Shards write their outputs as files; pod 0 merges them an
 - **Settings, per deployment:** the shard count at which a run fans out (off by default), the
   pods per run, the heartbeat interval. The per-project job limit counts pods, not Jobs.
 - **Credentials:** all pods use the run's one grant. Access tokens come from the control plane,
-  cached and refreshed under a lock (ADR-0018), so N pods don't mean N refreshes.
+  cached (ADR-0018), so N pods don't mean N refreshes.
 
 This amends ADR-0014: a run's work may span several pods of one Job; everything else (Jobs the
 control plane creates, grants, the caller's identity) is unchanged.

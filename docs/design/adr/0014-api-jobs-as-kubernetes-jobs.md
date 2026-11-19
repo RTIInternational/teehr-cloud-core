@@ -1,6 +1,6 @@
 # ADR-0014: Work the API starts runs as Kubernetes Jobs, not Prefect
 
-- **Status:** Accepted
+- **Status:** Accepted; a run across pods amended by ADR-0017 (2026-11-18)
 - **Date:** 2026-11-15
 - **Deciders:** TEEHR team
 - **Related:** #148, ADR-0003 (amended by this), ADR-0004 (caller identity), ADR-0011 (VeriRace
@@ -94,3 +94,6 @@ Uploads first; evaluation runs (Phase 5) the same way.
   admin-API identity and the "act as users" identity aren't lost through one secret.
 - Upload staging, inspection and the load contract follow VeriRace's upload API
   (`system-layout.md`).
+- **Amended 2026-11-18 (ADR-0017):** a run that needs more than one pod runs as one Indexed Job
+  of N pods sharing its grant; the control plane keeps the run's shard queue, which pods claim
+  through the grant. Pod 0 plans, merges and commits. Everything else here is unchanged.
