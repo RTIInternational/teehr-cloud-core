@@ -76,3 +76,10 @@ is the write code plus the control plane's records, not a network hop that every
 
 - To the user, a run's tables are the same as before: created and registered as the caller, with
   lineage per write.
+- Uploads (#243): every load (timeseries, layers, crosswalks, and setting each series' location)
+  is written in the job, as the caller, one commit per dataset. Notes on keys missing from a
+  layer or series table come from the job's own reads, finding the tables through the API.
+- PyIceberg's `upsert` filters on one clause per row of the batch, which doesn't scale to a whole
+  upload. Upserts (the job's and `/data`'s) now read the stored rows in the batch's key range
+  (the series keys within its time range). They keep the rows the batch doesn't replace, and
+  overwrite that range in one commit.

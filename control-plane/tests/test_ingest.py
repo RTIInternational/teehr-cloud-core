@@ -1,6 +1,6 @@
 """Loading uploads (Phase 3; ADR-0014): ingest checks the request, starts a
 Kubernetes Job that acts as the caller with a job grant, and the job loads the
-file through the API's own write path."""
+file with the write path's own code, in one commit (ADR-0016)."""
 
 import dataclasses
 import time
@@ -17,6 +17,7 @@ from src.jobs.load import GrantClient, LoadFailed, load_upload
 from src.kube import KubeError, get_kube
 from src.main import app
 from src.models import Job
+from src.tables import get_tables
 from tests.conftest import auth, make_token
 from tests.test_datasets import ALICE, add_member
 from tests.test_datasets import tables as tables  # noqa: F401  (fixture)
@@ -86,7 +87,11 @@ class FakeDelegation:
 
 
 @pytest.fixture
-def jobs(client, staging):  # noqa: F811
+def jobs(client, staging, monkeypatch):  # noqa: F811
+    # The load writes in-process (ADR-0016), to the app's (fake) tables.
+    monkeypatch.setattr(
+        "src.jobs.load.open_tables", lambda task: app.dependency_overrides[get_tables]()
+    )
     settings = app.dependency_overrides[get_settings]()
     settings = dataclasses.replace(
         settings, job_image="cp:test", job_namespace="teehr-hub", job_token_key="k"
@@ -441,18 +446,38 @@ def test_load_registers_and_writes_as_the_caller(client, staging, jobs, tables):
                       "snapshot_id": result["snapshot_id"]}  # fmt: skip
     dataset = client.get("/v1/projects/flood/datasets/obs", headers=ALICE).json()
     assert dataset["timeseries"]["optional_columns"] == ["quality"]
-    # Written through the API: cfs converted to m3/s, keys kept as text.
+    # Written in the job (ADR-0016): cfs converted to m3/s, keys kept as text.
     mode, _, data = tables.writes[-1]
     assert mode == "upsert"
     assert data.column("series_key").to_pylist() == ["01010000", "01010000", "01010500"]
     assert data.column("value").to_pylist() == pytest.approx(
         [100 * 0.028316846592, 200 * 0.028316846592, 50 * 0.028316846592]
     )
+    # The control plane recorded the job's commit, as the caller.
     writes = client.get("/v1/projects/flood/datasets/obs/writes", headers=ALICE).json()
-    assert [w["unit"] for w in writes] == ["[cft_i]/s"]
+    assert [(w["unit"], w["months"], w["series_added"], w["rows"]) for w in writes] == [
+        ("[cft_i]/s", ["2026-01"], 2, 3)
+    ]
     assert writes[0]["written_by"] == "alice"
+    assert str(writes[0]["snapshot_id"]) == str(result["snapshot_id"])
     upload = client.get(f"{UPLOADS}/{upload_id}", headers=ALICE).json()
     assert upload["status"] == "succeeded" and upload["rows_done"] == 3
+
+
+def test_load_is_one_commit(client, staging, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    ingest(client, inspected(client, staging))
+    assert run_load(client, staging, kube)["rows"] == 3
+    assert [w[2].num_rows for w in tables.writes] == [3]  # one write, every row
+
+
+def test_an_upload_job_reports_writes_to_its_dataset_only(client, staging, jobs):
+    kube, _ = jobs
+    ingest(client, inspected(client, staging))
+    grant = {"Authorization": f"Bearer {grant_of(kube.created[-1])}"}
+    report = {"dataset": "other", "mode": "upsert", "rows": 1, "snapshot_id": 1}
+    resp = client.post("/v1/job-grants/writes", json=report, headers=grant)
+    assert resp.status_code == 403
 
 
 def test_load_checks_the_whole_file_before_writing(client, staging, jobs, tables):  # noqa: F811
@@ -529,6 +554,13 @@ def test_load_sets_each_series_location(client, staging, jobs, tables):  # noqa:
     series = tables.rows[("flood", "obs_series")]
     assert series["01010000"]["location_key"] == "01010000"
     assert series["01010000"]["location_layer"] == "gauges"
+    # Set in the job and recorded as a write to the series table, with its note.
+    writes = client.get(
+        "/v1/projects/flood/datasets/obs_series/writes", headers=ALICE
+    ).json()
+    assert [(w["mode"], w["notes"], w["written_by"]) for w in writes] == [
+        ("upsert", result["notes"], "alice")
+    ]
 
 
 def test_location_keys_need_a_layer(client, staging, jobs):

@@ -56,17 +56,10 @@ from teehr_core.spec.models import AttributeField, WithinField
 
 from src.evaluations import SpecProblems, catalog_from
 from src.expressions import overwrite_expression
-from src.jobs.load import GrantClient, LoadFailed, _problem
+from src.jobs.grant import GrantClient, LoadFailed, _problem
 from src.jobs.reads import CatalogAccess, Read, Warehouse, count_delta
-from src.tables import (
-    DataMismatch,
-    PolarisTables,
-    TableError,
-    TableForbidden,
-    Tables,
-    catalog_properties,
-    conform,
-)
+from src.jobs.writes import as_caller, open_tables, report
+from src.tables import DataMismatch, Tables, conform
 
 log = logging.getLogger("src.jobs")
 
@@ -412,45 +405,6 @@ def typed(table: pa.Table, run: dict) -> tuple[pa.Table, list[dict]]:
     return pa.Table.from_arrays(arrays, names=table.column_names), columns
 
 
-def open_tables(task: dict) -> Tables:
-    """Table writes as the caller, at the run's catalog (tests replace this)."""
-    if not task.get("catalog"):
-        raise LoadFailed(["the control plane didn't say where the warehouse is"])
-    c = CatalogAccess.from_task(task["catalog"])
-    return PolarisTables.at(
-        catalog_properties(c.uri, c.warehouse, c.realm, c.region, c.endpoint,
-                           c.path_style)
-    )  # fmt: skip
-
-
-def _as_caller(client: GrantClient, name: str, call):
-    """``call(token)`` as the caller: once more with a fresh token if it's refused
-    (the token may have gone stale), table errors as LoadFailed."""
-    try:
-        try:
-            return call(client.token())
-        except TableForbidden:
-            return call(client.token(fresh=True))
-    except TableForbidden:
-        raise LoadFailed([f"writing {name}: the caller may not write it"]) from None
-    except TableError as exc:
-        raise LoadFailed([f"writing {name}: {exc}"]) from None
-
-
-def _report(
-    client: GrantClient, name: str, mode: str, where: str | None, rows: int, snap: int
-) -> None:
-    """Report a commit to the control plane, which records it (ADR-0016)."""
-    report = {"dataset": name, "mode": mode, "filter": where, "rows": rows,
-              "snapshot_id": snap}  # fmt: skip
-    try:
-        client._grant("POST", "writes", json=report)
-    except httpx.HTTPStatusError as exc:
-        raise LoadFailed(
-            [f"recording the write to {name}: {_problem(exc.response)}"]
-        ) from None
-
-
 def write_table(
     client: GrantClient,
     tables: Tables,
@@ -478,13 +432,13 @@ def write_table(
         )
     except DataMismatch as exc:
         raise LoadFailed([f"writing {name}: {exc}"]) from None
-    result = _as_caller(
+    result = as_caller(
         client, name,
         lambda token: tables.write(token, project, name, data, mode, expression),
     )  # fmt: skip
     if result.snapshot_id is not None:
         where = overwrite_filter if not append else None
-        _report(client, name, mode, where, data.num_rows, result.snapshot_id)
+        report(client, name, mode, where, data.num_rows, result.snapshot_id)
     log.info(
         "wrote %s: %s %d rows, snapshot %s (%.1fs)", name, mode, data.num_rows,
         result.snapshot_id, time.monotonic() - started,
@@ -569,7 +523,7 @@ class ShardOutputs:
         except DataMismatch as exc:
             raise LoadFailed([f"writing {name}: {exc}"]) from None
         file_name = f"run-{self.run['id']}/{self._name(index, attempt)}"
-        path = _as_caller(
+        path = as_caller(
             self.client, name,
             lambda token: self.tables.write_file(token, self.project, name, data,
                                                  file_name),
@@ -633,14 +587,14 @@ class ShardOutputs:
             expression = overwrite_expression(overwrite_filter, self.pairs_columns)
         except DataMismatch as exc:
             raise LoadFailed([f"writing {name}: {exc}"]) from None
-        result = _as_caller(
+        result = as_caller(
             self.client, name,
             lambda token: self.tables.commit_files(token, self.project, name,
                                                    self.pair_files, expression),
         )  # fmt: skip
         files, self.pair_files = len(self.pair_files), []  # the table's now
         if result.snapshot_id is not None:
-            _report(self.client, name, "overwrite", overwrite_filter, self.pair_rows,
+            report(self.client, name, "overwrite", overwrite_filter, self.pair_rows,
                     result.snapshot_id)  # fmt: skip
         log.info(
             "committed %s: %d rows in %d files, snapshot %s (%.1fs)", name,

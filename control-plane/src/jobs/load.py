@@ -5,19 +5,18 @@
    make: types, required values, time zones, repeated keys) before writing any of
    it; every problem found is reported.
 3. Register the dataset if it's new.
-4. Write through the control plane's own write path (``POST .../data``), as the
-   caller, in Arrow chunks under the request size limit: units are converted,
-   new series added and every chunk recorded in the dataset's write history
-   there, exactly as for any other write. Each chunk is its own write: a load
-   that fails partway keeps the chunks before it (upserts make a retry safe).
+4. Write it in one commit, here, as the caller, with the write path's own code
+   (ADR-0016): units converted, new series added to the series table, the rows
+   upserted. The commit is reported to the control plane, which records it in the
+   dataset's write history as for any other write. A load that fails leaves the
+   dataset as it was (new series apart). Each series' location, when the file
+   gives one, is then set in the series table, the same way.
 """
 
 import tempfile
-import time
-from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -25,152 +24,19 @@ import pyarrow.parquet as pq
 import shapely
 
 from src.dataset_types import crosswalk_columns, layer_columns, timeseries_columns
+from src.domains import convert
 from src.geofiles import GEO_FORMATS, SUFFIX, WGS84, points, read_geo, to_wgs84
 from src.geometry import prepare_layer
-from src.tables import DataMismatch, conform, duplicate_keys
+from src.jobs.grant import GrantClient, LoadFailed, _problem
+from src.jobs.writes import as_caller, open_tables, report
+from src.notes import missing_note
+from src.refs import split
+from src.tables import DataMismatch, Tables, conform, duplicate_keys
 from src.uploads import read_csv_text
 
-ARROW = "application/vnd.apache.arrow.stream"
-CHUNK_BYTES = 48 * 1024 * 1024  # under the API's 64 MiB write limit
+__all__ = ["GrantClient", "LoadFailed", "load_upload"]
+
 STRING_TARGETS = ("series_key", "member", "quality")
-# How long a job keeps trying to reach the control plane (a restart takes ~30 s).
-RETRY_SECONDS = 120.0
-# The request never reached the control plane: any call can be sent again.
-_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
-# The connection dropped mid-call: it may have landed, so only calls that are safe
-# to repeat are sent again.
-_DROPPED = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
-_WRITE_MODES_SAFE_TO_REPEAT = ("overwrite", "upsert")
-
-
-class LoadFailed(Exception):
-    """The load can't go ahead; ``problems`` says why."""
-
-    def __init__(self, problems: list[str]):
-        super().__init__("; ".join(problems))
-        self.problems = problems
-
-
-@dataclass
-class GrantClient:
-    """The job's side of its grant: tokens, task, progress, outcome."""
-
-    base_url: str
-    grant: str
-    http: httpx.Client | None = None
-    retry_seconds: float = RETRY_SECONDS
-
-    def __post_init__(self):
-        self.http = self.http or httpx.Client(timeout=120)
-        self._token, self._expires = "", 0.0
-
-    def _send(
-        self, method: str, url: str, repeatable: bool, **kwargs
-    ) -> httpx.Response:
-        """One request, sent again while the control plane can't be reached (it
-        may be restarting): always when the request never reached it, and when the
-        connection dropped mid-call only if ``repeatable``."""
-        deadline, wait = time.monotonic() + self.retry_seconds, 1.0
-        while True:
-            try:
-                return self.http.request(method, url, **kwargs)
-            except (*_NOT_SENT, *_DROPPED) as exc:
-                if isinstance(exc, _DROPPED) and not repeatable:
-                    raise
-                if time.monotonic() + wait > deadline:
-                    raise
-                time.sleep(wait)
-                wait = min(wait * 2, 15.0)
-
-    def _grant(self, method: str, path: str, **kwargs) -> httpx.Response:
-        # Every grant call is safe to repeat: a finish that landed before the
-        # connection dropped makes the grant stop working, so its repeat is refused
-        # (and the outcome is already recorded).
-        resp = self._send(
-            method,
-            f"{self.base_url}/v1/job-grants/{path}",
-            True,
-            headers={"Authorization": f"Bearer {self.grant}"},
-            **kwargs,
-        )
-        resp.raise_for_status()
-        return resp
-
-    def download(self, url: str, file) -> None:
-        """Copy the staged file into ``file``."""
-        with self.http.stream("GET", url) as resp:
-            if resp.status_code != 200:
-                raise LoadFailed(
-                    [f"couldn't read the staged file (HTTP {resp.status_code})"]
-                )
-            for part in resp.iter_bytes(1024 * 1024):
-                file.write(part)
-
-    def put(self, url: str, data: bytes) -> None:
-        """PUT a work file to its (presigned) URL; repeated if the send drops."""
-        resp = self._send("PUT", url, True, content=data)
-        if resp.status_code not in (200, 201, 204):
-            raise LoadFailed([f"couldn't store a work file (HTTP {resp.status_code})"])
-
-    def get(self, url: str) -> bytes:
-        """GET a work file from its (presigned) URL."""
-        resp = self._send("GET", url, True)
-        if resp.status_code != 200:
-            raise LoadFailed([f"couldn't read a work file (HTTP {resp.status_code})"])
-        return resp.content
-
-    def task(self) -> dict:
-        return self._grant("GET", "task").json()
-
-    def token(self, fresh: bool = False) -> str:
-        if fresh or time.time() > self._expires - 60:
-            body = self._grant("POST", "token").json()
-            self._token, self._expires = (
-                body["access_token"],
-                time.time() + body["expires_in"],
-            )
-        return self._token
-
-    def progress(self, rows_done: int) -> None:
-        self._grant("POST", "progress", json={"rows_done": rows_done})
-
-    def finish(self, status: str, **outcome) -> None:
-        try:
-            self._grant("POST", "finish", json={"status": status, **outcome})
-        except httpx.HTTPStatusError as exc:
-            # Refused: the job has already ended (an earlier send of this landed
-            # before the connection dropped, or it was cancelled). Nothing to record.
-            if exc.response.status_code != 401:
-                raise
-
-    def api(self, method: str, path: str, **kwargs) -> httpx.Response:
-        """Call the control plane's API as the caller (one retry with a fresh
-        token if it's refused). Reads, overwrites and upserts are sent again if the
-        connection drops mid-call; appends and creates aren't (they may have
-        landed)."""
-        extra = kwargs.pop("headers", {})
-        mode = (kwargs.get("params") or {}).get("mode")
-        repeatable = method == "GET" or mode in _WRITE_MODES_SAFE_TO_REPEAT
-        for fresh in (False, True):
-            headers = {**extra, "Authorization": f"Bearer {self.token(fresh)}"}
-            resp = self._send(
-                method, f"{self.base_url}/v1{path}", repeatable,
-                headers=headers, **kwargs,
-            )  # fmt: skip
-            if resp.status_code != 401:
-                return resp
-        return resp
-
-
-def _problem(resp: httpx.Response) -> str:
-    try:
-        body = resp.json()
-    except ValueError:
-        return f"HTTP {resp.status_code}"
-    errors = body.get("errors") or []
-    if errors:
-        return "; ".join(f"{'.'.join(e['loc'][1:])}: {e['msg']}" for e in errors)
-    return body.get("detail") or f"HTTP {resp.status_code}"
 
 
 def read_file(path: str, fmt: str, layer: str | None = None) -> pa.Table:
@@ -278,23 +144,78 @@ def locations(data: pa.Table, mapping: dict) -> pa.Table | None:
 
 
 def set_locations(
-    client: GrantClient, project: str, dataset: dict, pairs: pa.Table
+    client: GrantClient, tables: Tables, project: str, dataset: dict, pairs: pa.Table
 ) -> list[str]:
-    """Write each series' location key to the dataset's series table (other
-    series attributes are kept); returns the write's notes."""
-    resp = client.api("GET", f"/projects/{project}/datasets/{dataset['name']}")
+    """Write each series' location key to the dataset's series table, as the
+    caller (other series attributes are kept); returns notes on location keys that
+    aren't in the series' layer."""
+    ts = _described(client, project, dataset["name"])["timeseries"]
+    series = _described(client, project, ts["series_table"])
+    name = series["name"]
+    provided = list(pairs.column_names)
+    try:
+        data = conform(pairs, series["columns"])
+    except DataMismatch as exc:
+        raise LoadFailed([f"setting location keys: {exc}"]) from None
+    notes = _location_notes(client, tables, project, name, pairs)
+    result = as_caller(
+        client, name,
+        lambda token: tables.merge(token, project, name, data,
+                                   series["key_columns"], provided),
+    )  # fmt: skip
+    if result.snapshot_id is not None:
+        report(client, name, "upsert", None, data.num_rows, result.snapshot_id,
+               notes=notes or None)  # fmt: skip
+    return notes
+
+
+def _location_notes(
+    client: GrantClient, tables: Tables, project: str, series: str, pairs: pa.Table
+) -> list[str]:
+    """Location keys not in the layer of the timeseries using this series table
+    (when they share one), as writes to it report them."""
+    resp = client.api("GET", f"/projects/{project}/datasets")
     if resp.status_code != 200:
-        raise LoadFailed([f"dataset '{dataset['name']}': {_problem(resp)}"])
-    series = resp.json()["timeseries"]["series_table"]
-    resp = client.api(
-        "POST",
-        f"/projects/{project}/datasets/{series}/data",
-        content=arrow_bytes(pairs),
-        headers={"Content-Type": ARROW},
-    )
-    if resp.status_code != 201:
-        raise LoadFailed([f"setting location keys: {_problem(resp)}"])
-    return resp.json().get("notes") or []
+        raise LoadFailed([f"datasets: {_problem(resp)}"])
+    layers = {
+        d["timeseries"].get("location_layer")
+        for d in resp.json()
+        if d.get("timeseries") and d["timeseries"].get("series_table") == series
+    } - {None}
+    if len(layers) != 1:
+        return []
+    ref = layers.pop()
+    layer = _table_of(client, project, ref)
+    if layer is None or layer["kind"] != "layer":
+        raise LoadFailed([f"'{ref}' is not a layer"])
+    wanted = sorted(set(pairs["location_key"].to_pylist()) - {None})
+    missing = _missing_keys(client, tables, layer, "location_key", wanted)
+    return [missing_note(missing, len(wanted), "location keys", ref)] if missing else []
+
+
+def _table_of(client: GrantClient, project: str, ref: str) -> dict | None:
+    """The dataset a reference names (``<name>`` or ``public.<name>``), or None."""
+    owner, name = split(ref)
+    resp = client.api("GET", f"/projects/{owner or project}/datasets/{name}")
+    if resp.status_code == 404:
+        return None
+    if resp.status_code != 200:
+        raise LoadFailed([f"dataset '{ref}': {_problem(resp)}"])
+    return resp.json()
+
+
+def _missing_keys(
+    client: GrantClient, tables: Tables, dataset: dict, column: str, values: list
+) -> list[str]:
+    """Which of ``values`` aren't in the dataset's ``column``, read as the caller."""
+    if not values:
+        return []
+    namespace, name = dataset["table"].split(".", 1)
+    present = as_caller(
+        client, name,
+        lambda token: tables.existing_keys(token, namespace, name, column, values),
+    )  # fmt: skip
+    return sorted(set(values) - present)
 
 
 def target_columns(client: GrantClient, project: str, dataset: dict) -> list[dict]:
@@ -350,54 +271,116 @@ def register(client: GrantClient, project: str, dataset: dict) -> None:
         raise LoadFailed([f"registering '{dataset['name']}': {_problem(resp)}"])
 
 
-def chunks(table: pa.Table):
-    per_row = max(1, table.nbytes // max(1, table.num_rows))
-    size = max(1, CHUNK_BYTES // per_row)
-    for start in range(0, table.num_rows, size):
-        yield table.slice(start, size)
+def _described(client: GrantClient, project: str, name: str) -> dict:
+    resp = client.api("GET", f"/projects/{project}/datasets/{name}")
+    if resp.status_code != 200:
+        raise LoadFailed([f"dataset '{name}': {_problem(resp)}"])
+    return resp.json()
 
 
-def arrow_bytes(table: pa.Table) -> bytes:
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema) as writer:
-        writer.write_table(table)
-    return sink.getvalue().to_pybytes()
+def _units(client: GrantClient, project: str, given: str, canonical: str):
+    """(the unit values arrive in, the dataset's unit), checked as writes check
+    them; a project's unit wins over a public one of the same symbol."""
+    resp = client.api("GET", "/domains/units", params={"project": project})
+    if resp.status_code != 200:
+        raise LoadFailed([f"units: {_problem(resp)}"])
+    found = {
+        u["symbol"]: SimpleNamespace(**u)
+        for u in sorted(resp.json(), key=lambda u: u.get("project") is not None)
+    }
+    source, target = found.get(given), found.get(canonical)
+    if source is None or target is None:
+        raise LoadFailed([f"unknown unit '{given if source is None else canonical}'"])
+    if source.dimension != target.dimension:
+        raise LoadFailed([f"{source.symbol} ({source.dimension}) doesn't convert to "
+                          f"{target.symbol} ({target.dimension})"])  # fmt: skip
+    return source, target
 
 
-def write(client: GrantClient, project: str, dataset: dict, typed: pa.Table) -> dict:
-    path = f"/projects/{project}/datasets/{dataset['name']}/data"
-    done = added = 0
-    snapshot = None
-    notes: list[str] = []
-    params = {"mode": "upsert"}
-    if dataset.get("unit"):
-        params["unit"] = dataset["unit"]
-    for chunk in chunks(typed):
-        for attempt in range(4):
-            resp = client.api(
-                "POST",
-                path,
-                params=params,
-                content=arrow_bytes(chunk),
-                headers={"Content-Type": ARROW},
-            )
-            if resp.status_code != 409 or attempt == 3:
-                break
-            time.sleep(2**attempt)  # another write committed first
-        if resp.status_code != 201:
-            raise LoadFailed([f"after {done} rows, writing failed: {_problem(resp)}"])
-        body = resp.json()
-        done += chunk.num_rows
-        added += body.get("series_added") or 0
-        snapshot = body.get("snapshot_id")
-        notes += [n for n in body.get("notes") or [] if n not in notes]
-        client.progress(done)
-    out = {"rows": done, "snapshot_id": snapshot}
-    if dataset.get("kind", "timeseries") == "timeseries":
-        out["series_added"] = added
-    if notes:
-        out["notes"] = notes[:20]
+def write_timeseries(
+    client: GrantClient,
+    tables: Tables,
+    project: str,
+    name: str,
+    typed: pa.Table,
+    unit: str | None,
+) -> dict:
+    """The rows, in the dataset's unit, upserted in one commit after their new
+    series are added to the series table; then reported."""
+    ts = _described(client, project, name)["timeseries"]
+    source, target = _units(client, project, unit or ts["unit"], ts["unit"])
+    data = typed
+    if source.symbol != target.symbol:
+        i = data.schema.get_field_index("value")
+        data = data.set_column(
+            i, data.schema.field(i), convert(data["value"], source, target)
+        )
+    series = _described(client, project, ts["series_table"])
+    keys = pc.unique(data["series_key"])
+    rows: dict[str, Any] = {"series_key": keys}
+    if ts.get("location_layer"):
+        rows["location_layer"] = pa.array(
+            [ts["location_layer"]] * len(keys), pa.string()
+        )
+    try:
+        new = conform(pa.table(rows), series["columns"])
+    except DataMismatch as exc:
+        raise LoadFailed([f"adding series: {exc}"]) from None
+    added = as_caller(
+        client, series["name"],
+        lambda token: tables.insert_missing(token, project, series["name"], new),
+    )  # fmt: skip
+    out = _commit(client, tables, project, name, data)
+    stamps = pc.strftime(data["value_time"], format="%Y-%m", locale="C")
+    months = sorted(m for m in pc.unique(stamps).to_pylist() if m)
+    if out["snapshot_id"] is not None:
+        report(client, name, "upsert", None, data.num_rows, out["snapshot_id"],
+               months=months, unit=source.symbol, series_added=added)  # fmt: skip
+    return {**out, "series_added": added}
+
+
+def write_layer(
+    client: GrantClient, tables: Tables, project: str, name: str, typed: pa.Table
+) -> dict:
+    out = _commit(client, tables, project, name, typed)
+    if out["snapshot_id"] is not None:
+        report(client, name, "upsert", None, typed.num_rows, out["snapshot_id"])
     return out
+
+
+def _commit(
+    client: GrantClient, tables: Tables, project: str, name: str, data: pa.Table
+) -> dict:
+    result = as_caller(
+        client, name, lambda token: tables.write(token, project, name, data, "upsert")
+    )
+    client.progress(data.num_rows)
+    return {"rows": data.num_rows, "snapshot_id": result.snapshot_id}
+
+
+def write_crosswalk(
+    client: GrantClient, tables: Tables, project: str, name: str, typed: pa.Table
+) -> dict:
+    """The pairs, upserted in one commit; notes on keys not (yet) in their side's
+    series table (reported, not refused: timeseries and their crosswalk can be
+    loaded in either order)."""
+    crosswalk = _described(client, project, name)["crosswalk"]
+    notes = []
+    for side in ("left", "right"):
+        ref = crosswalk[f"{side}_series_table"]
+        keys = pc.unique(typed[f"{side}_key"]).to_pylist()
+        found = _table_of(client, project, ref)
+        if found is None:
+            notes.append(f"{side} series table '{ref}' no longer exists")
+            continue
+        missing = _missing_keys(client, tables, found, "series_key", keys)
+        if missing:
+            notes.append(missing_note(missing, len(keys), f"{side}_key values", ref))
+    out = _commit(client, tables, project, name, typed)
+    if out["snapshot_id"] is not None:
+        report(client, name, "upsert", None, typed.num_rows, out["snapshot_id"],
+               notes=notes or None)  # fmt: skip
+    return {**out, "notes": notes} if notes else out
 
 
 def layer_table(data: pa.Table, mapping: dict, fmt: str) -> pa.Table:
@@ -488,7 +471,9 @@ def register_other(client: GrantClient, project: str, dataset: dict, mapping: di
         raise LoadFailed([f"registering '{dataset['name']}': {_problem(resp)}"])
 
 
-def load_other(client: GrantClient, project: str, upload: dict, data) -> dict:
+def load_other(
+    client: GrantClient, tables: Tables, project: str, upload: dict, data
+) -> dict:
     """Load a layer or crosswalk upload."""
     mapping, dataset = upload["mapping"], upload["dataset"]
     kind = dataset["kind"]
@@ -505,8 +490,12 @@ def load_other(client: GrantClient, project: str, upload: dict, data) -> dict:
     created = not dataset.get("existing")
     if created:
         register_other(client, project, dataset, mapping)
-    return {"dataset": dataset["name"], "created": created,
-            **write(client, project, dataset, typed)}  # fmt: skip
+    written = (
+        write_layer(client, tables, project, dataset["name"], typed)
+        if kind == "layer"
+        else write_crosswalk(client, tables, project, dataset["name"], typed)
+    )
+    return {"dataset": dataset["name"], "created": created, **written}
 
 
 def load_upload(client: GrantClient, task: dict) -> dict:
@@ -520,8 +509,9 @@ def load_upload(client: GrantClient, task: dict) -> dict:
             data = read_file(tmp.name, upload["format"], mapping.get("source_layer"))
         except (pa.ArrowInvalid, OSError, ValueError) as exc:
             raise LoadFailed([f"can't read the file: {exc}"]) from exc
+    tables = open_tables(task)
     if dataset.get("kind", "timeseries") != "timeseries":
-        return load_other(client, project, upload, data)
+        return load_other(client, tables, project, upload, data)
     data = parse_times(data, mapping)
     mapped = (
         unpivot(data, mapping)
@@ -539,10 +529,12 @@ def load_upload(client: GrantClient, task: dict) -> dict:
     result = {
         "dataset": dataset["name"],
         "created": created,
-        **write(client, project, dataset, typed),
+        **write_timeseries(
+            client, tables, project, dataset["name"], typed, dataset.get("unit")
+        ),
     }
     if pairs is not None:
-        notes = set_locations(client, project, dataset, pairs)
+        notes = set_locations(client, tables, project, dataset, pairs)
         result["locations_set"] = pairs.num_rows
         if notes:
             result["notes"] = notes
