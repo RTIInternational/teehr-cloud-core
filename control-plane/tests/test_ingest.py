@@ -649,3 +649,19 @@ def test_a_set_shard_size_reaches_the_job_pod():
     assert "RUN_ROWS_PER_SHARD" not in env(base)  # sized from the pod's memory
     sized = dataclasses.replace(base, run_rows_per_shard=5_000_000)
     assert env(sized)["RUN_ROWS_PER_SHARD"] == "5000000"
+
+
+def test_job_pod_sizing_settings_reach_the_pod():
+    from src.config import Settings
+    from src.kube import job_manifest
+
+    def container(settings):
+        pod = job_manifest(settings, "run", "j" * 36, "tjg_x")["spec"]["template"]
+        return pod["spec"]["containers"][0]
+
+    base = Settings(database_url="sqlite://")
+    assert "cpu" not in container(base)["resources"]["requests"]
+    assert "JOB_THREADS" not in {e["name"] for e in container(base)["env"]}
+    sized = container(dataclasses.replace(base, job_cpu_request="2", job_threads=8))
+    assert sized["resources"]["requests"]["cpu"] == "2"
+    assert {e["name"]: e["value"] for e in sized["env"]}["JOB_THREADS"] == "8"

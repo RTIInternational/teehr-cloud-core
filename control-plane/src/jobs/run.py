@@ -151,7 +151,10 @@ def open_warehouse(client: GrantClient, task: dict) -> Warehouse:
     """The warehouse, read as the caller (tests replace this)."""
     if not task.get("catalog"):
         raise LoadFailed(["the control plane didn't say where the warehouse is"])
-    return Warehouse(CatalogAccess.from_task(task["catalog"]), client.token)
+    threads = int(os.environ.get("JOB_THREADS") or 0) or None
+    return Warehouse(
+        CatalogAccess.from_task(task["catalog"]), client.token, threads=threads
+    )
 
 
 def _observed_keyed(spec: EvaluationSpec) -> set[str]:

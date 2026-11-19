@@ -74,18 +74,23 @@ def job_manifest(
                         "value": settings.internal_url,
                     },
                     *(
-                        [
-                            {
-                                "name": "RUN_ROWS_PER_SHARD",
-                                "value": str(settings.run_rows_per_shard),
-                            }
-                        ]
-                        if settings.run_rows_per_shard
-                        else []
-                    ),  # fmt: skip
+                        {"name": name, "value": str(value)}
+                        for name, value in (
+                            ("RUN_ROWS_PER_SHARD", settings.run_rows_per_shard),
+                            ("JOB_THREADS", settings.job_threads),
+                        )
+                        if value
+                    ),
                 ],
                 "resources": {
-                    "requests": {"memory": settings.job_memory_request},
+                    "requests": {
+                        "memory": settings.job_memory_request,
+                        **(
+                            {"cpu": settings.job_cpu_request}
+                            if settings.job_cpu_request
+                            else {}
+                        ),
+                    },
                     "limits": {"memory": settings.job_memory_limit},
                 },
                 "securityContext": {
