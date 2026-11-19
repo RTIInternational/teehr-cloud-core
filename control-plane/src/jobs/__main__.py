@@ -14,6 +14,7 @@ import traceback
 import httpx
 
 from src.jobs.load import GrantClient, LoadFailed, load_upload
+from src.jobs.logship import ship_logs
 from src.jobs.run import run_evaluation, work_shards
 
 log = logging.getLogger("src.jobs")
@@ -25,6 +26,8 @@ def run(job_id: str) -> int:
     )
     task = client.task()
     index = int(os.environ.get("JOB_COMPLETION_INDEX") or 0)
+    # What the job logs is kept with it too (GET .../runs/{id}/logs).
+    shipped = ship_logs(client, os.environ.get("HOSTNAME"))
     if task["kind"] == "run" and index > 0:
         # Another pod of a run (ADR-0017): work its shards; pod 0 reports the run.
         log.info("job %s: pod %d works the run's shards", job_id, index)
@@ -34,6 +37,8 @@ def run(job_id: str) -> int:
             if exc.response.status_code != 401:
                 raise
             log.info("the run has ended")  # its grant stopped working
+        finally:
+            shipped.close()
         return 0
     log.info("job %s: %s in %s", job_id, task["kind"], task["project"])
     try:
@@ -45,15 +50,23 @@ def run(job_id: str) -> int:
             raise LoadFailed([f"unknown job kind '{task['kind']}'"])
     except LoadFailed as exc:
         log.warning("job %s failed: %s", job_id, exc)
+        shipped.close()  # before the outcome: the grant stops working then
         client.finish("failed", problems=exc.problems, error=str(exc)[:10_000])
         return 0
-    except Exception as exc:  # report anything unexpected, then show it in the log
-        traceback.print_exc()
+    except Exception as exc:  # report anything unexpected, with its traceback
+        log.exception("job %s failed", job_id)
+        shipped.close()
         client.finish("failed", error=f"{type(exc).__name__}: {exc}"[:10_000])
         return 0
-    log.info("job %s succeeded: %s", job_id, result)
+    log.info("job %s succeeded: %s", job_id, _brief(result))
+    shipped.close()
     client.finish("succeeded", result=result)
     return 0
+
+
+def _brief(result: dict) -> dict:
+    """The result, without its per-table read counts (long; they're in the run)."""
+    return {k: v for k, v in result.items() if k != "reads"}
 
 
 def main(argv: list[str]) -> int:

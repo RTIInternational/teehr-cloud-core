@@ -26,6 +26,8 @@ OPERATION_IDS = {
     "list_tokens",
     "revoke_token",
     "read_run_results",
+    "read_run_logs",
+    "read_upload_logs",
     "create_project",
     "list_projects",
     "get_project",

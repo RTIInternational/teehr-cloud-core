@@ -1157,6 +1157,71 @@
         "title": "LayerOut",
         "type": "object"
       },
+      "LogLineOut": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Pass as `after` to read the lines that follow",
+            "title": "Id",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pod": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The job's pod that logged it",
+            "title": "Pod"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "level",
+          "pod",
+          "message"
+        ],
+        "title": "LogLineOut",
+        "type": "object"
+      },
+      "LogsOut": {
+        "properties": {
+          "ended": {
+            "description": "The run or load has ended: once read past, no more lines will come",
+            "title": "Ended",
+            "type": "boolean"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/LogLineOut"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines",
+          "ended"
+        ],
+        "title": "LogsOut",
+        "type": "object"
+      },
       "MemberAdd": {
         "additionalProperties": false,
         "properties": {
@@ -6839,6 +6904,117 @@
         ]
       }
     },
+    "/v1/projects/{name}/runs/{run_id}/logs": {
+      "get": {
+        "description": "A run's log: its plan, each shard (from every pod), its writes and outcome,\noldest first. Poll with ``after`` (the last line's ``id``) to follow it until\n``ended``. Needs the read role.",
+        "operationId": "read_run_logs",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only lines after this one (its `id`)",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only lines after this one (its `id`)",
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read Run Logs",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
     "/v1/projects/{name}/runs/{run_id}/results": {
       "get": {
         "description": "A succeeded run's results: its rows of its version's results table (which\nkeeps every run's), paged as reading a dataset. With ``output.geometry`` each\nrow gets its place: GeoJSON geometry in JSON rows, a feature collection for\n``Accept: application/geo+json``, GeoParquet / GeoArrow for Parquet and Arrow.\nNeeds the read role.",
@@ -7863,6 +8039,119 @@
           }
         ],
         "summary": "Inspect Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/v1/projects/{name}/uploads/{upload_id}/logs": {
+      "get": {
+        "description": "A load's log, oldest first. Poll with ``after`` (the last line's ``id``) to\nfollow it until ``ended``. Needs the read role.",
+        "operationId": "read_upload_logs",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Upload id",
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "description": "Upload id",
+              "format": "uuid",
+              "title": "Upload Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only lines after this one (its `id`)",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only lines after this one (its `id`)",
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read Upload Logs",
         "tags": [
           "uploads"
         ]

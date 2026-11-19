@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src import sessions, shards
+from src import job_logs, sessions, shards
 from src.config import Settings
 from src.dataset_types import TABLE
 from src.delegation import (
@@ -171,6 +171,24 @@ def progress(body: Progress, job: JobDep, session: SessionDep) -> Response:
     if upload is not None:
         upload.rows_done = body.rows_done
         session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class LogLine(BaseModel):
+    at: datetime
+    level: str = Field(max_length=16)
+    message: str = Field(max_length=10_000)
+
+
+class Logs(BaseModel):
+    pod: str | None = Field(default=None, max_length=255)
+    lines: list[LogLine] = Field(max_length=1000)
+
+
+@router.post("/logs", status_code=status.HTTP_204_NO_CONTENT)
+def logs(body: Logs, job: JobDep, session: SessionDep) -> Response:
+    """Keep lines the job's pod logged (up to a limit per job)."""
+    job_logs.add(session, job.id, body.pod, [line.model_dump() for line in body.lines])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

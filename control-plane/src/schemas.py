@@ -830,3 +830,23 @@ class IngestRequest(StrictInput):
             if left:
                 raise ValueError(f"replace the placeholders: {', '.join(left)}")
         return data
+
+
+# --- job logs -----------------------------------------------------------------
+
+
+class LogLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(description="Pass as `after` to read the lines that follow")
+    at: datetime
+    level: str
+    pod: str | None = Field(description="The job's pod that logged it")
+    message: str
+
+
+class LogsOut(BaseModel):
+    lines: list[LogLineOut]
+    ended: bool = Field(
+        description="The run or load has ended: once read past, no more lines will come"
+    )
