@@ -3,16 +3,16 @@
 import httpx
 import pytest
 
-from src.jobs import load
-from src.jobs.load import GrantClient
+from src.jobs import grant
+from src.jobs.grant import GrantClient
 
 
 @pytest.fixture(autouse=True)
 def clock(monkeypatch):
     """Sleeping advances a fake clock instantly."""
     now = [0.0]
-    monkeypatch.setattr(load.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(load.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
+    monkeypatch.setattr(grant.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(grant.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
     return now
 
 

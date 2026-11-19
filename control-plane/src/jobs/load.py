@@ -9,13 +9,11 @@
    (ADR-0016): units converted, new series added to the series table, the rows
    upserted. The commit is reported to the control plane, which records it in the
    dataset's write history as for any other write. A load that fails leaves the
-   dataset as it was (new series apart). Crosswalks and series locations are a
-   row per location and still go through ``POST .../data``: their notes need the
-   control plane's records.
+   dataset as it was (new series apart). Each series' location, when the file
+   gives one, is then set in the series table, the same way.
 """
 
 import tempfile
-import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -31,13 +29,13 @@ from src.geofiles import GEO_FORMATS, SUFFIX, WGS84, points, read_geo, to_wgs84
 from src.geometry import prepare_layer
 from src.jobs.grant import GrantClient, LoadFailed, _problem
 from src.jobs.writes import as_caller, open_tables, report
+from src.notes import missing_note
+from src.refs import split
 from src.tables import DataMismatch, Tables, conform, duplicate_keys
 from src.uploads import read_csv_text
 
 __all__ = ["GrantClient", "LoadFailed", "load_upload"]
 
-ARROW = "application/vnd.apache.arrow.stream"
-CHUNK_BYTES = 48 * 1024 * 1024  # under the API's 64 MiB write limit
 STRING_TARGETS = ("series_key", "member", "quality")
 
 
@@ -146,23 +144,78 @@ def locations(data: pa.Table, mapping: dict) -> pa.Table | None:
 
 
 def set_locations(
-    client: GrantClient, project: str, dataset: dict, pairs: pa.Table
+    client: GrantClient, tables: Tables, project: str, dataset: dict, pairs: pa.Table
 ) -> list[str]:
-    """Write each series' location key to the dataset's series table (other
-    series attributes are kept); returns the write's notes."""
-    resp = client.api("GET", f"/projects/{project}/datasets/{dataset['name']}")
+    """Write each series' location key to the dataset's series table, as the
+    caller (other series attributes are kept); returns notes on location keys that
+    aren't in the series' layer."""
+    ts = _described(client, project, dataset["name"])["timeseries"]
+    series = _described(client, project, ts["series_table"])
+    name = series["name"]
+    provided = list(pairs.column_names)
+    try:
+        data = conform(pairs, series["columns"])
+    except DataMismatch as exc:
+        raise LoadFailed([f"setting location keys: {exc}"]) from None
+    notes = _location_notes(client, tables, project, name, pairs)
+    result = as_caller(
+        client, name,
+        lambda token: tables.merge(token, project, name, data,
+                                   series["key_columns"], provided),
+    )  # fmt: skip
+    if result.snapshot_id is not None:
+        report(client, name, "upsert", None, data.num_rows, result.snapshot_id,
+               notes=notes or None)  # fmt: skip
+    return notes
+
+
+def _location_notes(
+    client: GrantClient, tables: Tables, project: str, series: str, pairs: pa.Table
+) -> list[str]:
+    """Location keys not in the layer of the timeseries using this series table
+    (when they share one), as writes to it report them."""
+    resp = client.api("GET", f"/projects/{project}/datasets")
     if resp.status_code != 200:
-        raise LoadFailed([f"dataset '{dataset['name']}': {_problem(resp)}"])
-    series = resp.json()["timeseries"]["series_table"]
-    resp = client.api(
-        "POST",
-        f"/projects/{project}/datasets/{series}/data",
-        content=arrow_bytes(pairs),
-        headers={"Content-Type": ARROW},
-    )
-    if resp.status_code != 201:
-        raise LoadFailed([f"setting location keys: {_problem(resp)}"])
-    return resp.json().get("notes") or []
+        raise LoadFailed([f"datasets: {_problem(resp)}"])
+    layers = {
+        d["timeseries"].get("location_layer")
+        for d in resp.json()
+        if d.get("timeseries") and d["timeseries"].get("series_table") == series
+    } - {None}
+    if len(layers) != 1:
+        return []
+    ref = layers.pop()
+    layer = _table_of(client, project, ref)
+    if layer is None or layer["kind"] != "layer":
+        raise LoadFailed([f"'{ref}' is not a layer"])
+    wanted = sorted(set(pairs["location_key"].to_pylist()) - {None})
+    missing = _missing_keys(client, tables, layer, "location_key", wanted)
+    return [missing_note(missing, len(wanted), "location keys", ref)] if missing else []
+
+
+def _table_of(client: GrantClient, project: str, ref: str) -> dict | None:
+    """The dataset a reference names (``<name>`` or ``public.<name>``), or None."""
+    owner, name = split(ref)
+    resp = client.api("GET", f"/projects/{owner or project}/datasets/{name}")
+    if resp.status_code == 404:
+        return None
+    if resp.status_code != 200:
+        raise LoadFailed([f"dataset '{ref}': {_problem(resp)}"])
+    return resp.json()
+
+
+def _missing_keys(
+    client: GrantClient, tables: Tables, dataset: dict, column: str, values: list
+) -> list[str]:
+    """Which of ``values`` aren't in the dataset's ``column``, read as the caller."""
+    if not values:
+        return []
+    namespace, name = dataset["table"].split(".", 1)
+    present = as_caller(
+        client, name,
+        lambda token: tables.existing_keys(token, namespace, name, column, values),
+    )  # fmt: skip
+    return sorted(set(values) - present)
 
 
 def target_columns(client: GrantClient, project: str, dataset: dict) -> list[dict]:
@@ -216,20 +269,6 @@ def register(client: GrantClient, project: str, dataset: dict) -> None:
     resp = client.api("POST", f"/projects/{project}/datasets", json=body)
     if resp.status_code != 201:
         raise LoadFailed([f"registering '{dataset['name']}': {_problem(resp)}"])
-
-
-def chunks(table: pa.Table):
-    per_row = max(1, table.nbytes // max(1, table.num_rows))
-    size = max(1, CHUNK_BYTES // per_row)
-    for start in range(0, table.num_rows, size):
-        yield table.slice(start, size)
-
-
-def arrow_bytes(table: pa.Table) -> bytes:
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema) as writer:
-        writer.write_table(table)
-    return sink.getvalue().to_pybytes()
 
 
 def _described(client: GrantClient, project: str, name: str) -> dict:
@@ -319,42 +358,29 @@ def _commit(
     return {"rows": data.num_rows, "snapshot_id": result.snapshot_id}
 
 
-def write(client: GrantClient, project: str, dataset: dict, typed: pa.Table) -> dict:
-    """Through ``POST .../data``, in chunks under the request size limit (each its
-    own write): for crosswalks, whose notes need the control plane's records."""
-    path = f"/projects/{project}/datasets/{dataset['name']}/data"
-    done = added = 0
-    snapshot = None
-    notes: list[str] = []
-    params = {"mode": "upsert"}
-    if dataset.get("unit"):
-        params["unit"] = dataset["unit"]
-    for chunk in chunks(typed):
-        for attempt in range(4):
-            resp = client.api(
-                "POST",
-                path,
-                params=params,
-                content=arrow_bytes(chunk),
-                headers={"Content-Type": ARROW},
-            )
-            if resp.status_code != 409 or attempt == 3:
-                break
-            time.sleep(2**attempt)  # another write committed first
-        if resp.status_code != 201:
-            raise LoadFailed([f"after {done} rows, writing failed: {_problem(resp)}"])
-        body = resp.json()
-        done += chunk.num_rows
-        added += body.get("series_added") or 0
-        snapshot = body.get("snapshot_id")
-        notes += [n for n in body.get("notes") or [] if n not in notes]
-        client.progress(done)
-    out = {"rows": done, "snapshot_id": snapshot}
-    if dataset.get("kind", "timeseries") == "timeseries":
-        out["series_added"] = added
-    if notes:
-        out["notes"] = notes[:20]
-    return out
+def write_crosswalk(
+    client: GrantClient, tables: Tables, project: str, name: str, typed: pa.Table
+) -> dict:
+    """The pairs, upserted in one commit; notes on keys not (yet) in their side's
+    series table (reported, not refused: timeseries and their crosswalk can be
+    loaded in either order)."""
+    crosswalk = _described(client, project, name)["crosswalk"]
+    notes = []
+    for side in ("left", "right"):
+        ref = crosswalk[f"{side}_series_table"]
+        keys = pc.unique(typed[f"{side}_key"]).to_pylist()
+        found = _table_of(client, project, ref)
+        if found is None:
+            notes.append(f"{side} series table '{ref}' no longer exists")
+            continue
+        missing = _missing_keys(client, tables, found, "series_key", keys)
+        if missing:
+            notes.append(missing_note(missing, len(keys), f"{side}_key values", ref))
+    out = _commit(client, tables, project, name, typed)
+    if out["snapshot_id"] is not None:
+        report(client, name, "upsert", None, typed.num_rows, out["snapshot_id"],
+               notes=notes or None)  # fmt: skip
+    return {**out, "notes": notes} if notes else out
 
 
 def layer_table(data: pa.Table, mapping: dict, fmt: str) -> pa.Table:
@@ -467,7 +493,7 @@ def load_other(
     written = (
         write_layer(client, tables, project, dataset["name"], typed)
         if kind == "layer"
-        else write(client, project, dataset, typed)
+        else write_crosswalk(client, tables, project, dataset["name"], typed)
     )
     return {"dataset": dataset["name"], "created": created, **written}
 
@@ -508,7 +534,7 @@ def load_upload(client: GrantClient, task: dict) -> dict:
         ),
     }
     if pairs is not None:
-        notes = set_locations(client, project, dataset, pairs)
+        notes = set_locations(client, tables, project, dataset, pairs)
         result["locations_set"] = pairs.num_rows
         if notes:
             result["notes"] = notes

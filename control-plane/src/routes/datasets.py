@@ -85,6 +85,7 @@ from src.models import (
     Unit,
     Variable,
 )
+from src.notes import missing_note
 from src.paging import BadCursor, decode_cursor, encode_cursor, fingerprint
 from src.refs import qualify, referrers, resolve
 from src.routes.projects import (
@@ -933,11 +934,6 @@ def _missing(
     return sorted(set(values) - present)
 
 
-def _note(missing: list[str], total: int, what: str, where: str) -> str:
-    examples = ", ".join(missing[:5]) + (", ..." if len(missing) > 5 else "")
-    return f"{len(missing)} of {total} {what} aren't in {where}: {examples}"
-
-
 def _crosswalk_notes(
     session: Session,
     project: Project,
@@ -960,7 +956,7 @@ def _crosswalk_notes(
             tables, identity, found.namespace, found.dataset.name, "series_key", keys
         )
         if missing:
-            notes.append(_note(missing, len(keys), f"{side}_key values", ref))
+            notes.append(missing_note(missing, len(keys), f"{side}_key values", ref))
     return notes
 
 
@@ -1024,7 +1020,7 @@ def _location_notes(
             sorted(wanted),
         )
         if missing:
-            notes.append(_note(missing, len(wanted), "location keys", ref))
+            notes.append(missing_note(missing, len(wanted), "location keys", ref))
     return notes
 
 

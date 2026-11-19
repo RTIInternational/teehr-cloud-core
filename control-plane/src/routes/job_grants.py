@@ -333,10 +333,12 @@ class WriteReport(BaseModel):
     months: list[str] | None = Field(default=None, max_length=100_000)
     unit: str | None = Field(default=None, max_length=64)
     series_added: int | None = Field(default=None, ge=0)
+    notes: list[str] | None = Field(default=None, max_length=100)
 
 
 def _job_datasets(session: Session, job: Job) -> set[str]:
-    """The datasets a job writes: its run's tables, or its upload's dataset."""
+    """The datasets a job writes: its run's tables, or its upload's dataset (and
+    that dataset's series table, for a timeseries)."""
     if job.kind == "run":
         run = _run(session, job)
         if run is not None and run.task:
@@ -345,7 +347,14 @@ def _job_datasets(session: Session, job: Job) -> set[str]:
     if job.kind == "upload":
         upload = _upload(session, job)
         if upload is not None and upload.dataset:
-            return {upload.dataset["name"]}
+            name = upload.dataset["name"]
+            record = session.scalar(
+                select(Dataset).where(
+                    Dataset.project_id == job.project_id, Dataset.name == name
+                )
+            )
+            series = record and (record.properties or {}).get("series_table")
+            return {name, series} - {None}
     return set()
 
 
@@ -405,6 +414,7 @@ def record_write(
             months=body.months,
             unit=body.unit,
             series_added=body.series_added,
+            notes=body.notes,
             snapshot_id=body.snapshot_id,
             written_by=job.created_by,
         )

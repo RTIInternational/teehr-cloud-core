@@ -464,10 +464,7 @@ def test_load_registers_and_writes_as_the_caller(client, staging, jobs, tables):
     assert upload["status"] == "succeeded" and upload["rows_done"] == 3
 
 
-def test_load_is_one_commit_however_big(client, staging, jobs, tables, monkeypatch):  # noqa: F811
-    from src.jobs import load
-
-    monkeypatch.setattr(load, "CHUNK_BYTES", 1)  # the old path's chunk per row
+def test_load_is_one_commit(client, staging, jobs, tables):  # noqa: F811
     kube, _ = jobs
     ingest(client, inspected(client, staging))
     assert run_load(client, staging, kube)["rows"] == 3
@@ -557,6 +554,13 @@ def test_load_sets_each_series_location(client, staging, jobs, tables):  # noqa:
     series = tables.rows[("flood", "obs_series")]
     assert series["01010000"]["location_key"] == "01010000"
     assert series["01010000"]["location_layer"] == "gauges"
+    # Set in the job and recorded as a write to the series table, with its note.
+    writes = client.get(
+        "/v1/projects/flood/datasets/obs_series/writes", headers=ALICE
+    ).json()
+    assert [(w["mode"], w["notes"], w["written_by"]) for w in writes] == [
+        ("upsert", result["notes"], "alice")
+    ]
 
 
 def test_location_keys_need_a_layer(client, staging, jobs):
