@@ -196,6 +196,34 @@ class DelegatedSession(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class PersonalToken(Base):
+    """A user's token for scripts, CI and the CLI (ADR-0018): a bearer secret
+    (stored hashed) that acts as them through an offline delegated session, within
+    its scopes (``read``, ``write``) and, if set, its projects."""
+
+    __tablename__ = "personal_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100))
+    subject: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str | None] = mapped_column(String(255))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # The start of the secret, to tell tokens apart in a list.
+    hint: Mapped[str] = mapped_column(String(16))
+    scopes: Mapped[list[str]] = mapped_column(JSON)
+    projects: Mapped[list[str] | None] = mapped_column(JSON)
+    session_id: Mapped[uuid.UUID] = mapped_column(_fk("delegated_sessions"))
+    session: Mapped[DelegatedSession] = relationship()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Job(Base):
     """Work a user started through the API, run as a Kubernetes Job (ADR-0014).
 

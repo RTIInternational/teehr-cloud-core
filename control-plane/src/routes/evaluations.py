@@ -475,6 +475,7 @@ def start_run(
             session, settings, kube, delegation, sealer,
             kind="run", project=project,
             caller=identity.subject, caller_token=identity.token,
+            caller_session=identity.session_id,
         )  # fmt: skip
     except JobRefused as exc:
         session.rollback()
