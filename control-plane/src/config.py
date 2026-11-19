@@ -99,6 +99,9 @@ class Settings:
     # Predicted rows a run's shard holds; None = sized from the job's memory.
     run_rows_per_shard: int | None = None
     job_ttl_seconds: int = 86_400
+    # A run shard whose pod hasn't sent a heartbeat for this long is claimed again
+    # (longer than a control-plane restart plus the job client's retries).
+    shard_heartbeat_lapse_seconds: int = 300
     # Jobs one project may have queued or running at once.
     max_active_jobs_per_project: int = 2
     internal_url: str = "http://teehr-control-plane:8000"
@@ -197,6 +200,9 @@ def get_settings() -> Settings:
         job_threads=int(os.getenv("JOB_THREADS") or 0) or None,
         run_rows_per_shard=int(os.getenv("RUN_ROWS_PER_SHARD") or 0) or None,
         job_ttl_seconds=int(os.getenv("JOB_TTL_SECONDS") or 86_400),
+        shard_heartbeat_lapse_seconds=int(
+            os.getenv("SHARD_HEARTBEAT_LAPSE_SECONDS") or 300
+        ),
         max_active_jobs_per_project=int(os.getenv("MAX_ACTIVE_JOBS_PER_PROJECT") or 2),
         internal_url=os.getenv("CONTROL_PLANE_INTERNAL_URL")
         or "http://teehr-control-plane:8000",

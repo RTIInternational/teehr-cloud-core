@@ -34,6 +34,7 @@ import os
 import re
 import resource
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
@@ -341,6 +342,20 @@ class Inputs:
                 )  # fmt: skip
         return rows, series
 
+    def pin(self) -> None:
+        """Pin every input (datasets, their series, location layers) to its current
+        snapshot, so every pod of the run reads the same data (ADR-0017)."""
+        refs = []
+        for d in self.manifest["datasets"].values():
+            refs.append((d["project"], d["name"]))
+            if d.get("series"):
+                refs.append((d["series"]["project"], d["series"]["name"]))
+        refs += [
+            (x["project"], x["name"]) for x in self.manifest.get("location_layers", [])
+        ]
+        for project, name in refs:
+            self.wh.pin(project, name)
+
     def snapshots(self) -> dict[str, int | None]:
         """The snapshot each input was read at (keyed ``<project>.<name>``)."""
         refs = []
@@ -514,7 +529,7 @@ def _parquet_bytes(table: pa.Table) -> bytes:
 
 
 class ShardOutputs:
-    """What a run's shards make, kept outside the pod that made it (ADR-0017):
+    r"""What a run's shards make, kept outside the pod that made it (ADR-0017):
 
     - **pairs**, as Parquet files in the pairs table's location, not yet part of it;
       :meth:`commit_pairs` adds them all in one commit (replacing what the run
@@ -523,27 +538,27 @@ class ShardOutputs:
       URLs to put and get them); :meth:`state_parts` reads them back to merge.
 
     Files are named by run, shard and attempt, so a retried shard's files never mix
-    with an abandoned try's. :meth:`discard` deletes what wasn't committed.
+    with an abandoned try's. Any pod writes them; pod 0 :meth:`adopt`\ s what the
+    queue says the shards wrote, then commits. :meth:`discard` deletes what wasn't
+    committed.
     """
 
-    def __init__(
-        self, client: GrantClient, tables: Tables, project: str, run: dict,
-        attempt: int = 1,
-    ):  # fmt: skip
+    def __init__(self, client: GrantClient, tables: Tables, project: str, run: dict):
         self.client, self.tables, self.project, self.run = client, tables, project, run
-        self.attempt = attempt
         self.pairs_dataset: str | None = None
         self.pairs_columns: list[dict] = []
         self.pair_files: list[str] = []
         self.pair_rows = 0
         self.state_names: list[str] = []
 
-    def _name(self, index: int) -> str:
-        return f"shard-{index:05d}-a{self.attempt}.parquet"
+    @staticmethod
+    def _name(index: int, attempt: int) -> str:
+        return f"shard-{index:05d}-a{attempt}.parquet"
 
-    def add_pairs(self, index: int, pairs: pa.Table) -> None:
+    def add_pairs(self, index: int, attempt: int, pairs: pa.Table) -> dict:
+        """Write a shard's pairs as a file; what it wrote (for the queue)."""
         if pairs.num_rows == 0:
-            return
+            return {}
         rows, columns = typed(pairs, self.run)
         if self.pairs_dataset is None:
             self.pairs_dataset = run_table(self.client, "pairs", columns)
@@ -553,20 +568,44 @@ class ShardOutputs:
             data = conform(rows, columns, None)
         except DataMismatch as exc:
             raise LoadFailed([f"writing {name}: {exc}"]) from None
-        file_name = f"run-{self.run['id']}/{self._name(index)}"
+        file_name = f"run-{self.run['id']}/{self._name(index, attempt)}"
         path = _as_caller(
             self.client, name,
             lambda token: self.tables.write_file(token, self.project, name, data,
                                                  file_name),
         )  # fmt: skip
         self.pair_files.append(path)
-        self.pair_rows += data.num_rows
+        return {"pairs": path, "pair_rows": data.num_rows, "pairs_dataset": name,
+                "pairs_columns": columns}  # fmt: skip
 
-    def add_state(self, index: int, part: pa.Table) -> None:
-        name = f"state/{self._name(index)}"
+    def add_state(self, index: int, attempt: int, part: pa.Table) -> str:
+        """Put a shard's state part in the run's work files; its name."""
+        name = f"state/{self._name(index, attempt)}"
         url = self._urls(put=[name])["put"][name]
         self.client.put(url, _parquet_bytes(part))
-        self.state_names.append(name)
+        return name
+
+    def drop(self, out: dict) -> None:
+        """Delete the pairs file of an attempt that lost its shard."""
+        path = out.get("pairs")
+        if path and out.get("pairs_dataset"):
+            try:
+                self.tables.delete_files(self.client.token(), self.project,
+                                         out["pairs_dataset"], [path])  # fmt: skip
+            except Exception:  # noqa: BLE001 - orphan cleanup catches it
+                log.warning("couldn't delete %s", path)
+        if path in self.pair_files:
+            self.pair_files.remove(path)
+
+    def adopt(self, outs: list[dict]) -> None:
+        """Take over what the shards wrote (pod 0, before committing)."""
+        with_pairs = [o for o in outs if o.get("pairs")]
+        self.pair_files = [o["pairs"] for o in with_pairs]
+        self.pair_rows = sum(o["pair_rows"] for o in with_pairs)
+        if with_pairs:
+            self.pairs_dataset = with_pairs[0]["pairs_dataset"]
+            self.pairs_columns = with_pairs[0]["pairs_columns"]
+        self.state_names = [o["state"] for o in outs if o.get("state")]
 
     def state_parts(self) -> list[pa.Table]:
         if not self.state_names:
@@ -948,10 +987,23 @@ def _evaluate(
         }
     inputs = Inputs(wh, manifest, parsed, spec, windows)
 
-    # Shards: ranges of observed series keys, when the run keeps state (each shard's
-    # state merges); otherwise one read of everything.
+    if not stateful:  # one read of everything, no shards
+        rows, series = inputs.load(None)
+        labels = location_labels(inputs.whole, manifest, parsed, rows, series)
+        pairs = DuckDBBackend(dm=dm).pairs(
+            build_plan(parsed, catalog_from(manifest, rows, series, labels))
+        )
+        del rows, series
+        stages = DuckDBBackend(dm=dm).aggregate(parsed, pairs)
+        out = {}
+        if run.get("pairs") and pairs.num_rows:
+            out["pairs"] = store(client, tables, project, "pairs", pairs, run)
+        out = {**store(client, tables, project, "results", stages[-1], run), **out}
+        return _finished(out, how, inputs, wh, dirty)
+
+    # Shards: ranges of observed series keys (each shard's state merges).
+    keys = inputs.shard_keys()
     shards: list[Sequence[str] | None] = [None]
-    keys = inputs.shard_keys() if stateful else None
     if keys:
         predicted_rows = inputs.predicted_rows()
         shards = list(key_ranges(keys, predicted_rows / len(keys), rows_per_shard()))
@@ -961,107 +1013,266 @@ def _evaluate(
         )  # fmt: skip
     if dirty == set():
         shards = []  # nothing changed: the stored state is the state
+    preloaded: dict[int, tuple] = {}
+    if shards and not incremental and dm_test:
+        # The test's settings come from the predicted rows' time step: the first
+        # shard's, kept for this pod to run it (it claims shard 0 first).
+        rows, series = inputs.load(shards[0])
+        preloaded[0] = (rows, series)
+        predicted = [rows[r] for r in _predicted(parsed) if r in rows]
+        n = (
+            inputs.predicted_rows()
+            if shards[0] is not None
+            else sum(t.num_rows for t in predicted)
+        )
+        lags = skill.lag if skill.lag is not None else default_lag(4 * max(n, 1))
+        dm = DmSettings(_time_step(predicted) or 3600, lags)
+        del rows, series, predicted
 
-    backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
-    all_pairs: pa.Table | None = None
-    pairs_out: dict | None = None
-    counted = months_sql(dirty) if incremental else None
-    for i, shard in enumerate(shards):
-        started = time.monotonic()
-        rows, series = inputs.load(shard)
-        rows_read = sum(t.num_rows for t in rows.values())
-        if i == 0 and stateful and not incremental and dm_test:
-            predicted = [rows[r] for r in _predicted(parsed) if r in rows]
-            n = (
-                inputs.predicted_rows()
-                if shard is not None
-                else sum(t.num_rows for t in predicted)
-            )
-            lags = skill.lag if skill.lag is not None else default_lag(4 * max(n, 1))
-            dm = DmSettings(_time_step(predicted) or 3600, lags)
-            backend = DuckDBBackend(dm=dm, finest_set_only=stateful)
-        if stateful and not incremental:
-            p_reach = max(p_reach, _reach(parsed, rows))
-        elif incremental and _persistence(parsed) and _reach(parsed, rows) > p_reach:
-            raise _Full(
-                "persistence forecasts now reach further than the stored state allows"
-            )
-        labels = location_labels(inputs.whole, manifest, parsed, rows, series)
-        catalog = catalog_from(manifest, rows, series, labels)
-        del rows, series
-        pairs = backend.pairs(build_plan(parsed, catalog))
-        del catalog
-        log.info(
-            "shard %d/%d: %s observed series, %d rows read, %d pairs, %.1fs, "
-            "peak memory %.0f MB", i + 1, len(shards),
-            "all" if shard is None else len(shard), rows_read, pairs.num_rows,
-            time.monotonic() - started, peak_memory_mb(),
-        )  # fmt: skip
-        if not stateful:
-            all_pairs = pairs
-            break
-        if pairs.num_rows:
-            outputs.add_state(
-                i, backend.first_stage_state(parsed, pairs, STATE_BUCKET, counted)
-            )
-            if incremental:  # the pairs this run is for (the rest were lag partners)
-                pairs = _sql(pairs, f"SELECT * FROM t WHERE {counted}")
-        if run.get("pairs"):
-            outputs.add_pairs(i, pairs)
-        del pairs
+    inputs.pin()  # every pod reads what pod 0 planned against
+    plan = {
+        "mode": how["mode"],
+        "dirty": sorted(dirty) if dirty is not None else None,
+        "windows": windows,
+        "dm": {"step": dm.step, "max_lag": dm.max_lag} if dm else None,
+        "p_reach": int(p_reach.total_seconds()),
+        "snapshots": dict(wh.snapshots),
+    }
+    queue = ShardQueue(client)
+    queue.put(plan, shards)
+    work = ShardWork(client, tables, task, plan, wh, outputs, inputs, preloaded)
+    queue.work(work)
 
-    state = None
-    if stateful:
-        fresh = merge_shards(parsed, outputs.state_parts())
-        if not incremental:
-            state = fresh
-        else:  # the stored state, its changed months replaced
-            kept = stored.filter(
-                pc.invert(
-                    pc.is_in(
-                        _months_of(stored["__bucket"]),
-                        pa.array(sorted(dirty), pa.string()),
-                    )
+    # Every shard done: merge their state, then commit.
+    outs = queue.outputs()
+    outputs.adopt(outs)
+    if not incremental:
+        reaches = [o.get("reach") or 0 for o in outs]
+        p_reach = max([p_reach, *(timedelta(seconds=r) for r in reaches)])
+    fresh = merge_shards(parsed, outputs.state_parts())
+    if not incremental:
+        state = fresh
+    else:  # the stored state, its changed months replaced
+        kept = stored.filter(
+            pc.invert(
+                pc.is_in(
+                    _months_of(stored["__bucket"]),
+                    pa.array(sorted(dirty), pa.string()),
                 )
             )
-            pieces = [t for t in (kept, fresh) if t is not None and t.num_rows]
-            state = (
-                pa.concat_tables(pieces, promote_options="permissive")
-                if pieces
-                else kept
-            )
-        if state is None:
-            raise PlanError("the evaluation produced no pairs")
-        stages = backend.summarize(
-            parsed, first_stage_from_state(backend, parsed, state)
         )
-    else:
-        stages = backend.aggregate(parsed, all_pairs)
-        if run.get("pairs") and all_pairs is not None and all_pairs.num_rows:
-            pairs_out = store(client, tables, project, "pairs", all_pairs, run)
+        pieces = [t for t in (kept, fresh) if t is not None and t.num_rows]
+        state = (
+            pa.concat_tables(pieces, promote_options="permissive") if pieces else kept
+        )
+    if state is None:
+        raise PlanError("the evaluation produced no pairs")
+    backend = DuckDBBackend(dm=dm, finest_set_only=True)
+    stages = backend.summarize(parsed, first_stage_from_state(backend, parsed, state))
 
-    if stateful:  # computed: now the shards' pairs, in one commit
-        pairs_out = outputs.commit_pairs(months_filter(dirty) if incremental else None)
+    # Computed: now the shards' pairs, in one commit, then results and state.
+    pairs_out = outputs.commit_pairs(months_filter(dirty) if incremental else None)
     out = store(client, tables, project, "results", stages[-1], run)
     if pairs_out is not None:
         out["pairs"] = pairs_out
-    if state is not None:
-        out["state"] = {
-            **store(client, tables, project, "state", encode_state(state), run),
-            "bucket": STATE_BUCKET,
-        }
-        if dm is not None and dm_test:
-            out["dm"] = {"step": dm.step, "max_lag": dm.max_lag}
-        if _persistence(parsed):
-            out["persistence_reach"] = int(p_reach.total_seconds())
-    out["inputs"] = inputs.snapshots()
+    out["state"] = {
+        **store(client, tables, project, "state", encode_state(state), run),
+        "bucket": STATE_BUCKET,
+    }
+    if dm is not None and dm_test:
+        out["dm"] = {"step": dm.step, "max_lag": dm.max_lag}
+    if _persistence(parsed):
+        out["persistence_reach"] = int(p_reach.total_seconds())
     if keys:
         out["shards"] = len(shards)
+    return _finished(out, how, inputs, wh, dirty)
+
+
+def _finished(
+    out: dict, how: dict, inputs: Inputs, wh: Warehouse, dirty: set[str] | None
+) -> dict:
+    """The run's result: what it wrote, read, and how it went (full, incremental)."""
+    out["inputs"] = inputs.snapshots()
     out["reads"] = wh.read_stats()
-    if incremental:
+    if how["mode"] == "incremental":
         out["changed"] = how["months"]
         how = {**how, "months": sorted(dirty)}
     return {**out, **{k: how[k] for k in ("mode", "why", "months") if k in how}}
+
+
+class ShardWork:
+    """Runs one shard of a run, in any of its pods, from the task and pod 0's plan
+    (ADR-0017): reads the shard's series at the plan's snapshots, pairs them, and
+    writes its state part and pairs (``ShardOutputs``); returns what it wrote."""
+
+    def __init__(
+        self, client: GrantClient, tables: Tables, task: dict, plan: dict,
+        wh: Warehouse, outputs: ShardOutputs, inputs: Inputs | None = None,
+        preloaded: dict[int, tuple] | None = None,
+    ):  # fmt: skip
+        self.run = task["run"]
+        self.manifest, spec = self.run["manifest"], self.run["spec"]
+        self.parsed = load_spec(spec)
+        self.incremental = plan["mode"] == "incremental"
+        dirty = set(plan["dirty"]) if plan.get("dirty") is not None else None
+        self.counted = months_sql(dirty) if self.incremental else None
+        self.p_reach = timedelta(seconds=plan.get("p_reach") or 0)
+        wh.snapshots.update(plan.get("snapshots") or {})
+        self.inputs = inputs or Inputs(wh, self.manifest, self.parsed, spec,
+                                       plan.get("windows"))  # fmt: skip
+        dm = DmSettings(**plan["dm"]) if plan.get("dm") else None
+        self.backend = DuckDBBackend(dm=dm, finest_set_only=True)
+        self.outputs = outputs
+        self.preloaded = preloaded or {}  # shards' rows read in planning
+
+    def __call__(self, index: int, attempt: int, keys: Sequence[str] | None) -> dict:
+        parsed, started = self.parsed, time.monotonic()
+        rows, series = self.preloaded.pop(index, None) or self.inputs.load(keys)
+        self.preloaded.clear()  # another shard: what planning read isn't needed
+        rows_read = sum(t.num_rows for t in rows.values())
+        reach = _reach(parsed, rows) if _persistence(parsed) else timedelta(0)
+        if self.incremental and reach > self.p_reach:
+            raise _Full(
+                "persistence forecasts now reach further than the stored state allows"
+            )
+        labels = location_labels(self.inputs.whole, self.manifest, parsed, rows, series)
+        catalog = catalog_from(self.manifest, rows, series, labels)
+        del rows, series
+        pairs = self.backend.pairs(build_plan(parsed, catalog))
+        del catalog
+        log.info(
+            "shard %d (try %d): %s observed series, %d rows read, %d pairs, %.1fs, "
+            "peak memory %.0f MB", index, attempt,
+            "all" if keys is None else len(keys), rows_read, pairs.num_rows,
+            time.monotonic() - started, peak_memory_mb(),
+        )  # fmt: skip
+        out: dict = {"reach": int(reach.total_seconds())}
+        if pairs.num_rows:
+            part = self.backend.first_stage_state(
+                parsed, pairs, STATE_BUCKET, self.counted
+            )
+            out["state"] = self.outputs.add_state(index, attempt, part)
+            if self.incremental:  # the pairs the run is for (the rest: lag partners)
+                pairs = _sql(pairs, f"SELECT * FROM t WHERE {self.counted}")
+        if self.run.get("pairs"):
+            out |= self.outputs.add_pairs(index, attempt, pairs)
+        return out
+
+
+#: Seconds between a shard's heartbeats, and between claims while other pods hold
+#: the last shards.
+HEARTBEAT_SECONDS = float(os.environ.get("SHARD_HEARTBEAT_SECONDS") or 30)
+POLL_SECONDS = 5.0
+
+
+class _Heartbeat:
+    """Tells the control plane a shard's attempt is alive, every few seconds, on a
+    thread; ``lost`` once it says another pod has the shard."""
+
+    def __init__(self, client: GrantClient, index: int, attempt: int):
+        self.client, self.index, self.attempt = client, index, attempt
+        self.lost = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._beat, daemon=True)
+
+    def _beat(self) -> None:
+        while not self._stop.wait(HEARTBEAT_SECONDS):
+            try:
+                self.client._grant("POST", f"shards/{self.index}/heartbeat",
+                                   json={"attempt": self.attempt})  # fmt: skip
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 409:
+                    self.lost = True
+                    return
+            except Exception:  # noqa: BLE001 - the next beat tries again
+                pass
+
+    def __enter__(self) -> "_Heartbeat":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        self._thread.join()
+
+
+class ShardQueue:
+    """The run's shard queue, through the job grant (the control plane keeps it)."""
+
+    def __init__(self, client: GrantClient, worker: str | None = None):
+        self.client = client
+        self.worker = worker or os.environ.get("HOSTNAME") or "pod-0"
+
+    def put(self, plan: dict, shards: list) -> None:
+        body = {"plan": plan, "shards": [list(s) if s is not None else None
+                                         for s in shards]}  # fmt: skip
+        self.client._grant("PUT", "shards", json=body)
+
+    def work(self, work: ShardWork) -> None:
+        """Claim and run shards until none are left (others may still be running)."""
+        while True:
+            got = self.client._grant(
+                "POST", "shards/claim", json={"worker": self.worker}
+            ).json()
+            shard = got["shard"]
+            if shard is None:
+                if got["settled"]:
+                    return
+                time.sleep(POLL_SECONDS)
+                continue
+            index, attempt = shard["index"], shard["attempt"]
+            beat = _Heartbeat(self.client, index, attempt)
+            try:
+                with beat:
+                    out = work(index, attempt, shard["keys"])
+            except _Full as exc:  # the run can't be incremental: pod 0 goes full
+                self._fail(index, attempt, f"{FULL_PREFIX}{exc}", retry=False)
+                continue
+            except Exception as exc:  # noqa: BLE001 - tried again, up to its limit
+                log.warning("shard %d (try %d) failed: %s", index, attempt, exc)
+                self._fail(index, attempt, _brief(exc), retry=True)
+                continue
+            if beat.lost or not self._done(index, attempt, out):
+                work.outputs.drop(out)  # another pod has the shard now
+
+    def _done(self, index: int, attempt: int, out: dict) -> bool:
+        try:
+            self.client._grant("POST", f"shards/{index}/done",
+                               json={"attempt": attempt, "outputs": out})  # fmt: skip
+            return True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:
+                return False
+            raise
+
+    def _fail(self, index: int, attempt: int, error: str, retry: bool) -> None:
+        try:
+            self.client._grant("POST", f"shards/{index}/fail",
+                               json={"attempt": attempt, "error": error,
+                                     "retry": retry})  # fmt: skip
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 409:
+                raise
+
+    def outputs(self) -> list[dict]:
+        """What every shard wrote, in order (pod 0, once they're all settled)."""
+        summary = self.client._grant("GET", "shards").json()
+        if summary["failed"]:
+            first = summary["failed"][0]
+            error = first["error"] or "it failed"
+            if error.startswith(FULL_PREFIX):
+                raise _Full(error.removeprefix(FULL_PREFIX))
+            raise LoadFailed([f"shard {first['index']}: {error}"])
+        return [d["outputs"] or {} for d in summary["done"]]
+
+
+FULL_PREFIX = "needs a full run: "
+
+
+def _brief(exc: Exception) -> str:
+    if isinstance(exc, LoadFailed):
+        return "; ".join(exc.problems)[:10_000]
+    return f"{type(exc).__name__}: {exc}"[:10_000]
 
 
 def run_evaluation(client: GrantClient, task: dict) -> dict:

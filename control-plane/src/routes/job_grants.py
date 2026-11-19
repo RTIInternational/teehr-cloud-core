@@ -15,6 +15,8 @@ user token. A grant works only while its job is queued or running:
 - ``POST /v1/job-grants/work``, ``DELETE /v1/job-grants/work``: URLs to put and get
   a run's work files (its shards' state parts, ADR-0017) in the staging bucket, under
   ``runs/<run id>/``, and their deletion (also when the job finishes).
+- ``/v1/job-grants/shards...``: the run's shard queue (ADR-0017, ``src/shards.py``):
+  pod 0 queues the plan and shards; pods claim, heartbeat, finish or fail shards.
 - ``POST /v1/job-grants/writes``: a write the job committed to one of its run's
   tables itself (ADR-0016): checked against the table's snapshots and recorded as
   the dataset's lineage, as a write through ``/data`` is.
@@ -24,7 +26,7 @@ Internal: not in the published API.
 
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
@@ -32,6 +34,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src import shards
 from src.dataset_types import TABLE
 from src.delegation import (
     Delegation,
@@ -441,3 +444,106 @@ def delete_work(
     """Delete the run's work files."""
     run, staging = _run_staging(job, session, staging)
     return {"deleted": staging.delete_prefix(_work_prefix(run))}
+
+
+# -- the run's shard queue (ADR-0017) ----------------------------------------------
+
+
+def _shard_run(job: Job, session: Session) -> Run:
+    run = _run(session, job)
+    if job.kind != "run" or run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a run's job")
+    return run
+
+
+class ShardPlan(BaseModel):
+    plan: dict
+    # Each shard's observed series keys (None: all of them, one shard).
+    shards: list[list[str] | None] = Field(max_length=100_000)
+
+
+@router.put("/shards", status_code=status.HTTP_204_NO_CONTENT)
+def queue_shards(body: ShardPlan, job: JobDep, session: SessionDep) -> Response:
+    """Pod 0: the run's plan and shards (replacing any queued before)."""
+    shards.queue(session, _shard_run(job, session), body.plan, body.shards)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/shards/plan")
+def shard_plan(job: JobDep, session: SessionDep) -> dict:
+    run = _shard_run(job, session)
+    if run.shard_plan is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not planned yet")
+    return {"plan": run.shard_plan}
+
+
+class ShardClaim(BaseModel):
+    worker: str = Field(max_length=255)
+
+
+@router.post("/shards/claim")
+def claim_shard(
+    body: ShardClaim, job: JobDep, session: SessionDep, settings: SettingsDep
+) -> dict:
+    """The next shard to run, or none (``settled``: none will come)."""
+    lapse = timedelta(seconds=settings.shard_heartbeat_lapse_seconds)
+    got = shards.claim(session, _shard_run(job, session), body.worker, lapse)
+    if got.shard is None:
+        return {"shard": None, "settled": got.settled}
+    s = got.shard
+    return {"shard": {"index": s.index, "attempt": s.attempt, "keys": s.keys},
+            "settled": False}  # fmt: skip
+
+
+class ShardAttempt(BaseModel):
+    attempt: int = Field(ge=1)
+
+
+def _lost() -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT, "This attempt no longer holds the shard"
+    )
+
+
+@router.post("/shards/{index}/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+def shard_heartbeat(
+    index: int, body: ShardAttempt, job: JobDep, session: SessionDep
+) -> Response:
+    if not shards.heartbeat(session, _shard_run(job, session), index, body.attempt):
+        raise _lost()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class ShardDone(ShardAttempt):
+    outputs: dict
+
+
+@router.post("/shards/{index}/done", status_code=status.HTTP_204_NO_CONTENT)
+def shard_done(
+    index: int, body: ShardDone, job: JobDep, session: SessionDep
+) -> Response:
+    run = _shard_run(job, session)
+    if not shards.done(session, run, index, body.attempt, body.outputs):
+        raise _lost()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class ShardFailed(ShardAttempt):
+    error: str = Field(max_length=10_000)
+    retry: bool = True
+
+
+@router.post("/shards/{index}/fail", status_code=status.HTTP_204_NO_CONTENT)
+def shard_fail(
+    index: int, body: ShardFailed, job: JobDep, session: SessionDep
+) -> Response:
+    run = _shard_run(job, session)
+    if not shards.fail(session, run, index, body.attempt, body.error, body.retry):
+        raise _lost()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/shards")
+def shard_summary(job: JobDep, session: SessionDep) -> dict:
+    """Counts by status, and the outputs of the shards done."""
+    return shards.summary(session, _shard_run(job, session))
