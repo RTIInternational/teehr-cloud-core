@@ -1275,6 +1275,26 @@ def _brief(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"[:10_000]
 
 
+def work_shards(client: GrantClient, task: dict) -> None:
+    """A run's other pods (ADR-0017): wait for pod 0's plan, then claim and run
+    shards until the queue is settled. Pod 0 merges, commits and reports."""
+    while True:
+        try:
+            plan = client._grant("GET", "shards/plan").json()["plan"]
+            break
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            time.sleep(POLL_SECONDS)  # not planned yet
+    wh = open_warehouse(client, task)
+    tables = open_tables(task)
+    outputs = ShardOutputs(client, tables, task["project"], task["run"])
+    try:
+        ShardQueue(client).work(ShardWork(client, tables, task, plan, wh, outputs))
+    finally:
+        wh.close()
+
+
 def run_evaluation(client: GrantClient, task: dict) -> dict:
     """Do a run's task; returns its result (raises LoadFailed with what went wrong).
 

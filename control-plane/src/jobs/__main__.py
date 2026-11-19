@@ -11,8 +11,10 @@ import os
 import sys
 import traceback
 
+import httpx
+
 from src.jobs.load import GrantClient, LoadFailed, load_upload
-from src.jobs.run import run_evaluation
+from src.jobs.run import run_evaluation, work_shards
 
 log = logging.getLogger("src.jobs")
 
@@ -22,6 +24,17 @@ def run(job_id: str) -> int:
         os.environ["CONTROL_PLANE_INTERNAL_URL"], os.environ["JOB_GRANT"]
     )
     task = client.task()
+    index = int(os.environ.get("JOB_COMPLETION_INDEX") or 0)
+    if task["kind"] == "run" and index > 0:
+        # Another pod of a run (ADR-0017): work its shards; pod 0 reports the run.
+        log.info("job %s: pod %d works the run's shards", job_id, index)
+        try:
+            work_shards(client, task)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 401:
+                raise
+            log.info("the run has ended")  # its grant stopped working
+        return 0
     log.info("job %s: %s in %s", job_id, task["kind"], task["project"])
     try:
         if task["kind"] == "upload":

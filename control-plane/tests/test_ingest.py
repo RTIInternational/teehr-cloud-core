@@ -54,6 +54,9 @@ class FakeKube:
     def job_pods(self, name):
         return self.pods.get(name, [])
 
+    def scale_job(self, name, pods):
+        self.scaled = [*getattr(self, "scaled", []), (name, pods)]
+
     def delete_job(self, name):
         self.deleted.append(name)
         self.jobs.pop(name, None)
@@ -142,7 +145,7 @@ def test_ingest_starts_a_job_acting_as_the_caller(client, staging, jobs):
     assert pod["automountServiceAccountToken"] is False
     assert pod["securityContext"]["runAsNonRoot"] is True
     assert pod["containers"][0]["command"][:4] == ["python", "-m", "src.jobs", "run"]
-    assert manifest["spec"]["backoffLimit"] == 0
+    assert manifest["spec"]["backoffLimitPerIndex"] == 0  # a failed pod: not retried
     assert grant_of(manifest).startswith("tjg_")
     with db() as session:
         job = session.scalar(select(Job))
@@ -665,3 +668,40 @@ def test_job_pod_sizing_settings_reach_the_pod():
     sized = container(dataclasses.replace(base, job_cpu_request="2", job_threads=8))
     assert sized["resources"]["requests"]["cpu"] == "2"
     assert {e["name"]: e["value"] for e in sized["env"]}["JOB_THREADS"] == "8"
+
+
+def test_a_runs_job_is_pod_zeros_other_pods_dont_end_it():
+    from src.kube import job_state
+
+    class Kube:
+        def __init__(self, status):
+            self.job = {"spec": {"completionMode": "Indexed"}, "status": status}
+
+        def get_job(self, name):
+            return self.job
+
+        def job_pods(self, name):
+            return []
+
+    def phase(**status):
+        return job_state(Kube(status), "run-x").phase
+
+    assert phase(active=3) == "active"
+    assert phase(completedIndexes="1-2", succeeded=2, active=1) == "active"
+    assert phase(failedIndexes="2", failed=1, active=2) == "active"
+    assert phase(completedIndexes="0", succeeded=1, active=2) == "succeeded"
+    assert phase(failedIndexes="0,3", failed=2) == "failed"
+    conditions = [{"type": "Failed", "status": "True"}]
+    assert phase(conditions=conditions, failedIndexes="1") == "failed"
+
+
+def test_a_job_pod_is_indexed_and_starts_alone():
+    from src.config import Settings
+    from src.kube import job_manifest
+
+    spec = job_manifest(Settings(database_url="sqlite://"), "run", "j" * 36, "tjg_x")
+    spec = spec["spec"]
+    assert (spec["completionMode"], spec["completions"], spec["parallelism"]) == (
+        "Indexed", 1, 1
+    )  # fmt: skip
+    assert spec["backoffLimitPerIndex"] == 0 and "backoffLimit" not in spec

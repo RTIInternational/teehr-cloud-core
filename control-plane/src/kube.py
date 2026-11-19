@@ -40,6 +40,9 @@ class Kube(Protocol):
     def job_pods(self, name: str) -> list[dict[str, Any]]:
         """The Job's pods."""
 
+    def scale_job(self, name: str, pods: int) -> None:
+        """Run ``pods`` pods of an Indexed Job."""
+
     def delete_job(self, name: str) -> None:
         """Delete the Job and its pods; no error if it's gone."""
 
@@ -109,7 +112,13 @@ def job_manifest(
             "labels": labels,
         },
         "spec": {
-            "backoffLimit": 0,
+            # Indexed, one pod to start: a run that needs more is scaled up once its
+            # shards are planned (ADR-0017). Pod 0 does the job and reports it; a
+            # failed pod isn't retried (a run's shards are, through its queue).
+            "completionMode": "Indexed",
+            "completions": 1,
+            "parallelism": 1,
+            "backoffLimitPerIndex": 0,
             "ttlSecondsAfterFinished": settings.job_ttl_seconds,
             "template": {"metadata": {"labels": labels}, "spec": pod},
         },
@@ -160,6 +169,15 @@ class InClusterKube:
         self._check(resp)
         return resp.json().get("items", [])
 
+    def scale_job(self, name: str, pods: int) -> None:
+        """Run ``pods`` pods of an Indexed Job (indexes 0..pods-1)."""
+        resp = self._client.patch(
+            f"{self._jobs()}/{name}",
+            json={"spec": {"completions": pods, "parallelism": pods}},
+            headers={"Content-Type": "application/merge-patch+json"},
+        )
+        self._check(resp)
+
     def delete_job(self, name: str) -> None:
         resp = self._client.delete(
             f"{self._jobs()}/{name}", params={"propagationPolicy": "Background"}
@@ -180,8 +198,22 @@ class JobState:
         return self.phase != "active"
 
 
+def _indexes(text: str | None) -> set[int]:
+    """An Indexed Job's index set ("0,2-4")."""
+    out: set[int] = set()
+    for part in (text or "").split(","):
+        if "-" in part:
+            low, high = part.split("-")
+            out |= set(range(int(low), int(high) + 1))
+        elif part.strip():
+            out.add(int(part))
+    return out
+
+
 def job_state(kube: Kube, name: str) -> JobState:
-    """A Job's state, and why its pod stopped if it failed."""
+    """A Job's state, and why its pod stopped if it failed. A job is pod 0's (it
+    does the job and reports it): other pods of a run (ADR-0017) finishing or
+    failing doesn't end it."""
     job = kube.get_job(name)
     if job is None:
         return JobState("missing", "its job no longer exists")
@@ -191,16 +223,33 @@ def job_state(kube: Kube, name: str) -> JobState:
         for c in status.get("conditions") or []
         if c.get("status") == "True"
     }
-    if "Complete" in conditions or status.get("succeeded"):
+    indexed = (job.get("spec") or {}).get("completionMode") == "Indexed"
+    done = (
+        0 in _indexes(status.get("completedIndexes"))
+        if indexed
+        else bool(status.get("succeeded"))
+    )
+    if "Complete" in conditions or done:
         return JobState("succeeded")
     failed = conditions.get("Failed") or conditions.get("FailureTarget")
-    if failed is not None or status.get("failed"):
+    lost = (
+        0 in _indexes(status.get("failedIndexes"))
+        if indexed
+        else bool(status.get("failed"))
+    )
+    if failed is not None or lost:
         return JobState("failed", _why(kube, name, failed or {}))
     return JobState("active")
 
 
 def _why(kube: Kube, name: str, condition: dict[str, Any]) -> str:
-    pods = kube.job_pods(name)
+    index = "batch.kubernetes.io/job-completion-index"
+    pods = sorted(  # pod 0's first: its failure is the job's
+        kube.job_pods(name),
+        key=lambda p: (
+            ((p.get("metadata") or {}).get("annotations") or {}).get(index) != "0"
+        ),
+    )
     for pod in pods:
         for c in (pod.get("status") or {}).get("containerStatuses") or []:
             ended = (c.get("state") or {}).get("terminated") or {}
