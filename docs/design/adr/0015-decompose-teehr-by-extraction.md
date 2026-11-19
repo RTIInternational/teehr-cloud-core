@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-11-17
 - **Deciders:** TEEHR team
-- **Related:** #133, #148, [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0002, ADR-0007, ADR-0008, ADR-0013, [`../teehr-core.md`](../teehr-core.md), teehr#871
+- **Related:** #133, #148, #246, ADR-0018 (`teehr auth login`), [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0002, ADR-0007, ADR-0008, ADR-0013, [`../teehr-core.md`](../teehr-core.md), teehr#871
 
 ## Context
 
@@ -42,10 +42,22 @@ functional seams stand; this changes the route.
   | Very large evaluations (Spark) | **if needed**, a small backend over teehr-core's mergeable state (ADR-0002: per-partition state, merge, finalize), as a teehr-core extra or in the run job image; decided by real run sizes and the DuckDB-on-Iceberg spike (#197) |
   | Derived fields not in teehr-core (baseflow separation, some event and threshold variants) | ported into teehr-core, each through the shared spec |
   | Warehouse / catalog I/O, platform wiring | the control plane and its jobs (done for v1) |
-  | Client SDK / standalone use | the Phase 6 SDK, plus local evaluation with teehr-core's engine |
+  | Client SDK / standalone use | the Phase 6 SDK and the CLI, plus local evaluation with teehr-core's engine |
 
-- **The `teehr` name** moves to the user package at cutover: `teehr` 1.0 is the SDK and local
-  evaluation on teehr-core, with the fetch package as an extra. Legacy `teehr` ends at 0.x.
+- **The `teehr` name** moves to the user package at cutover: `teehr` 1.0 is the SDK, the CLI
+  and local evaluation on teehr-core, with the fetch package as an extra. Legacy `teehr` ends at
+  0.x.
+- **`teehr` 1.0 is built on a long-lived `v1` branch** of the `teehr` repo; `main` stays the
+  frozen legacy package until cutover, when `v1` replaces it. Until then it installs from the
+  branch (`uv tool install "git+https://github.com/RTIInternational/teehr.git@v1"`).
+  - **The SDK and CLI come first:** a typed client for the control plane's API, and the `teehr`
+    command as a thin layer on it (`teehr auth login`, ADR-0018; then uploads, runs, datasets).
+    Light dependencies: no Spark, DuckDB or teehr-core.
+  - **Local evaluation and the fetch package come later** (how much local evaluation matters is
+    still to be decided). Each is its own module and optional extra (e.g. `teehr[local]`,
+    `teehr[fetch]`), using the SDK's types; nothing in the SDK or CLI assumes a run happens in
+    the cloud beyond its API calls. An MCP server (ADR-0011) would fit the same way.
+  - A client need the API doesn't meet is fixed in the API first.
 - **Legacy data** reaches v1 by a copy job (legacy tables → v1 datasets in `public`), runnable
   again while the legacy warehouse keeps changing, as Phase 7 plans ("port data, not code").
 - teehr-core stays off PyPI until cutover; adopters pin a commit.
@@ -56,6 +68,7 @@ functional seams stand; this changes the route.
   running system isn't touched; each new package is built for v1 from the start; the user-facing
   name survives.
 - **Negative / cost:** two systems run side by side until cutover (fixes may be needed in both);
+  an API change and its client use are two PRs in two repos, with `v1` trailing the deployed API;
   the fetch code is copied, not shared, so legacy ingests and v1 ingests diverge; users move from
   `teehr.Evaluation` + Spark to the SDK, a break for notebooks.
 - **Tradeoff accepted:** a hard break at cutover instead of a gradual refactor users ride along
