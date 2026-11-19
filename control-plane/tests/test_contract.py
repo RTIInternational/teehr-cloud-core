@@ -25,6 +25,7 @@ OPERATION_IDS = {
     "finish_token_sign_in",
     "list_tokens",
     "revoke_token",
+    "read_run_results",
     "create_project",
     "list_projects",
     "get_project",

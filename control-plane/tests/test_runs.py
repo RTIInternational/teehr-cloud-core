@@ -3,11 +3,13 @@ which reads the inputs through the API, runs the spec with teehr-core's engine a
 writes results_<slug>_v<version> through the API."""
 
 import dataclasses
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pyarrow as pa
 import pytest
+from pyiceberg.expressions import EqualTo
 from pyiceberg.expressions.visitors import bind
 from pyiceberg.io.pyarrow import expression_to_pyarrow
 
@@ -1061,3 +1063,66 @@ def test_another_pod_runs_the_shards_and_pod_zero_commits_them(
     assert sharded["shards"] == 2 and sharded["pairs"]["rows"] == whole["pairs"]["rows"]
     _same(_rows(tables.written[("flood", "results_e_v1")][-1]), want)
     assert not tables.files and not staging.objects  # all committed, work files gone
+
+
+def test_results_keep_every_runs_rows_and_each_run_reads_its_own(
+    client,
+    lake,
+    jobs,
+    tables,  # noqa: F811
+):
+    kube, _ = jobs
+    saved(client)
+    ids = []
+    for _ in range(2):
+        resp = client.post(
+            f"{EVALUATIONS}/e/runs", json={"full": True}, headers=ALICE_NOW
+        )
+        assert resp.status_code == 202, resp.text
+        ids.append(resp.json()["id"])
+        run_job(client, kube)
+
+    # Each run replaced only its own rows of the version's results table.
+    writes = [c for c in tables.calls if c[0] == "write"]
+    assert len(writes) == len(tables.writes)
+    results_filters = [
+        f for (_, _, _, name), (_, f, _) in zip(writes, tables.writes, strict=True)
+        if name == "results_e_v1"
+    ]  # fmt: skip
+    assert results_filters == [EqualTo("run_id", ids[0]), EqualTo("run_id", ids[1])]
+    # The table (as the lake holds it): both runs' rows.
+    both = pa.concat_tables(tables.written[("flood", "results_e_v1")][-2:])
+    lake.put("results_e_v1", both)
+    assert set(both["run_id"].to_pylist()) == set(ids)
+
+    first = client.get(f"/v1/projects/flood/runs/{ids[0]}/results", headers=ALICE)
+    assert first.status_code == 200, first.text
+    rows = first.json()["rows"]
+    assert rows and {r["run_id"] for r in rows} == {ids[0]}
+    # A filter narrows further, within the run.
+    key = rows[0]["primary_series_key"]
+    one = client.get(
+        f"/v1/projects/flood/runs/{ids[1]}/results",
+        params={
+            "filter": f"primary_series_key = '{key}'",
+            "columns": "primary_series_key,run_id",
+        },
+        headers=ALICE,
+    ).json()["rows"]
+    assert one == [{"primary_series_key": key, "run_id": ids[1]}]
+    # Read as a dataset, the table shows every run's rows.
+    every = client.get("/v1/projects/flood/datasets/results_e_v1/data", headers=ALICE)
+    assert {r["run_id"] for r in every.json()["rows"]} == set(ids)
+    described = client.get("/v1/projects/flood/datasets/results_e_v1", headers=ALICE)
+    assert "every run's rows" in described.json()["description"]
+
+
+def test_a_runs_results_come_once_it_succeeds(client, lake, jobs):  # noqa: F811
+    saved(client)
+    run = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()
+    resp = client.get(f"/v1/projects/flood/runs/{run['id']}/results", headers=ALICE)
+    assert resp.status_code == 409 and "queued" in resp.json()["detail"]
+    missing = client.get(
+        f"/v1/projects/flood/runs/{uuid.uuid4()}/results", headers=ALICE
+    )
+    assert missing.status_code == 404

@@ -408,15 +408,17 @@ def start_run(
     body: Annotated[RunRequest | None, Body()] = None,
 ):
     """Run a version of the evaluation (default the latest) as a job acting as
-    you: it reads the inputs, runs the spec and writes results_<slug>_v<version>
-    (replacing an earlier run's). The spec is planned again first, against the
+    you: it reads the inputs, runs the spec and adds its rows to
+    results_<slug>_v<version> (which keeps every run's, by ``run_id``; read one
+    run's at ``GET .../runs/{id}/results``), replacing the version's pairs and
+    state. The spec is planned again first, against the
     datasets as they are now (422 if it no longer plans).
 
     A run is incremental when it can be: the version keeps state and only some
     months of its inputs changed since its last run (timeseries writes record the
     months they touch); it then recomputes only those. ``full`` recomputes all;
     the run's ``result.mode`` says which it did, and why when full. A version runs
-    one at a time (409 while it has a run queued or running: its runs replace the
+    one at a time (409 while it has a run queued or running: its runs write the
     same tables). Needs the write role."""
     project, my_role = _authorize(session, name, identity, settings, Role.WRITE)
     if (
