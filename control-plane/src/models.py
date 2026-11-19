@@ -395,3 +395,30 @@ class Run(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # What every pod working the run's shards needs beyond the task (ADR-0017): how
+    # the run goes (mode, months), the pinned snapshots, settings found in planning.
+    shard_plan: Mapped[dict | None] = mapped_column(JSON)
+
+
+class RunShard(Base):
+    """One shard of a run, in the queue the run's pods work (ADR-0017).
+
+    A pod claims a shard by raising ``attempt``; every later call names it, so a pod
+    that lost its shard (its heartbeat lapsed and another pod took it) can't record
+    it. ``outputs``: what the shard wrote (its state part, its pairs file, ...)."""
+
+    __tablename__ = "run_shards"
+    __table_args__ = (UniqueConstraint("run_id", "index"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(_fk("runs"))
+    index: Mapped[int] = mapped_column(Integer)
+    keys: Mapped[list | None] = mapped_column(JSON)
+    # queued | running | done | failed
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    worker: Mapped[str | None] = mapped_column(String(255))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outputs: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

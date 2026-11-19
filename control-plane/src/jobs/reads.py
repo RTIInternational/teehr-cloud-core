@@ -167,6 +167,10 @@ class Warehouse:
             self.snapshots[ref] = current.snapshot_id if current else None
         return table, self.snapshots[ref]
 
+    def pin(self, project: str, name: str) -> None:
+        """Pin the table to its current snapshot (if it isn't already)."""
+        self.table(project, name)
+
     def _plan(self, read: Read, table: Table, snapshot: int) -> list:
         """The files ``read``'s filter can match (keys aside), planned once."""
         ref = f"{read.project}.{read.name}"

@@ -2,6 +2,7 @@
 which reads the inputs through the API, runs the spec with teehr-core's engine and
 writes results_<slug>_v<version> through the API."""
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 from pyiceberg.expressions.visitors import bind
 from pyiceberg.io.pyarrow import expression_to_pyarrow
 
+from src.config import get_settings
 from src.jobs.load import GrantClient
 from src.jobs.run import run_evaluation
 from src.main import app
@@ -103,6 +105,9 @@ class FakeWarehouse:
         n = self.read(read).num_rows
         self.lake.reads.pop(), self.lake.shard_reads.pop()
         return n
+
+    def pin(self, project, name):
+        self.snapshots.setdefault(f"{project}.{name}", 7_000 + len(name))
 
     def count(self, read):  # the rows a read keeps (the real one counts in files)
         return self.rows(read)
@@ -889,3 +894,99 @@ def test_work_files_live_under_the_run_and_go_when_it_finishes(
 
     job.finish("failed", error="stopped")
     assert list(staging.objects) == ["runs/another/state/x.parquet"]  # only its own
+
+
+def _queued_run(client, kube, plan=None, shards=(["a"], ["b"])):
+    """A run's job with a queue of ``shards``; returns (job client, grant headers)."""
+    saved(client)
+    client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW)
+    job = GrantClient("http://testserver", grant_of(kube.created[-1]), http=client)
+    job.task()
+    grant = {"Authorization": f"Bearer {job.grant}"}
+    r = client.put("/v1/job-grants/shards", headers=grant,
+                   json={"plan": plan or {"mode": "full"}, "shards": list(shards)})  # fmt: skip
+    assert r.status_code == 204, r.text
+    return job, grant
+
+
+def test_the_shard_queue_hands_out_each_shard_once_and_retries_failures(
+    client, lake, jobs, tables
+):  # noqa: F811
+    kube, _ = jobs
+    _, grant = _queued_run(client, kube, {"mode": "full", "dm": None})
+
+    def call(path, **body):
+        return client.post(f"/v1/job-grants/shards{path}", headers=grant, json=body)
+
+    assert client.get("/v1/job-grants/shards/plan", headers=grant).json() == {
+        "plan": {"mode": "full", "dm": None}
+    }
+    a = call("/claim", worker="p0").json()["shard"]
+    b = call("/claim", worker="p1").json()["shard"]
+    assert (a["index"], a["attempt"], a["keys"]) == (0, 1, ["a"])
+    assert (b["index"], b["attempt"]) == (1, 1)
+    assert call("/claim", worker="p2").json() == {"shard": None, "settled": False}
+
+    assert call("/0/heartbeat", attempt=1).status_code == 204
+    assert call("/0/done", attempt=2, outputs={}).status_code == 409  # not its try
+    assert call("/0/done", attempt=1, outputs={"state": "s0"}).status_code == 204
+    assert call("/1/fail", attempt=1, error="boom", retry=True).status_code == 204
+    again = call("/claim", worker="p2").json()["shard"]
+    assert (again["index"], again["attempt"]) == (1, 2)  # queued again
+    call("/1/fail", attempt=2, error="boom", retry=True)
+    call("/claim", worker="p2")
+    call("/1/fail", attempt=3, error="boom again", retry=True)  # the last try
+    assert call("/claim", worker="p2").json() == {"shard": None, "settled": True}
+
+    summary = client.get("/v1/job-grants/shards", headers=grant).json()
+    assert summary["counts"] == {"queued": 0, "running": 0, "done": 1, "failed": 1}
+    assert summary["done"] == [{"index": 0, "outputs": {"state": "s0"}}]
+    assert summary["failed"] == [{"index": 1, "error": "boom again"}]
+
+
+def test_a_shard_whose_pod_stops_is_claimed_again(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    settings = app.dependency_overrides[get_settings]()
+    app.dependency_overrides[get_settings] = lambda: dataclasses.replace(
+        settings, shard_heartbeat_lapse_seconds=0
+    )
+    _, grant = _queued_run(client, kube, shards=[["a"]])
+
+    def call(path, **body):
+        return client.post(f"/v1/job-grants/shards{path}", headers=grant, json=body)
+
+    assert call("/claim", worker="p0").json()["shard"]["attempt"] == 1
+    # p0's heartbeat has lapsed (instantly, here): p1 takes the shard over.
+    taken = call("/claim", worker="p1").json()["shard"]
+    assert (taken["index"], taken["attempt"]) == (0, 2)
+    assert call("/0/heartbeat", attempt=1).status_code == 409  # p0 learns it lost it
+    assert call("/0/done", attempt=1, outputs={}).status_code == 409
+    assert call("/0/done", attempt=2, outputs={}).status_code == 204
+
+
+def test_a_shard_that_fails_once_is_run_again_and_the_run_succeeds(
+    client, lake, jobs, tables, monkeypatch
+):  # noqa: F811
+    from src.jobs.run import ShardWork
+
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    whole = run_once(client, kube)
+    want = _rows(tables.written[("flood", "results_e_v1")][-1])
+
+    monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")
+    real, tries = ShardWork.__call__, []
+
+    def flaky(self, index, attempt, keys):
+        tries.append((index, attempt))
+        if (index, attempt) == (1, 1):
+            raise RuntimeError("the pod hiccuped")
+        return real(self, index, attempt, keys)
+
+    monkeypatch.setattr(ShardWork, "__call__", flaky)
+    sharded = run_once(client, kube, {"full": True})
+    assert tries == [(0, 1), (1, 1), (1, 2)]
+    assert sharded["shards"] == 2 and sharded["state"]["rows"] == whole["state"]["rows"]
+    _same(_rows(tables.written[("flood", "results_e_v1")][-1]), want)
