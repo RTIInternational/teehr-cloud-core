@@ -1,6 +1,6 @@
 # ADR-0018: Credentials: the control plane keeps delegated sessions; users get personal tokens and a CLI login
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified by the team, 2026-11-19)
 - **Date:** 2026-11-18
 - **Deciders:** TEEHR team
 - **Related:** #148, ADR-0004 (the caller's identity), ADR-0014 (job grants), ADR-0017 (runs
