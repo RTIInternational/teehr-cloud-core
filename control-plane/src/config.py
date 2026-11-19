@@ -102,6 +102,10 @@ class Settings:
     # A run shard whose pod hasn't sent a heartbeat for this long is claimed again
     # (longer than a control-plane restart plus the job client's retries).
     shard_heartbeat_lapse_seconds: int = 300
+    # Pods a run may spread its shards over (ADR-0017; 1: one pod, as before), and
+    # the shards each pod beyond the first should have to be worth starting.
+    run_max_pods: int = 1
+    run_shards_per_pod: int = 8
     # Jobs one project may have queued or running at once.
     max_active_jobs_per_project: int = 2
     internal_url: str = "http://teehr-control-plane:8000"
@@ -200,6 +204,8 @@ def get_settings() -> Settings:
         job_threads=int(os.getenv("JOB_THREADS") or 0) or None,
         run_rows_per_shard=int(os.getenv("RUN_ROWS_PER_SHARD") or 0) or None,
         job_ttl_seconds=int(os.getenv("JOB_TTL_SECONDS") or 86_400),
+        run_max_pods=int(os.getenv("JOB_RUN_MAX_PODS") or 1),
+        run_shards_per_pod=int(os.getenv("RUN_SHARDS_PER_POD") or 8),
         shard_heartbeat_lapse_seconds=int(
             os.getenv("SHARD_HEARTBEAT_LAPSE_SECONDS") or 300
         ),

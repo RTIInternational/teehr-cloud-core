@@ -990,3 +990,62 @@ def test_a_shard_that_fails_once_is_run_again_and_the_run_succeeds(
     assert tries == [(0, 1), (1, 1), (1, 2)]
     assert sharded["shards"] == 2 and sharded["state"]["rows"] == whole["state"]["rows"]
     _same(_rows(tables.written[("flood", "results_e_v1")][-1]), want)
+
+
+def test_a_run_with_enough_shards_gets_more_pods(
+    client, lake, jobs, tables, monkeypatch
+):  # noqa: F811
+    from src.routes.job_grants import run_pods
+
+    kube, _ = jobs
+    settings = app.dependency_overrides[get_settings]()
+    wide = dataclasses.replace(settings, run_max_pods=4, run_shards_per_pod=1)
+    app.dependency_overrides[get_settings] = lambda: wide
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")
+    assert run_once(client, kube)["shards"] == 2
+    assert kube.scaled == [(f"upload-{len(kube.created) - 1}", 2)]  # a pod a shard
+
+    assert run_pods(dataclasses.replace(wide, run_shards_per_pod=8), 144) == 4
+    assert run_pods(dataclasses.replace(wide, run_shards_per_pod=8), 9) == 2
+    assert run_pods(settings, 144) == 1  # off by default
+
+
+def test_another_pod_runs_the_shards_and_pod_zero_commits_them(
+    client, lake, jobs, tables, staging, monkeypatch
+):  # noqa: F811
+    from src.jobs import run as runner
+
+    kube, _ = jobs
+    body = spec(output={"pairs": "all"})
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    whole = run_once(client, kube)
+    want = _rows(tables.written[("flood", "results_e_v1")][-1])
+
+    # Pod 1 starts once pod 0 has queued the shards, and runs every one of them.
+    put, pod1_ran = runner.ShardQueue.put, []
+
+    def put_then_pod1(self, plan, shards):
+        put(self, plan, shards)
+        pod1 = GrantClient("http://testserver", self.client.grant, http=client)
+        pod1_task = pod1.task()
+        real = runner.ShardWork.__call__
+
+        def tracked(work, index, attempt, keys):
+            pod1_ran.append(index)
+            return real(work, index, attempt, keys)
+
+        monkeypatch.setattr(runner.ShardWork, "__call__", tracked)
+        runner.work_shards(pod1, pod1_task)
+        monkeypatch.setattr(runner.ShardWork, "__call__", real)
+
+    monkeypatch.setattr(runner.ShardQueue, "put", put_then_pod1)
+    monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")
+    sharded = run_once(client, kube, {"full": True})
+    assert sorted(pod1_ran) == [0, 1]  # pod 0 found the queue done
+    assert sharded["shards"] == 2 and sharded["pairs"]["rows"] == whole["pairs"]["rows"]
+    _same(_rows(tables.written[("flood", "results_e_v1")][-1]), want)
+    assert not tables.files and not staging.objects  # all committed, work files gone

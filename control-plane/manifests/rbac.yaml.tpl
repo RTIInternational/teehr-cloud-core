@@ -25,7 +25,8 @@ metadata:
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["create", "get", "list", "delete"]
+    # patch: scale a run's Indexed Job to its pods (ADR-0017).
+    verbs: ["create", "get", "list", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]

@@ -24,6 +24,7 @@ user token. A grant works only while its job is queued or running:
 Internal: not in the published API.
 """
 
+import logging
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src import shards
+from src.config import Settings
 from src.dataset_types import TABLE
 from src.delegation import (
     Delegation,
@@ -45,6 +47,7 @@ from src.delegation import (
 )
 from src.errors import APIError
 from src.jobs import by_grant, end
+from src.kube import Kube, KubeError, get_kube
 from src.models import (
     Dataset,
     DatasetWrite,
@@ -61,6 +64,7 @@ from src.staging import Staging, get_staging
 from src.tables import TableError, TableExists, Tables, get_tables
 
 router = APIRouter(prefix="/v1/job-grants", include_in_schema=False)
+log = logging.getLogger(__name__)
 
 SESSION_ENDED = "session_ended"
 
@@ -462,10 +466,30 @@ class ShardPlan(BaseModel):
     shards: list[list[str] | None] = Field(max_length=100_000)
 
 
+def run_pods(settings: Settings, shard_count: int) -> int:
+    """Pods for a run of ``shard_count`` shards: one per ``run_shards_per_pod``,
+    up to ``run_max_pods``."""
+    per_pod = max(1, settings.run_shards_per_pod)
+    return max(1, min(settings.run_max_pods, -(-shard_count // per_pod)))
+
+
 @router.put("/shards", status_code=status.HTTP_204_NO_CONTENT)
-def queue_shards(body: ShardPlan, job: JobDep, session: SessionDep) -> Response:
-    """Pod 0: the run's plan and shards (replacing any queued before)."""
+def queue_shards(
+    body: ShardPlan,
+    job: JobDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+) -> Response:
+    """Pod 0: the run's plan and shards (replacing any queued before). A run with
+    enough shards gets more pods: its Job is scaled up (ADR-0017)."""
     shards.queue(session, _shard_run(job, session), body.plan, body.shards)
+    pods = run_pods(settings, len(body.shards))
+    if pods > 1 and kube is not None and job.k8s_name:
+        try:
+            kube.scale_job(job.k8s_name, pods)
+        except KubeError as exc:  # pod 0 works the queue alone
+            log.warning("couldn't scale %s to %d pods: %s", job.k8s_name, pods, exc)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

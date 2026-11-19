@@ -69,4 +69,8 @@ data:
   JOB_CPU_REQUEST: "${var.controlPlane.jobCpuRequest || ''}"
   JOB_THREADS: "${var.controlPlane.jobThreads || ''}"
   RUN_ROWS_PER_SHARD: "${var.controlPlane.runRowsPerShard || ''}"
+  # Runs across pods (ADR-0017): at most this many pods a run, an extra pod per
+  # this many shards. Empty: one pod (off), 8.
+  JOB_RUN_MAX_PODS: "${var.controlPlane.runMaxPods || ''}"
+  RUN_SHARDS_PER_POD: "${var.controlPlane.runShardsPerPod || ''}"
   CONTROL_PLANE_INTERNAL_URL: "http://teehr-control-plane:8000"
