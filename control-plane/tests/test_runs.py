@@ -123,8 +123,20 @@ def _series(keys):
 
 
 @pytest.fixture
-def lake(client, datasets, jobs, monkeypatch):  # noqa: F811
+def lake(client, datasets, jobs, staging, monkeypatch):  # noqa: F811
     store = Lake(client, datasets)
+
+    # Work files go to the staging bucket by presigned URL (ADR-0017).
+    def key(url):
+        return url.split("://", 1)[1].split("/", 1)[1].split("?", 1)[0]
+
+    monkeypatch.setattr(
+        GrantClient,
+        "put",
+        lambda self, url, data: staging.objects.__setitem__(key(url), data),
+    )
+    monkeypatch.setattr(GrantClient, "get",
+                        lambda self, url: staging.objects[key(url)])  # fmt: skip
     monkeypatch.setattr(
         "src.jobs.run.open_warehouse", lambda client, task: FakeWarehouse(store)
     )
@@ -697,7 +709,7 @@ def test_a_run_in_shards_gives_the_same_results(
 
 
 def test_a_run_in_shards_keeps_every_shards_pairs(
-    client, lake, jobs, tables, monkeypatch
+    client, lake, jobs, tables, staging, monkeypatch
 ):  # noqa: F811
     kube, _ = jobs
     body = spec(output={"pairs": "all"})
@@ -707,7 +719,9 @@ def test_a_run_in_shards_keeps_every_shards_pairs(
     result = run_once(client, kube)
     assert result["shards"] == 2 and result["pairs"]["rows"] == 8
     pairs = tables.written[("flood", "pairs_e_v1")]
-    assert [t.num_rows for t in pairs] == [4, 4]  # a shard's, then the other's added
+    assert [t.num_rows for t in pairs] == [8]  # both shards' files, one commit
+    assert not tables.files  # every file written was committed
+    assert not staging.objects  # the shards' state parts are gone
 
 
 def test_grouping_sets_that_dont_nest_keep_state_for_every_set(
@@ -830,3 +844,48 @@ def test_a_version_runs_one_at_a_time(client, lake, jobs, tables):  # noqa: F811
     assert start().status_code == 202  # the dead run no longer holds the version
     run_job(client, kube)
     assert start().status_code == 202  # nor does a finished one
+
+
+def test_a_run_that_fails_leaves_its_tables_and_no_files(
+    client, lake, jobs, tables, staging, monkeypatch
+):  # noqa: F811
+    kube, _ = jobs
+    body = spec(output={"pairs": "all"})
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    run_once(client, kube)
+    before = {k: len(v) for k, v in tables.written.items()}
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("the merge broke")
+
+    monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")
+    monkeypatch.setattr("src.jobs.run.first_stage_from_state", broken)
+    with pytest.raises(RuntimeError):
+        run_once(client, kube, {"full": True})
+    assert {k: len(v) for k, v in tables.written.items()} == before  # nothing written
+    assert not tables.files  # the shards' pairs files were deleted
+    assert not staging.objects  # and their state parts
+
+
+def test_work_files_live_under_the_run_and_go_when_it_finishes(
+    client, lake, jobs, tables, staging
+):  # noqa: F811
+    kube, _ = jobs
+    saved(client)
+    run = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()
+    job = GrantClient("http://testserver", grant_of(kube.created[-1]), http=client)
+    job.task()
+    grant = {"Authorization": f"Bearer {job.grant}"}
+
+    bad = client.post("/v1/job-grants/work", headers=grant, json={"put": ["../x"]})
+    assert bad.status_code == 422
+    urls = client.post("/v1/job-grants/work", headers=grant,
+                       json={"put": ["state/shard-00000-a1.parquet"]}).json()  # fmt: skip
+    url = urls["put"]["state/shard-00000-a1.parquet"]
+    assert f"/runs/{run['id']}/state/shard-00000-a1.parquet" in url
+    staging.objects[f"runs/{run['id']}/state/shard-00000-a1.parquet"] = b"x"
+    staging.objects["runs/another/state/x.parquet"] = b"y"
+
+    job.finish("failed", error="stopped")
+    assert list(staging.objects) == ["runs/another/state/x.parquet"]  # only its own

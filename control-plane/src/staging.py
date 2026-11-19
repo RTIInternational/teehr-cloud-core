@@ -27,6 +27,9 @@ class Staging(Protocol):
     def upload_url(self, key: str, ttl_seconds: int) -> str:
         """A URL to PUT one object to, valid for ``ttl_seconds``."""
 
+    def internal_upload_url(self, key: str, ttl_seconds: int) -> str:
+        """A PUT URL signed for the address the control plane (and its jobs) use."""
+
     def download_url(self, key: str, ttl_seconds: int) -> str:
         """A URL to GET one object from, valid for ``ttl_seconds``."""
 
@@ -87,6 +90,13 @@ class S3Staging:
 
     def upload_url(self, key: str, ttl_seconds: int) -> str:
         return self._signer.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=ttl_seconds,
+        )
+
+    def internal_upload_url(self, key: str, ttl_seconds: int) -> str:
+        return self._s3.generate_presigned_url(
             "put_object",
             Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=ttl_seconds,

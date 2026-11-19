@@ -1,6 +1,7 @@
 """The dataset registry (Phase 2.1): register, list, get, delete - tables are
 created and dropped as the caller."""
 
+import pyarrow as pa
 import pytest
 
 from src.main import app
@@ -53,6 +54,27 @@ class FakeTables:
         self.written.setdefault((namespace, name), []).append(data)
         self.by_snapshot = {**getattr(self, "by_snapshot", {}), self.snapshot: data}
         return WriteResult(self.snapshot)
+
+    def write_file(self, token, namespace, name, data, file_name):
+        self.calls.append(("write_file", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        self.files = getattr(self, "files", {})
+        path = f"s3://warehouse/{namespace}/{name}/data/{file_name}"
+        self.files[path] = data
+        return path
+
+    def commit_files(self, token, namespace, name, paths, overwrite_filter=None):
+        """The files' rows, as one write (the fake keeps every write's rows)."""
+        self.calls.append(("commit_files", token, namespace, name))
+        data = pa.concat_tables([self.files.pop(p) for p in paths])
+        self.calls.pop()
+        return self.write(token, namespace, name, data, "overwrite", overwrite_filter)
+
+    def delete_files(self, token, namespace, name, paths):
+        self.calls.append(("delete_files", token, namespace, name))
+        for path in paths:
+            getattr(self, "files", {}).pop(path, None)
 
     def has_snapshot(self, token, namespace, name, snapshot_id):
         self.calls.append(("has_snapshot", token, namespace, name))
