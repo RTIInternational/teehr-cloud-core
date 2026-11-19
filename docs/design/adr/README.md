@@ -39,6 +39,8 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0014](0014-api-jobs-as-kubernetes-jobs.md) | Work the API starts runs as Kubernetes Jobs, not Prefect | Accepted (2026-11-15) |
 | [0015](0015-decompose-teehr-by-extraction.md) | Decompose `teehr` by extraction; legacy `teehr` frozen until cutover | Proposed (2026-11-17) |
 | [0016](0016-jobs-write-in-process.md) | Jobs write their data in-process; the control plane keeps the record (amends 0004) | Accepted (2026-11-18) |
+| [0017](0017-runs-across-pods.md) | A run's shards run across pods, from a queue the control plane keeps (amends 0014) | Proposed |
+| [0018](0018-credentials.md) | Credentials: delegated sessions in the control plane; personal tokens and a CLI login | Proposed |
 
 ## Phase 0 exit checklist
 
