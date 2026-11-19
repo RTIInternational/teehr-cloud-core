@@ -323,3 +323,34 @@ def test_count_is_the_rows_a_read_keeps_not_its_files(iceberg):
     assert iceberg.rows(Read("p", "fcst", COLS, day)) == 3 * 3 * 24  # whole files
     assert iceberg.count(Read("p", "fcst", COLS, day)) == 3 * 3 * 12
     assert iceberg.count(Read("p", "fcst", COLS, day, keys=["a1", "c0"])) == 2 * 12
+
+
+def test_new_tables_get_the_layout_defaults_and_writes_follow_them(
+    tmp_path, monkeypatch
+):
+    import pyarrow.parquet as pq
+
+    from src import tables as t
+
+    monkeypatch.setitem(t.LAYOUT_DEFAULTS, "write.parquet.row-group-limit", "10")
+    tables = t.PolarisTables.at({
+        "type": "sql", "uri": f"sqlite:///{tmp_path}/c.db",
+        "warehouse": f"file://{tmp_path}/w",
+    })  # fmt: skip
+    tables._catalog("token").create_namespace("p")
+    columns = [{"name": "series_key", "type": "string"}, {"name": "v", "type": "int64"}]
+    layout = t.Layout(sort=("series_key",), properties={"teehr.type": "x"})
+    tables.create_table("token", "p", "x", columns, None, layout)
+
+    table = tables._catalog("token").load_table(("p", "x"))
+    assert table.properties["teehr.type"] == "x"
+    for key, value in t.LAYOUT_DEFAULTS.items():
+        assert table.properties[key] == value
+    data = pa.table({"series_key": [f"s{i:02d}" for i in range(25)],
+                     "v": pa.array(range(25), pa.int64())})  # fmt: skip
+    tables.write("token", "p", "x", data, "append")
+    files = [f.file.file_path for f in table.refresh().scan().plan_files()]
+    groups = sum(
+        pq.ParquetFile(f.removeprefix("file://")).num_row_groups for f in files
+    )
+    assert groups == 3  # 25 rows at 10 a row group
