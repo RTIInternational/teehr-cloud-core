@@ -97,7 +97,8 @@ class GrantClient:
 
     def token(self, fresh: bool = False) -> str:
         if fresh or time.time() > self._expires - 60:
-            body = self._grant("POST", "token").json()
+            params = {"fresh": "true"} if fresh else None
+            body = self._grant("POST", "token", params=params).json()
             self._token, self._expires = (
                 body["access_token"],
                 time.time() + body["expires_in"],
