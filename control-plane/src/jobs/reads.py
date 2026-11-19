@@ -23,7 +23,7 @@ import bisect
 import hashlib
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,7 +40,22 @@ from teehr_core.sql import lit, q
 from src.expressions import compile_filter
 from src.tables import DataMismatch
 
-__all__ = ["CatalogAccess", "Read", "Warehouse"]
+__all__ = ["COUNTERS", "CatalogAccess", "Read", "Warehouse", "count_delta"]
+
+#: What a read adds up, per table (summed across a run's pods).
+COUNTERS = ("reads", "file_reads", "row_group_reads", "file_bytes", "bytes_read")
+
+
+def count_delta(before: dict, after: dict) -> dict[str, dict[str, int]]:
+    """The reads between two :meth:`Warehouse.counts` (tables read since)."""
+    out = {}
+    for ref, t in after.items():
+        was = before.get(ref) or {}
+        delta = {name: t.get(name, 0) - was.get(name, 0) for name in COUNTERS}
+        if any(delta.values()):
+            out[ref] = delta
+    return out
+
 
 log = logging.getLogger("src.jobs")
 
@@ -276,35 +291,40 @@ class Warehouse:
     def _tally(
         self, ref: str, tasks: list, groups: list[tuple[str, int, int]] | None = None
     ) -> None:
-        t = self._planned.setdefault(ref, {
-            "reads": 0, "file_reads": 0, "file_bytes": 0, "paths": set(),
-            "group_reads": 0, "groups": set(), "bytes": 0,
-        })  # fmt: skip
+        t = self._planned.setdefault(ref, dict.fromkeys(COUNTERS, 0))
         t["reads"] += 1
         t["file_reads"] += len(tasks)
         t["file_bytes"] += sum(task.file.file_size_in_bytes for task in tasks)
-        t["paths"].update(task.file.file_path for task in tasks)
         if groups is None:  # not known (deletes): the files, whole
-            t["bytes"] += sum(task.file.file_size_in_bytes for task in tasks)
+            t["bytes_read"] += sum(task.file.file_size_in_bytes for task in tasks)
             return
-        t["group_reads"] += len(groups)
-        t["groups"].update((path, i) for path, i, _ in groups)
-        t["bytes"] += sum(size for _, _, size in groups)
+        t["row_group_reads"] += len(groups)
+        t["bytes_read"] += sum(size for _, _, size in groups)
 
-    def read_stats(self) -> dict[str, dict[str, int]]:
-        """Per table read: the reads; the distinct files and row groups they read,
-        and how many file and row-group reads that took; the bytes of the files and
-        of the row groups read. A read reads the row groups of its files that its
-        keys can't rule out, so ``row_group_reads`` near ``row_groups`` means the
-        shards' keys sit in their own row groups; near ``row_groups`` x ``reads``,
-        every shard read every one. ``bytes_read`` is what they hold (compressed)."""
+    def counts(self) -> dict[str, dict[str, int]]:
+        """This pod's read counters so far, per table (they add up across pods)."""
+        return {ref: dict(t) for ref, t in self._planned.items()}
+
+    def read_stats(self, others: Iterable[dict] = ()) -> dict[str, dict[str, int]]:
+        """Per table read: the reads, how many file and row-group reads they took,
+        and the bytes of those files and row groups (compressed), this pod's plus
+        ``others``' (counters other pods' shards reported); and ``files``, the files
+        the run planned to read. A read reads the row groups of its files that its
+        keys can't rule out: ``file_reads`` near ``files`` means the shards' keys sit
+        in their own files (the table is sorted by them); ``bytes_read`` far below
+        ``file_bytes``, that row groups were skipped."""
+        total = self.counts()
+        for other in others:
+            for ref, counters in (other or {}).items():
+                t = total.setdefault(ref, dict.fromkeys(COUNTERS, 0))
+                for name in COUNTERS:
+                    t[name] += counters.get(name, 0)
+        planned: dict[str, set[str]] = {}
+        for (ref, _), tasks in self._plans.items():
+            planned.setdefault(ref, set()).update(t.file.file_path for t in tasks)
         return {
-            ref: {"reads": t["reads"], "files": len(t["paths"]),
-                  "file_reads": t["file_reads"], "row_groups": len(t["groups"]),
-                  "row_group_reads": t["group_reads"], "file_bytes": t["file_bytes"],
-                  "bytes_read": t["bytes"]}
-            for ref, t in self._planned.items()
-        }  # fmt: skip
+            ref: {**t, "files": len(planned.get(ref, ()))} for ref, t in total.items()
+        }
 
     def _pushdown(self, read: Read, keys: bool = True) -> ice.BooleanExpression:
         parts: list[ice.BooleanExpression] = []

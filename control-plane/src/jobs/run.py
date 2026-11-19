@@ -57,7 +57,7 @@ from teehr_core.spec.models import AttributeField, WithinField
 from src.evaluations import SpecProblems, catalog_from
 from src.expressions import overwrite_expression
 from src.jobs.load import GrantClient, LoadFailed, _problem
-from src.jobs.reads import CatalogAccess, Read, Warehouse
+from src.jobs.reads import CatalogAccess, Read, Warehouse, count_delta
 from src.tables import (
     DataMismatch,
     PolarisTables,
@@ -1037,6 +1037,7 @@ def _evaluate(
         "dm": {"step": dm.step, "max_lag": dm.max_lag} if dm else None,
         "p_reach": int(p_reach.total_seconds()),
         "snapshots": dict(wh.snapshots),
+        "shards": len(shards),
     }
     queue = ShardQueue(client)
     queue.put(plan, shards)
@@ -1085,15 +1086,21 @@ def _evaluate(
         out["persistence_reach"] = int(p_reach.total_seconds())
     if keys:
         out["shards"] = len(shards)
-    return _finished(out, how, inputs, wh, dirty)
+    others = [o.get("reads") for o in outs if o.get("pod") != work.pod]
+    return _finished(out, how, inputs, wh, dirty, others)
 
 
 def _finished(
-    out: dict, how: dict, inputs: Inputs, wh: Warehouse, dirty: set[str] | None
+    out: dict,
+    how: dict,
+    inputs: Inputs,
+    wh: Warehouse,
+    dirty: set[str] | None,
+    others: Iterable[dict] = (),
 ) -> dict:
     """The run's result: what it wrote, read, and how it went (full, incremental)."""
     out["inputs"] = inputs.snapshots()
-    out["reads"] = wh.read_stats()
+    out["reads"] = wh.read_stats(others)  # this pod's reads and the others' shards
     if how["mode"] == "incremental":
         out["changed"] = how["months"]
         how = {**how, "months": sorted(dirty)}
@@ -1124,9 +1131,13 @@ class ShardWork:
         self.backend = DuckDBBackend(dm=dm, finest_set_only=True)
         self.outputs = outputs
         self.preloaded = preloaded or {}  # shards' rows read in planning
+        self.wh = wh
+        self.pod = os.environ.get("HOSTNAME") or "pod-0"
+        self.total = plan.get("shards") or 0
 
     def __call__(self, index: int, attempt: int, keys: Sequence[str] | None) -> dict:
         parsed, started = self.parsed, time.monotonic()
+        counted_before = self.wh.counts()
         rows, series = self.preloaded.pop(index, None) or self.inputs.load(keys)
         self.preloaded.clear()  # another shard: what planning read isn't needed
         rows_read = sum(t.num_rows for t in rows.values())
@@ -1141,8 +1152,8 @@ class ShardWork:
         pairs = self.backend.pairs(build_plan(parsed, catalog))
         del catalog
         log.info(
-            "shard %d (try %d): %s observed series, %d rows read, %d pairs, %.1fs, "
-            "peak memory %.0f MB", index, attempt,
+            "shard %d/%d (try %d): %s observed series, %d rows read, %d pairs, %.1fs, "
+            "peak memory %.0f MB", index + 1, self.total, attempt,
             "all" if keys is None else len(keys), rows_read, pairs.num_rows,
             time.monotonic() - started, peak_memory_mb(),
         )  # fmt: skip
@@ -1156,6 +1167,8 @@ class ShardWork:
                 pairs = _sql(pairs, f"SELECT * FROM t WHERE {self.counted}")
         if self.run.get("pairs"):
             out |= self.outputs.add_pairs(index, attempt, pairs)
+        out["pod"] = self.pod
+        out["reads"] = count_delta(counted_before, self.wh.counts())
         return out
 
 
