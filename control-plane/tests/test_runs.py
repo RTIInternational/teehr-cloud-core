@@ -66,7 +66,7 @@ class FakeWarehouse:
     (in DuckDB, as the real one does), each table at one snapshot."""
 
     def __init__(self, lake):
-        self.lake, self.snapshots = lake, {}
+        self.lake, self.snapshots, self.read_counts = lake, {}, {}
 
     def read(self, read):
         from teehr_core.engine.connect import arrow_table, memory_connection, register
@@ -75,6 +75,7 @@ class FakeWarehouse:
 
         lake, key = self.lake, (read.project, read.name)
         lake.reads.append((read.project, read.name, read.where))
+        self.read_counts[key] = self.read_counts.get(key, 0) + 1
         lake.shard_reads.append((read.project, read.name, read.keys))
         if key in lake.data:
             table = lake.data[key]
@@ -112,8 +113,15 @@ class FakeWarehouse:
     def count(self, read):  # the rows a read keeps (the real one counts in files)
         return self.rows(read)
 
-    def read_stats(self):
-        return {}
+    def counts(self):  # one read per table read (the real one counts files too)
+        return {f"{ns}.{n}": {"reads": c} for (ns, n), c in self.read_counts.items()}
+
+    def read_stats(self, others=()):
+        total = {ref: dict(t) for ref, t in self.counts().items()}
+        for other in others:
+            for ref, t in (other or {}).items():
+                total.setdefault(ref, {"reads": 0})["reads"] += t["reads"]
+        return total
 
     def close(self):
         pass
@@ -1039,13 +1047,17 @@ def test_another_pod_runs_the_shards_and_pod_zero_commits_them(
             return real(work, index, attempt, keys)
 
         monkeypatch.setattr(runner.ShardWork, "__call__", tracked)
+        monkeypatch.setenv("HOSTNAME", "pod-1")  # another pod
         runner.work_shards(pod1, pod1_task)
+        monkeypatch.delenv("HOSTNAME")
         monkeypatch.setattr(runner.ShardWork, "__call__", real)
 
     monkeypatch.setattr(runner.ShardQueue, "put", put_then_pod1)
     monkeypatch.setenv("RUN_ROWS_PER_SHARD", "1")
     sharded = run_once(client, kube, {"full": True})
     assert sorted(pod1_ran) == [0, 1]  # pod 0 found the queue done
+    # The run's reads include pod 1's: both shards read the observations there.
+    assert sharded["reads"]["flood.usgs_obs"]["reads"] == 2  # all pod 1's
     assert sharded["shards"] == 2 and sharded["pairs"]["rows"] == whole["pairs"]["rows"]
     _same(_rows(tables.written[("flood", "results_e_v1")][-1]), want)
     assert not tables.files and not staging.objects  # all committed, work files gone

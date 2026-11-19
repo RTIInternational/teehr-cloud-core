@@ -230,10 +230,10 @@ def test_stale_token_gets_the_refresh_code(client, lake):
     assert resp.json()["code"] == "token_refresh_required"
 
 
-def test_read_stats_count_files_once_and_every_read_of_them():
+def test_read_stats_add_up_every_pods_reads_against_the_files_planned():
     from types import SimpleNamespace
 
-    from src.jobs.reads import CatalogAccess, Warehouse
+    from src.jobs.reads import CatalogAccess, Warehouse, count_delta
 
     def task(path, size):
         return SimpleNamespace(
@@ -244,16 +244,23 @@ def test_read_stats_count_files_once_and_every_read_of_them():
         CatalogAccess("http://polaris/api/catalog", "w", "teehr"), lambda: "t"
     )
     try:
-        wh._tally("p.fcst", [task("s3://a", 10), task("s3://b", 20)])  # shard 1
-        wh._tally("p.fcst", [task("s3://b", 20), task("s3://c", 5)])  # shard 2
+        wh._plans[("p.fcst", None)] = [task("s3://a", 10), task("s3://b", 20),
+                                       task("s3://c", 5)]  # fmt: skip
+        before = wh.counts()
+        wh._tally("p.fcst", [task("s3://a", 10), task("s3://b", 20)])  # a shard
         wh._tally("p.obs", [])
-        none = {"row_groups": 0, "row_group_reads": 0}  # not known: files whole
-        assert wh.read_stats() == {
-            "p.fcst": {"reads": 2, "files": 3, "file_reads": 4, **none,
-                       "file_bytes": 55, "bytes_read": 55},
-            "p.obs": {"reads": 1, "files": 0, "file_reads": 0, **none,
-                      "file_bytes": 0, "bytes_read": 0},
-        }  # fmt: skip
+        shard = count_delta(before, wh.counts())
+        assert shard == {"p.fcst": {"reads": 1, "file_reads": 2, "row_group_reads": 0,
+                                    "file_bytes": 30, "bytes_read": 30},
+                         "p.obs": {"reads": 1, "file_reads": 0, "row_group_reads": 0,
+                                   "file_bytes": 0, "bytes_read": 0}}  # fmt: skip
+        # Another pod's shard read c; this pod's stats add it.
+        other = {"p.fcst": {"reads": 1, "file_reads": 1, "row_group_reads": 2,
+                            "file_bytes": 5, "bytes_read": 3}}  # fmt: skip
+        stats = wh.read_stats([other, None])
+        assert stats["p.fcst"] == {"reads": 2, "file_reads": 3, "row_group_reads": 2,
+                                   "file_bytes": 35, "bytes_read": 33, "files": 3}  # fmt: skip
+        assert stats["p.obs"]["files"] == 0
     finally:
         wh.close()
 
@@ -312,7 +319,7 @@ def test_shard_reads_plan_once_and_read_only_files_that_can_hold_their_keys(iceb
         "reads": 3, "files": 3, "file_reads": 1 + 2 + 0,
     }  # fmt: skip
     # Row groups: the series asked for only (b1, b2; a0; c2), of 9.
-    assert (stats["row_groups"], stats["row_group_reads"]) == (4, 4)
+    assert stats["row_group_reads"] == 4
     assert 0 < stats["bytes_read"] < stats["file_bytes"]
 
 
