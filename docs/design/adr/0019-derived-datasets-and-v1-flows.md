@@ -1,6 +1,6 @@
 # ADR-0019: Platform producers write the warehouse directly with a shared writer; runs find changes in Iceberg metadata
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** TEEHR team
 - **Related:** #148, #251, ADR-0011 (teehr-core), ADR-0013 (the boundary), ADR-0014 (jobs),
