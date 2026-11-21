@@ -1369,3 +1369,28 @@ def test_shipping_logs_keeps_order_and_never_fails_the_job():
     messages = [line["message"] for b in sent for line in b["lines"]]
     assert messages[:3] == ["line 0", "line 1", "line 2"] and messages[-1] == "after"
     assert sent[-1]["pod"] == "pod-1" and sent[-1]["lines"][-1]["level"] == "WARNING"
+
+
+def test_a_run_reads_a_percentiles_dataset_for_a_threshold(client, lake, jobs, tables):  # noqa: F811
+    from tests.test_runs_plan import derived
+
+    kube, _ = jobs
+    derived(client, "percentiles", "usgs_p")
+    lake.put("usgs_p", pa.table({
+        "series_key": ["usgs-a", "usgs-b"], "percentile": [90.0, 90.0],
+        "value": [2.5, 25.0], "count": [100, 100], "years": [12.0, 12.0],
+    }))  # fmt: skip
+    body = spec(fields=[{"name": "p90", "fn": "percentile", "from": "usgs_p",
+                         "percentile": 90}])  # fmt: skip
+    body["aggregate"][0]["metrics"] = [
+        "count",
+        {"name": "hits", "threshold": {"column": "p90"}},
+    ]
+    saved(client, body)
+    result = run_once(client, kube)
+    assert result["mode"] == "full"
+    rows = {r["primary_series_key"]: r for r in
+            tables.written[("flood", "results_e_v1")][-1].to_pylist()}  # fmt: skip
+    hits = next(c for c in rows["usgs-a"] if c.startswith("hit"))
+    # usgs-a: obs >= 2.5 at hours 2, 3; sim (nwm-1) only at hour 3. usgs-b: both at 2, 3.
+    assert (rows["usgs-a"][hits], rows["usgs-b"][hits]) == (1, 2)

@@ -172,7 +172,36 @@ def test_location_attributes_need_the_layer_to_have_them(client, datasets):
     assert resp.json()["stages"][0]["group_by"][-1] == "state"
 
 
-def test_features_teehr_cant_run_yet_are_refused_with_why(client, datasets):
+def derived(client, kind, name, observed="usgs_obs"):
+    resp = create(client, {"type": kind, "name": name, "observed": observed})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_derived_datasets_are_registered_from_an_observed_timeseries(client, datasets):
+    body = derived(client, "percentiles", "usgs_p")
+    assert body["kind"] == "percentiles" and body["key_columns"] == []
+    assert body["derived"]["observed"] == "usgs_obs"
+    assert body["derived"]["variable"] == "streamflow"
+    assert [c["name"] for c in body["columns"]] == [
+        "series_key", "percentile", "value", "count", "years"
+    ]  # fmt: skip
+    clim = derived(client, "climatology", "usgs_clim")
+    assert clim["key_columns"] == ["series_key", "day_of_year", "hour"]
+    properties = datasets.layouts["usgs_clim"][1].properties
+    assert properties["teehr.type"] == "climatology"
+    assert properties["teehr.role"] == "auxiliary"
+
+    resp = create(client, {"type": "naive_scale", "name": "x", "observed": "nwm_sr"})
+    assert resp.status_code == 422 and "built from observations" in resp.text
+    resp = create(client, {"type": "naive_scale", "name": "x", "observed": "usgs_nwm"})
+    assert resp.status_code == 422 and "not a timeseries" in resp.text
+
+
+def test_specs_using_derived_datasets_plan(client, datasets):
+    derived(client, "percentiles", "usgs_p")
+    derived(client, "naive_scale", "usgs_ns")
+    derived(client, "climatology", "usgs_clim")
     body = spec(
         secondary=("nwm_sr",),
         fields=[
@@ -182,17 +211,15 @@ def test_features_teehr_cant_run_yet_are_refused_with_why(client, datasets):
     )
     body["inputs"]["secondary"].append({"generate": "climatology", "from": "usgs_clim"})
     resp = client.post(URL, json=body, headers=ALICE)
-    assert resp.status_code == 422, resp.text
-    errors = resp.json()["errors"]
-    assert [(e["loc"][1:], e["type"]) for e in errors] == [
-        (["inputs", "secondary", 1], "unsupported"),
-        (["fields", 0], "unsupported"),
-        (["fields", 1], "unsupported"),
-    ]
-    assert all("isn't supported in TEEHR yet" in e["msg"] and "#251" in e["msg"]
-               for e in errors)  # fmt: skip
-    assert "climatology dataset" in errors[0]["msg"]
-    assert "percentiles dataset" in errors[1]["msg"]
+    assert resp.status_code == 200, resp.text
+
+
+def test_a_derived_dataset_must_be_the_kind_a_spec_uses(client, datasets):
+    derived(client, "naive_scale", "usgs_ns")
+    body = spec(fields=[{"name": "p90", "fn": "percentile", "from": "usgs_ns",
+                         "percentile": 90}])  # fmt: skip
+    [error] = problems(client.post(URL, json=body, headers=ALICE))
+    assert "'usgs_ns' is not a percentiles dataset" in error["msg"]
 
 
 def test_a_plan_warns_what_a_spec_does_that_it_may_not_expect(client, datasets):

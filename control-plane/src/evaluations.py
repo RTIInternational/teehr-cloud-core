@@ -23,15 +23,19 @@ from teehr_core.engine import Catalog, PlanError, build_plan
 from teehr_core.engine import Dataset as EngineDataset
 from teehr_core.engine.duckdb_backend import DuckDBBackend
 from teehr_core.engine.plan import labels_name
-from teehr_core.model.dataset_types import CROSSWALK, LAYER, TIMESERIES, arrow_schema
+from teehr_core.model.dataset_types import (
+    CROSSWALK,
+    DERIVED,
+    LAYER,
+    TIMESERIES,
+    arrow_schema,
+)
 from teehr_core.model.periods import PeriodRegistry
 from teehr_core.model.units import UnitRegistry
 from teehr_core.spec import EvaluationSpec, load_spec
 from teehr_core.spec.models import (
     AttributeField,
     GeneratedInput,
-    NaiveScaleField,
-    PercentileField,
     WithinField,
 )
 
@@ -204,6 +208,13 @@ def catalog_from(
                     statistic=props.get("statistic"), period=props.get("period"),
                 )
             )  # fmt: skip
+        elif d["kind"] in DERIVED:  # read as auxiliary, in the observed unit
+            datasets.append(
+                EngineDataset(
+                    name, "auxiliary", table, kind=d["kind"],
+                    variable=props.get("variable"), unit=props.get("unit"),
+                )
+            )  # fmt: skip
         elif d["kind"] == CROSSWALK:
             if manifest_["relation_reversed"]:
                 swap = {"left_key": "right_key", "right_key": "left_key"}
@@ -331,34 +342,6 @@ class PlanSummary:
 
 
 #: Where the derived datasets some features need are tracked.
-DERIVED_ISSUE = "teehr-cloud-core#251"
-
-
-def unsupported(spec: EvaluationSpec) -> list[dict[str, Any]]:
-    """Spec features TEEHR can't run yet, as problems: each needs a dataset derived
-    from an observed one (climatology, percentiles, naive scale), which TEEHR can't
-    make yet."""
-    problems = []
-
-    def refuse(what: str, needs: str, *loc: str | int) -> None:
-        problems.append({
-            "loc": ["body", *loc],
-            "msg": f"{what} isn't supported in TEEHR yet: it needs a {needs} dataset, "
-                   f"which TEEHR can't make yet ({DERIVED_ISSUE})",
-            "type": "unsupported",
-        })  # fmt: skip
-
-    for i, p in enumerate(spec.inputs.secondary):
-        if isinstance(p, GeneratedInput) and p.generate in ("climatology", "blend"):
-            refuse(f"generate: {p.generate}", "climatology", "inputs", "secondary", i)
-    for i, f in enumerate(spec.fields):
-        if isinstance(f, PercentileField):
-            refuse(f"field '{f.name}' (fn: percentile)", "percentiles", "fields", i)
-        elif isinstance(f, NaiveScaleField):
-            refuse(f"field '{f.name}' (fn: naive_scale)", "naive_scale", "fields", i)
-    return problems
-
-
 def warnings(spec: EvaluationSpec) -> list[str]:
     """What a spec does that it may not expect: runs that are always full."""
     out = []
@@ -376,9 +359,6 @@ def plan(session: Session, project: Project, body: Any) -> PlanSummary:
     """Parse, resolve and plan a spec (raises :class:`SpecProblems`), with any
     warnings about what it does."""
     spec = parse(body)
-    refused = unsupported(spec)
-    if refused:
-        raise SpecProblems(refused)
     found = manifest(session, project, spec)
     try:
         planned = build_plan(spec, catalog_from(found))

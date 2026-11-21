@@ -372,6 +372,28 @@ class CrosswalkCreate(StrictInput):
         return _unique_names(columns)
 
 
+DerivedKind = Literal["climatology", "percentiles", "naive_scale"]
+
+
+class DerivedCreate(StrictInput):
+    """A dataset derived from an observed timeseries, per its series (ADR-0019):
+    `climatology` (mean per day of year and hour), `percentiles` (values at fixed
+    percentiles of the record) or `naive_scale` (MASE's scale per lag). Its columns
+    are fixed by its type; it takes the observed dataset's variable and unit. A build
+    flow fills it (or replaces it) in one commit."""
+
+    type: DerivedKind
+    name: str = Field(
+        pattern=PROJECT_NAME_PATTERN, description="Unique within the project"
+    )
+    description: str | None = Field(default=None, max_length=2000)
+    observed: str = Field(
+        pattern=DATASET_REF_PATTERN,
+        description="The observed timeseries it's built from (`<name>` or "
+        "`public.<name>`)",
+    )
+
+
 def _dataset_type(value) -> str:
     if isinstance(value, dict):
         return value.get("type", "table")
@@ -382,7 +404,10 @@ DatasetRegistration = Annotated[
     Annotated[DatasetCreate, Tag("table")]
     | Annotated[TimeseriesCreate, Tag("timeseries")]
     | Annotated[LayerCreate, Tag("layer")]
-    | Annotated[CrosswalkCreate, Tag("crosswalk")],
+    | Annotated[CrosswalkCreate, Tag("crosswalk")]
+    | Annotated[DerivedCreate, Tag("climatology")]
+    | Annotated[DerivedCreate, Tag("percentiles")]
+    | Annotated[DerivedCreate, Tag("naive_scale")],
     Discriminator(_dataset_type),
 ]
 
@@ -418,11 +443,22 @@ class CrosswalkOut(BaseModel):
     source: str | None = None
 
 
+class DerivedOut(BaseModel):
+    """A derived dataset's dataset-level metadata (it's read as `auxiliary`)."""
+
+    observed: str = Field(description="The observed timeseries it's built from")
+    variable: str
+    unit: str
+
+
 class DatasetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str
-    kind: str = Field(description="table | timeseries | series | layer | crosswalk")
+    kind: str = Field(
+        description="table | timeseries | series | layer | crosswalk | climatology "
+        "| percentiles | naive_scale"
+    )
     description: str | None
     columns: list[DatasetColumn]
     key_columns: list[str] | None
@@ -434,6 +470,10 @@ class DatasetOut(BaseModel):
     )
     crosswalk: CrosswalkOut | None = Field(
         default=None, description="For a crosswalk: its metadata"
+    )
+    derived: DerivedOut | None = Field(
+        default=None,
+        description="For a climatology, percentiles or naive_scale: its metadata",
     )
     table: str = Field(
         validation_alias="table_identifier",
@@ -455,6 +495,8 @@ class DatasetOut(BaseModel):
         }  # fmt: skip
         if data.kind in ("timeseries", "layer", "crosswalk"):
             out[data.kind] = data.properties or {}
+        elif data.kind in ("climatology", "percentiles", "naive_scale"):
+            out["derived"] = data.properties or {}
         return out
 
 
