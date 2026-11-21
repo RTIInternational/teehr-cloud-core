@@ -21,6 +21,10 @@ ALICE = auth("alice")
 OPERATION_IDS = {
     "health",
     "ready",
+    "start_token_sign_in",
+    "finish_token_sign_in",
+    "list_tokens",
+    "revoke_token",
     "create_project",
     "list_projects",
     "get_project",
@@ -115,7 +119,9 @@ def test_every_api_operation_documents_its_errors():
         if path in ("/health", "/ready"):
             continue
         responses = op["responses"]
-        assert "401" in responses, f"{method} {path} doesn't document 401"
+        # Signing in to make a personal token needs no sign-in (ADR-0018).
+        if not path.startswith("/v1/tokens/device"):
+            assert "401" in responses, f"{method} {path} doesn't document 401"
         for code, body in responses.items():
             if code.startswith(("4", "5")):
                 assert list(body["content"]) == ["application/problem+json"]

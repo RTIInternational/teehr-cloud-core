@@ -30,6 +30,7 @@ from src.routes import (
     job_grants,
     projects,
     runs,
+    tokens,
     uploads,
 )
 
@@ -95,6 +96,7 @@ app.include_router(uploads.router)
 app.include_router(job_grants.router)
 app.include_router(runs.router)
 app.include_router(evaluations.router)
+app.include_router(tokens.router)
 errors.install(app)
 
 

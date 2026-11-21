@@ -8,6 +8,7 @@ state up to date with its Kubernetes Job, and cancel it. The pod side is
 
 import hashlib
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -43,10 +44,13 @@ def start_job(
     project: Project,
     caller: str,
     caller_token: str,
+    caller_session: uuid.UUID | None = None,
 ) -> Job:
-    """Record and start a job acting as the caller. The caller's token is
-    exchanged first, so a job never starts without a way to act as them.
-    Raises DelegationError, KubeError, JobRefused."""
+    """Record and start a job acting as the caller: through ``caller_session``
+    when they used a personal token (its offline session can't be exchanged),
+    otherwise a session of its own, from exchanging their token first, so a job
+    never starts without a way to act as them. Raises DelegationError, KubeError,
+    JobRefused."""
     active = session.scalar(
         select(func.count())
         .select_from(Job)
@@ -57,7 +61,6 @@ def start_job(
             f"'{project.name}' already has {active} jobs running; try again when "
             "one finishes"
         )
-    tokens = delegation.exchange(caller_token)
     grant = GRANT_PREFIX + secrets.token_urlsafe(32)
     expires = datetime.now(UTC) + GRANT_TTL
     job = Job(
@@ -66,10 +69,14 @@ def start_job(
         created_by=caller,
         grant_hash=grant_hash(grant),
         grant_expires_at=expires,
-        session=open_session(
-            sealer, subject=caller, kind=JOB, tokens=tokens, expires_at=expires
-        ),
     )
+    if caller_session is not None:
+        job.session_id = caller_session
+    else:
+        job.session = open_session(
+            sealer, subject=caller, kind=JOB, tokens=delegation.exchange(caller_token),
+            expires_at=expires,
+        )  # fmt: skip
     session.add(job)
     session.flush()
     job.k8s_name = kube.create_job(job_manifest(settings, kind, str(job.id), grant))

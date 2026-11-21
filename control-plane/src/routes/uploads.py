@@ -724,6 +724,7 @@ def ingest_upload(
             session, settings, kube, delegation, sealer,
             kind="upload", project=project,
             caller=identity.subject, caller_token=identity.token,
+            caller_session=identity.session_id,
         )  # fmt: skip
     except JobRefused as exc:
         session.rollback()
