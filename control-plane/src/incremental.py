@@ -4,11 +4,13 @@ A run keeps its first stage's state per group and month of value_time (when the
 spec allows: ``jobs.run.keeps_state``). The next run of the same version can then
 recompute only the months whose inputs changed and merge them with the rest:
 
-- what changed: the writes to the run's inputs since the last run with state
-  started (write lineage, ``dataset_writes``). A timeseries write records the
-  months of value_time it touched; every other write (an overwrite, which may
-  remove rows anywhere, or a series table, crosswalk or layer) changes too much
-  to tell, so the run is a full one;
+- what changed: the run job finds it in the inputs' Iceberg snapshots, from the
+  ones the last run with state read (``result.inputs``) to the ones it pins
+  (ADR-0019, ``teehr_core.warehouse.changes``), whoever wrote them. A timeseries
+  gives the months of value_time its changed files span; a series table that only
+  gained series changes nothing by itself; any other change (to a series table,
+  crosswalk or layer), or history that's gone, makes the run a full one. Here, the
+  API decides what doesn't need the warehouse and passes the last run's snapshots;
 - what a month's pairs depend on: that month's rows; with a persistence input also
   the observations up to its reach before (``max_age`` plus the longest lead), and
   with a Diebold-Mariano test the lag partners up to ``step × lags`` before. The
@@ -17,8 +19,8 @@ recompute only the months whose inputs changed and merge them with the rest:
   (exceedance, events, change) or a climatology or blend input (built from the whole
   record) makes every run full.
 
-Writes that land while a run reads count as new for the next one: at worst a
-month is recomputed twice.
+Writes that land while a run reads are after its pinned snapshots: the next run
+sees them once.
 """
 
 from __future__ import annotations
@@ -38,8 +40,7 @@ from teehr_core.spec.models import (
     WithinField,
 )
 
-from src.dataset_types import TIMESERIES
-from src.models import Dataset, DatasetWrite, EvaluationVersion, Project, Run
+from src.models import Dataset, EvaluationVersion, Project, Run
 
 
 def blockers(spec: EvaluationSpec) -> list[str]:
@@ -94,9 +95,9 @@ def decide(
     keeps_state: bool,
     full: bool = False,
 ) -> dict[str, Any]:
-    """``{"mode": "incremental", "months": [...], ...}`` (the months changed, those
-    of observations, and the stored reaches) or ``{"mode": "full", "why": ...}`` for
-    a run about to start."""
+    """``{"mode": "incremental", "since": {...}, ...}`` (the snapshots the last run
+    read, and the stored reaches) or ``{"mode": "full", "why": ...}`` for a run
+    about to start."""
     if full:
         return _full("a full run was asked for")
     if not keeps_state:
@@ -122,54 +123,21 @@ def decide(
     if persistence and before.get("persistence_reach") is None:
         return _full("the stored state has no persistence reach")
     since = _aware(previous.started_at)
-    months: set[str] = set()
-    obs_months: set[str] = set()
-    for ref, d in manifest["datasets"].items():
-        targets = [(d["project"], d["name"], d["kind"])]
-        if d.get("series"):
-            targets.append((d["series"]["project"], d["series"]["name"], "series"))
-        for owner, name, kind in targets:
-            where = f"{owner}.{name}"
-            record = _dataset(session, owner, name)
-            if record is None:
-                return _full(f"'{where}' is gone")
-            if _aware(record.created_at) > since:
-                return _full(f"'{where}' is new since the last run")
-            writes = session.scalars(
-                select(DatasetWrite).where(
-                    DatasetWrite.dataset_id == record.id,
-                    DatasetWrite.written_at > since,
-                )
-            ).all()
-            if not writes:
-                continue
-            if kind != TIMESERIES:
-                return _full(f"'{where}' changed")
-            for w in writes:
-                if w.months is None:
-                    return _full(
-                        f"'{where}' was overwritten (rows anywhere may be gone)"
-                    )
-                months.update(w.months)
-                if ref == spec.inputs.primary.dataset and kind == TIMESERIES:
-                    obs_months.update(w.months)
-    for layer in manifest.get("location_layers", []):
-        where = f"{layer['project']}.{layer['name']}"
-        record = _dataset(session, layer["project"], layer["name"])
+    snapshots = before.get("inputs")
+    if not snapshots:
+        return _full("the last run didn't record its inputs' snapshots")
+    tables = [(d["project"], d["name"]) for d in manifest["datasets"].values()]
+    tables += [(x["project"], x["name"]) for x in manifest.get("location_layers", [])]
+    for owner, name in tables:
+        record = _dataset(session, owner, name)
         if record is None:
-            return _full(f"'{where}' is gone")
-        changed = session.scalar(
-            select(DatasetWrite.id).where(
-                DatasetWrite.dataset_id == record.id, DatasetWrite.written_at > since
-            )
-        )
-        if changed is not None or _aware(record.created_at) > since:
-            return _full(f"'{where}' changed (series' locations)")
+            return _full(f"'{owner}.{name}' is gone")
+        if _aware(record.created_at) > since:
+            return _full(f"'{owner}.{name}' is new since the last run")
     return {
         "mode": "incremental",
-        "months": sorted(months),
-        # Observations reach forward through persistence forecasts made from them.
-        "obs_months": sorted(obs_months),
+        # The snapshots the last run read: the job finds what changed since.
+        "since": snapshots,
         "dm": before.get("dm"),
         "persistence_reach": before.get("persistence_reach"),
         "since_run": str(previous.id),

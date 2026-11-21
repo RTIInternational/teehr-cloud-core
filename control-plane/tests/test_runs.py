@@ -44,6 +44,30 @@ class Lake:
         self.client, self.fake, self.data, self.reads = client, fake, {}, []
         self.shard_reads = []
         fake.read, fake.count = self.read, lambda *a, **k: 0
+        # Every commit to a table, as Iceberg keeps them: (snapshot, mode, rows).
+        self.commits: dict[tuple[str, str], list[tuple[int, str, pa.Table]]] = {}
+        write = fake.write
+
+        def logged(token, ns, name, data, mode, overwrite_filter=None):
+            result = write(token, ns, name, data, mode, overwrite_filter)
+            self.commits.setdefault((ns, name), []).append(
+                (
+                    result.snapshot_id,
+                    mode if overwrite_filter is None else "filtered",
+                    data,
+                )
+            )
+            return result
+
+        fake.write = logged
+
+    def base(self, ns, name):
+        """The snapshot a table seeded with ``put`` starts at."""
+        return 7_000 + len(name)
+
+    def current(self, ns, name):
+        commits = self.commits.get((ns, name))
+        return commits[-1][0] if commits else self.base(ns, name)
 
     def put(self, name, table):
         self.data[("flood", name)] = table
@@ -91,7 +115,9 @@ class FakeWarehouse:
             table = lake.fake.written[key][-1]
         else:
             raise KeyError(f"no table {key}")
-        self.snapshots.setdefault(f"{read.project}.{read.name}", 7_000 + len(read.name))
+        self.snapshots.setdefault(
+            f"{read.project}.{read.name}", self._current(read.project, read.name)
+        )
         where = []
         if read.keys is not None:
             where.append(f"{read.key} {in_list(sorted(set(read.keys)))}")
@@ -112,7 +138,39 @@ class FakeWarehouse:
         return n
 
     def pin(self, project, name):
-        self.snapshots.setdefault(f"{project}.{name}", 7_000 + len(name))
+        self.snapshots.setdefault(f"{project}.{name}", self._current(project, name))
+
+    def _current(self, project, name):
+        if (project, name) in self.lake.data:
+            return self.lake.current(project, name)
+        return 7_000 + len(name)
+
+    def changes(self, project, name, since):
+        """What Iceberg's snapshots would say changed (teehr_core.warehouse.changes)."""
+        from teehr_core.warehouse import Changes
+
+        ref = f"{project}.{name}"
+        pinned = self.snapshots.setdefault(ref, self._current(project, name))
+        commits = self.lake.commits.get((project, name), [])
+        history = [self.lake.base(project, name), *(c[0] for c in commits)]
+        if since not in history:
+            return Changes(added_only=False, unknown=f"snapshot {since} is gone")
+        months, added_only, n = set(), True, 0
+
+        def of(rows):
+            if "value_time" not in rows.column_names:
+                return set()
+            return {t.strftime("%Y-%m") for t in rows["value_time"].to_pylist() if t}
+
+        for snapshot, mode, rows in commits:
+            if not since < snapshot <= pinned:
+                continue
+            n += 1
+            added_only = added_only and mode == "append"
+            months |= of(rows)
+            if mode == "overwrite":  # every file goes: their months too
+                months |= of(self.lake.data.get((project, name), rows))
+        return Changes(commits=n, added_only=added_only, months=tuple(sorted(months)))
 
     def count(self, read):  # the rows a read keeps (the real one counts in files)
         return self.rows(read)
@@ -569,7 +627,35 @@ def test_full_runs_when_asked_or_when_more_than_months_changed(client, lake, job
     resp = client.post("/v1/projects/flood/datasets/usgs_obs/data", json=rows,
                        params={"mode": "overwrite"}, headers=ALICE)  # fmt: skip
     assert resp.status_code == 201 and resp.json()["months"] is None
-    assert "overwritten" in run_once(client, kube)["why"]
+    # The snapshots say which months the overwrite removed rows from, and added to.
+    again = run_once(client, kube)
+    assert (again["mode"], again["changed"]) == ("incremental", ["2026-01", "2026-02"])
+
+
+def test_writes_made_outside_the_api_are_seen(client, lake, jobs):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    run_once(client, kube)
+    # A flow writes February straight to the table (ADR-0019): no write record.
+    lake.commits[("flood", "usgs_obs")] = [
+        (9_100, "filtered", pa.table({"value_time": pa.array([FEB], TIMESTAMP)}))
+    ]
+    again = run_once(client, kube)
+    assert (again["mode"], again["changed"]) == ("incremental", ["2026-02"])
+
+
+def test_a_run_is_full_when_the_last_runs_snapshot_is_gone(
+    client, lake, jobs, monkeypatch
+):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse"]
+    saved(client, body)
+    run_once(client, kube)
+    monkeypatch.setattr(lake, "base", lambda ns, name: 1)  # expired
+    assert "is gone" in run_once(client, kube)["why"]
 
 
 def test_specs_whose_months_depend_on_others_run_in_full():

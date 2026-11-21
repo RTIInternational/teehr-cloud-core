@@ -36,6 +36,7 @@ from teehr_core.engine.memory import RUN_SHARE, default_memory_limit
 from teehr_core.engine.shards import in_list
 from teehr_core.spec.expressions import to_duckdb
 from teehr_core.sql import lit, q
+from teehr_core.warehouse import Changes, changes
 
 from src.expressions import compile_filter
 from src.tables import DataMismatch
@@ -181,6 +182,12 @@ class Warehouse:
             current = table.current_snapshot()
             self.snapshots[ref] = current.snapshot_id if current else None
         return table, self.snapshots[ref]
+
+    def changes(self, project: str, name: str, since: int | None) -> Changes:
+        """What changed in the table after snapshot ``since``, up to the one the run
+        is pinned to (ADR-0019)."""
+        table, pinned = self.table(project, name)
+        return changes(table, since, pinned)
 
     def pin(self, project: str, name: str) -> None:
         """Pin the table to its current snapshot (if it isn't already)."""
