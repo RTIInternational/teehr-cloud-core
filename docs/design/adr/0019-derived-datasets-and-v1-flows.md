@@ -137,8 +137,9 @@ through the API, which uses the same writer.**
   and keys in teehr-core (`model.dataset_types`):
   - climatology: `series_key`, `day_of_year` (1-366), `hour` (0-23, UTC), `value`, `count`; key
     (`series_key`, `day_of_year`, `hour`);
-  - percentiles: `series_key`, `percentile` (0-100), `value`, `count`, `years`; key (`series_key`,
-    `percentile`);
+  - percentiles: `series_key`, `percentile` (0-100), `value`, `count`, `years`; no key columns
+    (Iceberg can't key on the float `percentile`; builds replace the table whole, so nothing
+    upserts into it);
   - naive_scale: `series_key`, `lag`, `lag_seconds`, `scale`, `count`; key (`series_key`,
     `lag_seconds`).
 
