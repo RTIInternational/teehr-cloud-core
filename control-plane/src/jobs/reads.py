@@ -36,6 +36,7 @@ from teehr_core.engine.memory import RUN_SHARE, default_memory_limit
 from teehr_core.engine.shards import in_list
 from teehr_core.spec.expressions import to_duckdb
 from teehr_core.sql import lit, q
+from teehr_core.warehouse import Changes, TableState, changes, table_state
 
 from src.expressions import compile_filter
 from src.tables import DataMismatch
@@ -181,6 +182,23 @@ class Warehouse:
             current = table.current_snapshot()
             self.snapshots[ref] = current.snapshot_id if current else None
         return table, self.snapshots[ref]
+
+    def changes(self, project: str, name: str, since: dict | None) -> Changes:
+        """What changed in the table since a state the last run recorded
+        (:meth:`state`), as of the snapshot this run is pinned to (ADR-0019)."""
+        table, pinned = self.table(project, name)
+        recorded = TableState.from_json(since) if since else None
+        return changes(table, recorded, pinned)
+
+    def state(self, project: str, name: str) -> dict | None:
+        """The table's state at the snapshot the run is pinned to, for the next run
+        to compare with (None: it can't be told, so the next run is full)."""
+        table, pinned = self.table(project, name)
+        try:
+            return table_state(table, pinned).to_json()
+        except ValueError as exc:
+            log.warning("%s.%s: no state recorded (%s)", project, name, exc)
+            return None
 
     def pin(self, project: str, name: str) -> None:
         """Pin the table to its current snapshot (if it isn't already)."""
