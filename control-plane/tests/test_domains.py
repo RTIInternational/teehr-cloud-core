@@ -168,3 +168,19 @@ def test_leap_day_and_year_spanning_calendar_periods(client, tables):
             client.post("/v1/domains/periods", json=body, headers=ALICE).status_code
             == 201
         )
+
+
+def test_metrics_are_listed_with_what_a_spec_needs(client):
+    resp = client.get("/v1/domains/metrics", headers=ALICE)
+    assert resp.status_code == 200, resp.text
+    metrics = {m["name"]: m for m in resp.json()}
+    assert len(metrics) == 62
+    kge = metrics["kling_gupta_efficiency"]
+    assert "kge" in kge["aliases"] and kge["family"] == "efficiency"
+    assert set(kge["parameters"]) == {"sr", "sa", "sb"} and kge["merges"] is True
+    assert kge["unit"] == "ratio" and kge["available"] is True
+    assert metrics["hits"]["required"] == ["threshold"]
+    assert metrics["spearman_correlation"]["merges"] is False
+    mase = metrics["mean_absolute_scaled_error"]
+    assert mase["available"] is False and "#251" in mase["note"]
+    assert client.get("/v1/domains/metrics").status_code == 401

@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from teehr_core.metrics.catalog import catalog
 
 from src.auth import Identity
 from src.config import Settings
@@ -24,6 +25,7 @@ from src.routes.projects import (
 )
 from src.schemas import (
     PROJECT_NAME_PATTERN,
+    MetricOut,
     PeriodCreate,
     PeriodOut,
     UnitCreate,
@@ -159,6 +161,28 @@ def add_period(
         **body.model_dump(exclude={"project"}),
     )
     return _add(session, row, scope, body.name, PeriodOut)
+
+
+#: Metrics TEEHR can't run yet, and why (they need derived datasets, #251).
+UNAVAILABLE = {
+    "mean_absolute_scaled_error": (
+        "its scale comes from a naive_scale field, which needs a derived dataset TEEHR "
+        "can't make yet (teehr-cloud-core#251)"
+    ),
+}
+
+
+@router.get("/metrics", operation_id="list_metrics", responses=_errors(401))
+def list_metrics(identity: IdentityDep) -> list[MetricOut]:
+    """Every metric a spec can name, from teehr-core's registry: aliases, definition,
+    parameters, result unit, whether it merges from state, and whether TEEHR can run
+    it today. Any signed-in user."""
+    return [
+        MetricOut(
+            **m, available=m["name"] not in UNAVAILABLE, note=UNAVAILABLE.get(m["name"])
+        )
+        for m in catalog()
+    ]
 
 
 @router.get("/variables", operation_id="list_variables", responses=_errors(401, 404))
