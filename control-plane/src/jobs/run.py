@@ -343,10 +343,17 @@ class Inputs:
             self.wh.pin(project, name)
 
     def snapshots(self) -> dict[str, int | None]:
-        """The snapshot each input was read at (keyed ``<project>.<name>``): the
-        next run finds what changed since (ADR-0019)."""
+        """The snapshot each input was read at (keyed ``<project>.<name>``)."""
         refs = [f"{p}.{n}" for p, n, _, _ in input_tables(self.manifest)]
         return {r: self.wh.snapshots[r] for r in refs if r in self.wh.snapshots}
+
+    def states(self) -> dict[str, dict | None]:
+        """Each input's state at the snapshot it was read at: the next run finds
+        what changed since (ADR-0019)."""
+        return {
+            f"{p}.{n}": self.wh.state(p, n)
+            for p, n, _, _ in input_tables(self.manifest)
+        }
 
 
 def _column_type(t: pa.DataType) -> tuple[str, pa.DataType]:
@@ -750,17 +757,17 @@ def input_tables(manifest: dict) -> list[tuple[str, str, str, str | None]]:
 
 
 def changed_months(
-    wh: Warehouse, manifest: dict, spec: EvaluationSpec, since: dict[str, int | None]
+    wh: Warehouse, manifest: dict, spec: EvaluationSpec, since: dict[str, dict | None]
 ) -> dict[str, list[str]]:
-    """The months of value_time changed in the run's inputs since the snapshots the
-    last run read, up to the ones this run pins, and those of the observations
-    (ADR-0019). Raises ``_Full`` when more than months changed."""
+    """The months of value_time changed in the run's inputs since the states the
+    last run recorded, as of the snapshots this run pins, and those of the
+    observations (ADR-0019). Raises ``_Full`` when more than months changed."""
     months: set[str] = set()
     observed: set[str] = set()
     for project, name, what, ref in input_tables(manifest):
         where = f"{project}.{name}"
-        if where not in since:
-            raise _Full(f"the last run didn't record '{where}'")
+        if not since.get(where):
+            raise _Full(f"the last run didn't record '{where}''s state")
         found = wh.changes(project, name, since[where])
         if found.unknown:
             raise _Full(f"'{where}': {found.unknown}")
@@ -1107,6 +1114,7 @@ def _finished(
 ) -> dict:
     """The run's result: what it wrote, read, and how it went (full, incremental)."""
     out["inputs"] = inputs.snapshots()
+    out["input_states"] = inputs.states()
     out["reads"] = wh.read_stats(others)  # this pod's reads and the others' shards
     if how["mode"] == "incremental":
         out["changed"] = how["months"]

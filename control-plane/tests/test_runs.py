@@ -145,16 +145,18 @@ class FakeWarehouse:
             return self.lake.current(project, name)
         return 7_000 + len(name)
 
+    def state(self, project, name):
+        """The real one records live files' rows and months; commits stand in here."""
+        return {"sequence": self.snapshots.setdefault(
+            f"{project}.{name}", self._current(project, name))}  # fmt: skip
+
     def changes(self, project, name, since):
-        """What Iceberg's snapshots would say changed (teehr_core.warehouse.changes)."""
+        """What comparing with the recorded state would find (teehr_core.warehouse)."""
         from teehr_core.warehouse import Changes
 
-        ref = f"{project}.{name}"
-        pinned = self.snapshots.setdefault(ref, self._current(project, name))
-        commits = self.lake.commits.get((project, name), [])
-        history = [self.lake.base(project, name), *(c[0] for c in commits)]
-        if since not in history:
-            return Changes(added_only=False, unknown=f"snapshot {since} is gone")
+        pinned = self.snapshots.setdefault(
+            f"{project}.{name}", self._current(project, name)
+        )
         months, added_only, n = set(), True, 0
 
         def of(rows):
@@ -162,15 +164,15 @@ class FakeWarehouse:
                 return set()
             return {t.strftime("%Y-%m") for t in rows["value_time"].to_pylist() if t}
 
-        for snapshot, mode, rows in commits:
-            if not since < snapshot <= pinned:
+        for snapshot, mode, rows in self.lake.commits.get((project, name), []):
+            if not since["sequence"] < snapshot <= pinned:
                 continue
             n += 1
             added_only = added_only and mode == "append"
             months |= of(rows)
             if mode == "overwrite":  # every file goes: their months too
                 months |= of(self.lake.data.get((project, name), rows))
-        return Changes(commits=n, added_only=added_only, months=tuple(sorted(months)))
+        return Changes(new_files=n, added_only=added_only, months=tuple(sorted(months)))
 
     def count(self, read):  # the rows a read keeps (the real one counts in files)
         return self.rows(read)
@@ -646,16 +648,19 @@ def test_writes_made_outside_the_api_are_seen(client, lake, jobs):  # noqa: F811
     assert (again["mode"], again["changed"]) == ("incremental", ["2026-02"])
 
 
-def test_a_run_is_full_when_the_last_runs_snapshot_is_gone(
+def test_a_run_is_full_when_the_last_run_recorded_no_state(
     client, lake, jobs, monkeypatch
 ):  # noqa: F811
     kube, _ = jobs
     body = spec()
     body["aggregate"][0]["metrics"] = ["count", "rmse"]
     saved(client, body)
-    run_once(client, kube)
-    monkeypatch.setattr(lake, "base", lambda ns, name: 1)  # expired
-    assert "is gone" in run_once(client, kube)["why"]
+    recorded = FakeWarehouse.state
+    monkeypatch.setattr(FakeWarehouse, "state", lambda self, p, n: None)  # unknown
+    first = run_once(client, kube)
+    assert first["input_states"]["flood.usgs_obs"] is None
+    monkeypatch.setattr(FakeWarehouse, "state", recorded)
+    assert "didn't record 'flood.usgs_obs''s state" in run_once(client, kube)["why"]
 
 
 def test_specs_whose_months_depend_on_others_run_in_full():
