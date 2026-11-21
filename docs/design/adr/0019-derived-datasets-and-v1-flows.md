@@ -1,4 +1,4 @@
-# ADR-0019: Platform producers write the warehouse directly with a shared writer; runs find changes in Iceberg snapshots
+# ADR-0019: Platform producers write the warehouse directly with a shared writer; runs find changes in Iceberg metadata
 
 - **Status:** Proposed
 - **Date:** 2026-11-21
@@ -47,41 +47,50 @@ added and deleted manifest entries and their `value_time` bounds:
 - On use1, `usgs_streamflow`, `nwm30_medium_range` and `usgs_nwm30` (56, 70 and 5 snapshots):
   every sort and compaction (`replace`, which changes no rows) was told apart and ignored, the
   Spark copy, which has no write record, **was found**, and reading costs ~0.05 s per snapshot
-  (0.16 s at most), paid only for snapshots since the last run.
+  (0.16 s at most).
 
-So the warehouse itself can say what changed, whoever wrote it.
+So the warehouse itself can say what changed, whoever wrote it. Replaying snapshots, though,
+needs them kept until the next run, and nightly rewrites and ingests expire a run's snapshot
+within days; the live files' metadata says the same without history (below).
 
 ## Decision
 
-**Runs find what changed from Iceberg snapshots, not from write records. Platform producers
+**Runs find what changed from Iceberg's metadata, not from write records. Platform producers
 (ingests and derived-dataset builds) run as Prefect flows and write the warehouse directly with a
 shared writer, `teehr_core.warehouse`, which carries the data model's rules. Users keep writing
 through the API, which uses the same writer.**
 
-### Change detection from snapshots
+### Change detection from table state
 
-- A run records the snapshot it read of each input (it does today: `result.snapshots`). The next
-  run, once pod 0 has pinned the inputs' current snapshots, walks each input's snapshots from
-  the previous run's to the pinned one:
-  - `replace` snapshots are skipped (rewrites change no rows);
-  - for a timeseries, every other snapshot's added and deleted data files give the months they
-    touch, from their `value_time` bounds (a file spanning a month boundary counts both; a
-    forecast running past its partition month is covered by its file's bounds);
-  - a series table that only gained rows changes nothing by itself (a new series' rows arrive as
-    a timeseries write); any other change to a series table, crosswalk or location layer makes the
-    run full, as today;
-  - a previous snapshot that's no longer in the table's history (expired, or the table was
-    replaced) makes the run full.
-- The months are exact for the snapshots the run reads: writes landing while it runs are after its
-  pinned snapshot, so the next run sees them once (today they can be counted twice).
+- A run records each input's **state** at the snapshot it pinned (`result.input_states`): the
+  snapshot's sequence number and, per partition, its rows and the months its files' `value_time`
+  bounds span (a few hundred small entries). The next run, once pod 0 has pinned the inputs,
+  compares each input's live files with that state:
+  - a file written by a later commit (a higher sequence number) holds new or rewritten rows: its
+    months changed;
+  - a partition whose older files now hold fewer rows than recorded lost rows (deleted, or
+    rewritten into new files): its recorded months changed;
+  - a series table where every recorded row is still there only gained series, which changes
+    nothing by itself (their rows arrive as a timeseries change); any other change to a series
+    table, crosswalk or location layer makes the run full, as today;
+  - a state that can't be told (delete files, files without bounds) makes the run full.
+- **No history is needed:** live files keep their sequence numbers, partitions and row counts
+  however many snapshots were expired since, so snapshot retention stays a storage choice. The
+  first draft of this decision replayed the snapshots in between instead; nightly rewrites and
+  ingests expire the last run's snapshot within days, which made most runs full.
+- **Rewrites over-count, nothing is missed:** a sorted rewrite or compaction after the recorded
+  state makes the files it wrote look new, so the months it rewrote are recomputed (maintenance
+  rewrites only recently changed partitions, which usually changed anyway). Any change to rows
+  adds a newer file or lowers a partition's count, so none goes unseen.
+- The months are as of the snapshots the run reads: writes landing while it runs are after them,
+  so the next run sees them once (with write records they could be counted twice).
 - The API's `decide` keeps the decisions that don't need the warehouse (the spec's blockers, a
   changed manifest, missing state); the job decides the months.
-- **Snapshot retention is part of the contract:** table maintenance keeps snapshots longer than the
-  longest normal gap between runs of an evaluation (default: 30 days); beyond it, the next run is
-  full, not wrong.
 - Write records stay, as history and attribution (`datasets writes`), not as the source of truth
   for runs. Producers' writes are attributed by snapshot summary properties (`teehr.producer`, the
   flow run).
+- Producers should rewrite only what changed: the writer's location merge skips series whose
+  locations didn't change, so an ingest setting locations each batch doesn't make runs full.
 
 ### The shared writer: `teehr_core.warehouse`
 
@@ -97,7 +106,8 @@ through the API, which uses the same writer.**
     provided columns (series' locations), and writing files for one commit (`write_file`,
     `commit_files`);
   - a timeseries write's whole step: check, add missing series, write, set locations;
-  - change detection (`changes(table, since, until)` → months, or "full" and why);
+  - change detection (`table_state`, `changes(table, since_state, snapshot)` → months, or why
+    it can't be told);
   - snapshot summary properties for attribution.
 - **What it doesn't hold:** catalogs, credentials, the registry. The caller passes a loaded table
   (or catalog); the dataset's declaration (type, variable, unit, keys, series table) is read
@@ -171,8 +181,8 @@ through the API, which uses the same writer.**
   backfills, copies and fixes made by hand; one copy of the write rules serves the API, jobs and
   flows; no new job kind, no platform user or personal token.
 - **Negative / cost:** moving the control plane's write code into teehr-core (a refactor, and
-  teehr-core takes PyIceberg as an optional dependency). Snapshot retention becomes a contract
-  table maintenance must keep. Producers aren't checked by the API, only by the writer and
+  teehr-core takes PyIceberg as an optional dependency). Partitions rewritten since the last run
+  are recomputed though unchanged. Producers aren't checked by the API, only by the writer and
   Polaris: a producer that skips the writer can write bad rows to `public`.
 - **Tradeoff accepted:** two write paths (users through the API, producers direct), in exchange
   for bulk writes that don't fight the API's limits. Change detection depends on Iceberg
@@ -184,7 +194,11 @@ through the API, which uses the same writer.**
   personal token, builds as a control-plane job kind). Keeps one write path, but bulk ingests pay
   an HTTP hop per batch and a 64 MiB request cap, large results need a new job kind to commit
   atomically, and Prefect needs an API identity. It existed to keep write records complete; the
-  snapshots make that unnecessary.
+  tables' own metadata makes that unnecessary.
+- **Replay the snapshots between runs** (this ADR's second draft). Exact while the snapshots
+  exist, but they expire within days on `public` (nightly rewrites and ingests), so it needs long
+  retention (storage for every rewritten copy) or a log of what each snapshot changed, kept by
+  table maintenance before it expires them. Comparing states needs neither.
 - **Give jobs and flows database access** to the registry. Spreads the registry's rules across
   processes; the registry mirrors what producers need into table properties instead.
 - **The writer in its own repo**, or in the `teehr` package. A new repo for a module two
@@ -196,9 +210,9 @@ through the API, which uses the same writer.**
 ## Notes
 
 - Phasing: (1) `teehr_core.warehouse` with the writer and change detection; the control plane uses
-  it; runs find months from snapshots; retention in table maintenance. (2) Derived kinds and
+  it; runs find months by comparing their inputs' states. (2) Derived kinds and
   builders; one flow (USGS percentiles); climatology and naive scale; staleness warnings. (3) The
   fetch package, the template flow and the migration guide; USGS observations first.
 - Open: whether `datasets writes` should list producers' writes from snapshot summaries; whether
   builds run in shards from the start (USGS's whole record is ~2.4 B rows; VeriRace's
-  climatology took ~26 min in one pod); retention's default.
+  climatology took ~26 min in one pod).
