@@ -165,7 +165,9 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   its offset, so deep paging of big tables is slow: bulk reads belong in jobs.
 - **Lineage**: every write records who, when, mode, filter, row count, the
   Iceberg snapshot, its notes and, for a timeseries, the unit values arrived in and
-  how many series it added; `GET .../datasets/{dataset}/writes` lists them.
+  how many series it added; `GET .../datasets/{dataset}/writes` lists them. It's
+  history: incremental runs find what changed from the tables' Iceberg snapshots
+  (ADR-0019), so writes made outside the API count too.
 - Today's access (Jupyter, Trino/teehr-api, the `teehr` namespace) is unchanged.
 
 ## Uploads (Phase 3)

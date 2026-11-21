@@ -339,25 +339,21 @@ class Inputs:
     def pin(self) -> None:
         """Pin every input (datasets, their series, location layers) to its current
         snapshot, so every pod of the run reads the same data (ADR-0017)."""
-        refs = []
-        for d in self.manifest["datasets"].values():
-            refs.append((d["project"], d["name"]))
-            if d.get("series"):
-                refs.append((d["series"]["project"], d["series"]["name"]))
-        refs += [
-            (x["project"], x["name"]) for x in self.manifest.get("location_layers", [])
-        ]
-        for project, name in refs:
+        for project, name, _, _ in input_tables(self.manifest):
             self.wh.pin(project, name)
 
     def snapshots(self) -> dict[str, int | None]:
         """The snapshot each input was read at (keyed ``<project>.<name>``)."""
-        refs = []
-        for d in self.manifest["datasets"].values():
-            refs.append(f"{d['project']}.{d['name']}")
-            if d.get("series"):
-                refs.append(f"{d['series']['project']}.{d['series']['name']}")
+        refs = [f"{p}.{n}" for p, n, _, _ in input_tables(self.manifest)]
         return {r: self.wh.snapshots[r] for r in refs if r in self.wh.snapshots}
+
+    def states(self) -> dict[str, dict | None]:
+        """Each input's state at the snapshot it was read at: the next run finds
+        what changed since (ADR-0019)."""
+        return {
+            f"{p}.{n}": self.wh.state(p, n)
+            for p, n, _, _ in input_tables(self.manifest)
+        }
 
 
 def _column_type(t: pa.DataType) -> tuple[str, pa.DataType]:
@@ -740,6 +736,57 @@ class _Full(Exception):
     """An incremental run can't be done after all; a full one is (the reason)."""
 
 
+def input_tables(manifest: dict) -> list[tuple[str, str, str, str | None]]:
+    """Every table a run reads, once: (project, name, what, dataset ref), where
+    ``what`` is the dataset's kind, ``series`` or ``layer``."""
+    out: dict[tuple[str, str], tuple[str, str, str, str | None]] = {}
+    for ref, d in manifest["datasets"].items():
+        out.setdefault(
+            (d["project"], d["name"]), (d["project"], d["name"], d["kind"], ref)
+        )
+        if d.get("series"):
+            s = d["series"]
+            out.setdefault(
+                (s["project"], s["name"]), (s["project"], s["name"], "series", None)
+            )
+    for x in manifest.get("location_layers", []):
+        out.setdefault(
+            (x["project"], x["name"]), (x["project"], x["name"], "layer", None)
+        )
+    return list(out.values())
+
+
+def changed_months(
+    wh: Warehouse, manifest: dict, spec: EvaluationSpec, since: dict[str, dict | None]
+) -> dict[str, list[str]]:
+    """The months of value_time changed in the run's inputs since the states the
+    last run recorded, as of the snapshots this run pins, and those of the
+    observations (ADR-0019). Raises ``_Full`` when more than months changed."""
+    months: set[str] = set()
+    observed: set[str] = set()
+    for project, name, what, ref in input_tables(manifest):
+        where = f"{project}.{name}"
+        if not since.get(where):
+            raise _Full(f"the last run didn't record '{where}''s state")
+        found = wh.changes(project, name, since[where])
+        if found.unknown:
+            raise _Full(f"'{where}': {found.unknown}")
+        if not found.changed:
+            continue
+        if what == "timeseries":
+            months.update(found.months)
+            if ref == spec.inputs.primary.dataset:
+                observed.update(found.months)
+        elif what == "series" and found.added_only:
+            continue  # new series: their rows arrive as timeseries changes
+        elif what == "layer":
+            raise _Full(f"'{where}' changed (series' locations)")
+        else:
+            raise _Full(f"'{where}' changed")
+    log.info("changed since the last run: %s", ", ".join(sorted(months)) or "nothing")
+    return {"months": sorted(months), "obs_months": sorted(observed)}
+
+
 def _sql(table: pa.Table, query: str) -> pa.Table:
     con = memory_connection()
     try:
@@ -915,6 +962,8 @@ def _evaluate(
     dm: DmSettings | None = None
     p_reach = timedelta(0)
     if incremental:
+        if "since" in how:
+            how = {**how, **changed_months(wh, manifest, parsed, how["since"])}
         stored = _stored_state(wh, project, run, how.get("state_snapshot"))
         if stored is None:
             raise _Full("the stored state couldn't be read")
@@ -1065,6 +1114,7 @@ def _finished(
 ) -> dict:
     """The run's result: what it wrote, read, and how it went (full, incremental)."""
     out["inputs"] = inputs.snapshots()
+    out["input_states"] = inputs.states()
     out["reads"] = wh.read_stats(others)  # this pod's reads and the others' shards
     if how["mode"] == "incremental":
         out["changed"] = how["months"]
