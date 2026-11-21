@@ -28,6 +28,7 @@ OPERATION_IDS = {
     "read_run_results",
     "read_run_logs",
     "read_upload_logs",
+    "list_metrics",
     "create_project",
     "list_projects",
     "get_project",

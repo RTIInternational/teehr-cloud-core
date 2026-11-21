@@ -1310,6 +1310,102 @@
         "title": "MemberPut",
         "type": "object"
       },
+      "MetricOut": {
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "available": {
+            "description": "Whether TEEHR can run it today",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "Its definition",
+            "title": "Description",
+            "type": "string"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "merges": {
+            "description": "Whether it can be computed from merged state, so runs can be incremental",
+            "title": "Merges",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The canonical name results are labelled with",
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why not, when it can't",
+            "title": "Note"
+          },
+          "output": {
+            "description": "float, int or timestamp",
+            "title": "Output",
+            "type": "string"
+          },
+          "parameters": {
+            "description": "The spec options it takes",
+            "items": {
+              "type": "string"
+            },
+            "title": "Parameters",
+            "type": "array"
+          },
+          "reads": {
+            "description": "Pair columns it reads besides the paired values (value_time, quantile)",
+            "items": {
+              "type": "string"
+            },
+            "title": "Reads",
+            "type": "array"
+          },
+          "required": {
+            "description": "Of those, the ones it needs",
+            "items": {
+              "type": "string"
+            },
+            "title": "Required",
+            "type": "array"
+          },
+          "unit": {
+            "description": "How its result follows the evaluation unit: value, sum, difference, difference2 (squared), invariant (none), ratio, time",
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "aliases",
+          "family",
+          "description",
+          "parameters",
+          "required",
+          "reads",
+          "output",
+          "unit",
+          "merges",
+          "available"
+        ],
+        "title": "MetricOut",
+        "type": "object"
+      },
       "PeriodCreate": {
         "additionalProperties": false,
         "description": "A period (ADR-0012). A row fills exactly the fields its form uses:\n`duration` takes `length` and `value_time_at`; `calendar` takes `start` and\n`end`; `instant` and `absolute` take neither.",
@@ -3350,6 +3446,57 @@
           }
         },
         "summary": "Ready"
+      }
+    },
+    "/v1/domains/metrics": {
+      "get": {
+        "description": "Every metric a spec can name, from teehr-core's registry: aliases, definition,\nparameters, result unit, whether it merges from state, and whether TEEHR can run\nit today. Any signed-in user.",
+        "operationId": "list_metrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MetricOut"
+                  },
+                  "title": "Response List Metrics",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List Metrics",
+        "tags": [
+          "domains"
+        ]
       }
     },
     "/v1/domains/periods": {

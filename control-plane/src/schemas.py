@@ -850,3 +850,29 @@ class LogsOut(BaseModel):
     ended: bool = Field(
         description="The run or load has ended: once read past, no more lines will come"
     )
+
+
+# --- metrics --------------------------------------------------------------------
+
+
+class MetricOut(BaseModel):
+    name: str = Field(description="The canonical name results are labelled with")
+    aliases: list[str]
+    family: str
+    description: str = Field(description="Its definition")
+    parameters: list[str] = Field(description="The spec options it takes")
+    required: list[str] = Field(description="Of those, the ones it needs")
+    reads: list[str] = Field(
+        description="Pair columns it reads besides the paired values (value_time, quantile)"
+    )
+    output: str = Field(description="float, int or timestamp")
+    unit: str = Field(
+        description="How its result follows the evaluation unit: value, sum, difference, "
+        "difference2 (squared), invariant (none), ratio, time"
+    )
+    merges: bool = Field(
+        description="Whether it can be computed from merged state, so runs can be "
+        "incremental"
+    )
+    available: bool = Field(description="Whether TEEHR can run it today")
+    note: str | None = Field(default=None, description="Why not, when it can't")
