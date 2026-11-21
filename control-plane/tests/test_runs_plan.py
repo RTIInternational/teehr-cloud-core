@@ -170,3 +170,40 @@ def test_location_attributes_need_the_layer_to_have_them(client, datasets):
     resp = client.post(URL, json=located, headers=ALICE)
     assert resp.status_code == 200, resp.text
     assert resp.json()["stages"][0]["group_by"][-1] == "state"
+
+
+def test_features_teehr_cant_run_yet_are_refused_with_why(client, datasets):
+    body = spec(
+        secondary=("nwm_sr",),
+        fields=[
+            {"name": "p90", "fn": "percentile", "from": "usgs_p", "percentile": 90},
+            {"name": "scale", "fn": "naive_scale", "from": "usgs_ns", "lag": "P1D"},
+        ],
+    )
+    body["inputs"]["secondary"].append({"generate": "climatology", "from": "usgs_clim"})
+    resp = client.post(URL, json=body, headers=ALICE)
+    assert resp.status_code == 422, resp.text
+    errors = resp.json()["errors"]
+    assert [(e["loc"][1:], e["type"]) for e in errors] == [
+        (["inputs", "secondary", 1], "unsupported"),
+        (["fields", 0], "unsupported"),
+        (["fields", 1], "unsupported"),
+    ]
+    assert all("isn't supported in TEEHR yet" in e["msg"] and "#251" in e["msg"]
+               for e in errors)  # fmt: skip
+    assert "climatology dataset" in errors[0]["msg"]
+    assert "percentiles dataset" in errors[1]["msg"]
+
+
+def test_a_plan_warns_what_a_spec_does_that_it_may_not_expect(client, datasets):
+    plain = client.post(URL, json=spec(), headers=ALICE).json()
+    assert plain["warnings"] == []
+    body = spec()
+    body["aggregate"][0]["metrics"].append("spearman_correlation")
+    warned = client.post(URL, json=body, headers=ALICE)
+    assert warned.status_code == 200, warned.text
+    [full] = warned.json()["warnings"]
+    assert full.startswith("every run is full") and "spearman_correlation" in full
+    # Saving shows them too, in its plan.
+    saved = client.put("/v1/projects/flood/evaluations/w", json=body, headers=ALICE)
+    assert saved.json()["plan"]["warnings"] == [full]

@@ -16,6 +16,7 @@ anywhere.
 """
 
 import json
+from collections.abc import Callable
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -1185,6 +1186,37 @@ def read_dataset(
     landing meanwhile don't shift or duplicate rows. For bulk reads use Arrow or
     Parquet; large exports belong in jobs.
     """
+    return _read_dataset(
+        request, name, dataset, session, identity, settings, tables,
+        columns=columns, filter=filter, limit=limit, cursor=cursor, count=count,
+        bbox=bbox,
+    )  # fmt: skip
+
+
+#: Adds a page's places: a ``geometry`` column (WKB) and attribute columns.
+Placer = Callable[[pa.Table], pa.Table]
+
+
+def _read_dataset(
+    request: Request,
+    name: str,
+    dataset: str,
+    session: Session,
+    identity: Identity,
+    settings: Settings,
+    tables: Tables | None,
+    *,
+    columns: str | None,
+    filter: str | None,
+    limit: int | None,
+    cursor: str | None,
+    count: bool,
+    bbox: str | None,
+    place: Placer | None = None,
+) -> Response:
+    """:func:`read_dataset`, with ``place`` giving each page's rows a geometry
+    (a run's results with ``output.geometry``): then JSON rows carry GeoJSON
+    geometry, GeoJSON is a feature collection, Arrow and Parquet are geo-tagged."""
     project, my_role = _authorize_dataset_op(
         session, name, identity, settings, Role.READ
     )
@@ -1194,9 +1226,13 @@ def read_dataset(
     selected = _columns(columns, declared)
     accept = request.headers.get("accept") or ""
     geojson = GEOJSON in accept
-    if record.kind != LAYER and (bbox is not None or geojson):
-        raise _unprocessable("bbox and GeoJSON apply to layers only")
-    if geojson and selected and "geometry" not in selected:
+    if record.kind != LAYER and bbox is not None:
+        raise _unprocessable("bbox applies to layers only")
+    if record.kind != LAYER and place is None and geojson:
+        raise _unprocessable(
+            "GeoJSON applies to layers, and to results with output.geometry"
+        )
+    if geojson and selected and "geometry" not in selected and place is None:
         selected = (*selected, "geometry")
     try:
         if bbox is not None:
@@ -1278,6 +1314,8 @@ def read_dataset(
         ) from exc
 
     rows = matched.slice(offset, page)
+    if place is not None:
+        rows = place(rows)
     more = matched.num_rows > offset + page
     next_cursor = (
         encode_cursor(result.snapshot_id, offset + page, query)
@@ -1287,7 +1325,9 @@ def read_dataset(
     headers = {}
     if result.snapshot_id is not None:
         headers[SNAPSHOT_ID] = str(result.snapshot_id)
-    has_geometry = record.kind == LAYER and "geometry" in rows.column_names
+    has_geometry = "geometry" in rows.column_names and (
+        record.kind == LAYER or place is not None
+    )
     if media_type == JSON:
         plain = rows.drop_columns(["geometry"]) if has_geometry else rows
         out = json_rows(plain)

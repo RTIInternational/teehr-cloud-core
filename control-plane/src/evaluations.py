@@ -21,12 +21,19 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from teehr_core.engine import Catalog, PlanError, build_plan
 from teehr_core.engine import Dataset as EngineDataset
+from teehr_core.engine.duckdb_backend import DuckDBBackend
 from teehr_core.engine.plan import labels_name
 from teehr_core.model.dataset_types import CROSSWALK, LAYER, TIMESERIES, arrow_schema
 from teehr_core.model.periods import PeriodRegistry
 from teehr_core.model.units import UnitRegistry
 from teehr_core.spec import EvaluationSpec, load_spec
-from teehr_core.spec.models import AttributeField, GeneratedInput, WithinField
+from teehr_core.spec.models import (
+    AttributeField,
+    GeneratedInput,
+    NaiveScaleField,
+    PercentileField,
+    WithinField,
+)
 
 from src import refs
 from src.domains import visible
@@ -320,11 +327,58 @@ class PlanSummary:
     inputs: list[dict[str, Any]]
     relation: dict[str, Any] | None
     stages: list[dict[str, Any]]
+    warnings: list[str] = field(default_factory=list)
+
+
+#: Where the derived datasets some features need are tracked.
+DERIVED_ISSUE = "teehr-cloud-core#251"
+
+
+def unsupported(spec: EvaluationSpec) -> list[dict[str, Any]]:
+    """Spec features TEEHR can't run yet, as problems: each needs a dataset derived
+    from an observed one (climatology, percentiles, naive scale), which TEEHR can't
+    make yet."""
+    problems = []
+
+    def refuse(what: str, needs: str, *loc: str | int) -> None:
+        problems.append({
+            "loc": ["body", *loc],
+            "msg": f"{what} isn't supported in TEEHR yet: it needs a {needs} dataset, "
+                   f"which TEEHR can't make yet ({DERIVED_ISSUE})",
+            "type": "unsupported",
+        })  # fmt: skip
+
+    for i, p in enumerate(spec.inputs.secondary):
+        if isinstance(p, GeneratedInput) and p.generate in ("climatology", "blend"):
+            refuse(f"generate: {p.generate}", "climatology", "inputs", "secondary", i)
+    for i, f in enumerate(spec.fields):
+        if isinstance(f, PercentileField):
+            refuse(f"field '{f.name}' (fn: percentile)", "percentiles", "fields", i)
+        elif isinstance(f, NaiveScaleField):
+            refuse(f"field '{f.name}' (fn: naive_scale)", "naive_scale", "fields", i)
+    return problems
+
+
+def warnings(spec: EvaluationSpec) -> list[str]:
+    """What a spec does that it may not expect: runs that are always full."""
+    out = []
+    blockers = DuckDBBackend.state_blockers(spec)
+    if blockers:
+        out.append(
+            "every run is full (no incremental reruns; all the data is read and "
+            "computed in one pod, so very large evaluations may not fit): "
+            + "; ".join(blockers)
+        )
+    return out
 
 
 def plan(session: Session, project: Project, body: Any) -> PlanSummary:
-    """Parse, resolve and plan a spec (raises :class:`SpecProblems`)."""
+    """Parse, resolve and plan a spec (raises :class:`SpecProblems`), with any
+    warnings about what it does."""
     spec = parse(body)
+    refused = unsupported(spec)
+    if refused:
+        raise SpecProblems(refused)
     found = manifest(session, project, spec)
     try:
         planned = build_plan(spec, catalog_from(found))
@@ -354,7 +408,9 @@ def plan(session: Session, project: Project, body: Any) -> PlanSummary:
         }
         for stage in planned.spec.aggregate
     ]
-    return PlanSummary(spec, found, planned.unit, inputs, relation, stages)
+    return PlanSummary(
+        spec, found, planned.unit, inputs, relation, stages, warnings(spec)
+    )
 
 
 def spec_hash(spec: EvaluationSpec) -> str:
