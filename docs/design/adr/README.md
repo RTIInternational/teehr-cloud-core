@@ -41,6 +41,7 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0016](0016-jobs-write-in-process.md) | Jobs write their data in-process; the control plane keeps the record (amends 0004) | Accepted (2026-11-18) |
 | [0017](0017-runs-across-pods.md) | A run's shards run across pods, from a queue the control plane keeps (amends 0014) | Accepted (2026-11-18) |
 | [0018](0018-credentials.md) | Credentials: delegated sessions in the control plane; personal tokens and a CLI login | Accepted |
+| [0019](0019-derived-datasets-and-v1-flows.md) | Derived datasets are built by control-plane jobs on a schedule; v1 flows are API clients | Proposed |
 
 ## Phase 0 exit checklist
 
