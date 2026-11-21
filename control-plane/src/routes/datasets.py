@@ -48,6 +48,7 @@ from src.dataset_types import (
     TIMESERIES,
     TYPED,
     crosswalk_columns,
+    derived_columns,
     layer_columns,
     series_columns,
     timeseries_columns,
@@ -104,6 +105,7 @@ from src.schemas import (
     DatasetCreate,
     DatasetOut,
     DatasetRegistration,
+    DerivedCreate,
     LayerCreate,
     TimeseriesCreate,
     WriteOut,
@@ -283,6 +285,10 @@ def create_dataset(
         )
     if isinstance(body, LayerCreate | CrosswalkCreate):
         return _create_layer_or_crosswalk(
+            body, project, my_role, session, identity, _require_tables(tables)
+        )
+    if isinstance(body, DerivedCreate):
+        return _create_derived(
             body, project, my_role, session, identity, _require_tables(tables)
         )
     if not (
@@ -545,6 +551,63 @@ def _create_layer_or_crosswalk(
     return DatasetOut.model_validate(dataset)
 
 
+def _create_derived(
+    body: DerivedCreate,
+    project: Project,
+    my_role: Role | None,
+    session: Session,
+    identity: Identity,
+    tables: Tables,
+) -> DatasetOut:
+    """A climatology, percentiles or naive_scale dataset of an observed timeseries
+    (ADR-0019): its columns from teehr-core, its variable and unit the observed
+    dataset's. Empty until a build fills it."""
+    found = resolve(session, project, body.observed)
+    props = (found.dataset.properties or {}) if found is not None else {}
+    if found is None or found.dataset.kind != TIMESERIES:
+        raise _unprocessable(
+            f"observed: '{body.observed}' is not a timeseries dataset "
+            "(use <name> or public.<name>)"
+        )
+    if props.get("role") != "observed":
+        raise _unprocessable(
+            f"observed: '{body.observed}' is {props.get('role')!r}; a {body.type} is "
+            "built from observations"
+        )
+    if _exists(session, project, body.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dataset '{body.name}' already exists",
+        )
+    columns, key = derived_columns(body.type)
+    metadata = {
+        "observed": qualify(found.project, project, found.dataset.name),
+        "variable": props["variable"],
+        "unit": props["unit"],
+    }
+    properties = {"teehr.type": body.type, "teehr.role": "auxiliary"} | {
+        f"teehr.{k}": str(v) for k, v in metadata.items()
+    }
+    _create_table(
+        tables, identity, project, my_role, body.name, list(columns), key,
+        Layout(sort=("series_key",), properties=properties),
+    )  # fmt: skip
+    dataset = Dataset(
+        project_id=project.id,
+        name=body.name,
+        kind=body.type,
+        description=body.description,
+        columns=list(columns),
+        key_columns=key,
+        properties=metadata,
+        table_identifier=f"{project.name}.{body.name}",
+        created_by=identity.subject,
+    )
+    _commit_new(session, dataset)
+    session.refresh(dataset)
+    return DatasetOut.model_validate(dataset)
+
+
 def _drop_quietly(tables: Tables, identity: Identity, project: Project, name: str):
     try:
         tables.drop_table(identity.token, project.name, name)
@@ -773,7 +836,8 @@ def write_dataset(
     tables = _require_tables(tables)
     record = _dataset(session, project, dataset)
     typed = record.kind in TYPED
-    mode = mode or ("upsert" if typed else "append")
+    # Typed datasets upsert on their key; one without a key (percentiles) appends.
+    mode = mode or ("upsert" if typed and record.key_columns else "append")
     if typed and mode == "append":
         raise _unprocessable(
             f"{record.kind} datasets take upsert or overwrite, not append"

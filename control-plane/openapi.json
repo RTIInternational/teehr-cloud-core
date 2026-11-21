@@ -378,6 +378,17 @@
             ],
             "description": "For a crosswalk: its metadata"
           },
+          "derived": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DerivedOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a climatology, percentiles or naive_scale: its metadata"
+          },
           "description": {
             "anyOf": [
               {
@@ -404,7 +415,7 @@
             "title": "Key Columns"
           },
           "kind": {
-            "description": "table | timeseries | series | layer | crosswalk",
+            "description": "table | timeseries | series | layer | crosswalk | climatology | percentiles | naive_scale",
             "title": "Kind",
             "type": "string"
           },
@@ -451,6 +462,77 @@
           "created_at"
         ],
         "title": "DatasetOut",
+        "type": "object"
+      },
+      "DerivedCreate": {
+        "additionalProperties": false,
+        "description": "A dataset derived from an observed timeseries, per its series (ADR-0019):\n`climatology` (mean per day of year and hour), `percentiles` (values at fixed\npercentiles of the record) or `naive_scale` (MASE's scale per lag). Its columns\nare fixed by its type; it takes the observed dataset's variable and unit. A build\nflow fills it (or replaces it) in one commit.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "description": "Unique within the project",
+            "pattern": "^[a-z][a-z0-9_]{0,59}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "observed": {
+            "description": "The observed timeseries it's built from (`<name>` or `public.<name>`)",
+            "pattern": "^(public\\.)?[a-z][a-z0-9_]{0,59}$",
+            "title": "Observed",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "climatology",
+              "percentiles",
+              "naive_scale"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "observed"
+        ],
+        "title": "DerivedCreate",
+        "type": "object"
+      },
+      "DerivedOut": {
+        "description": "A derived dataset's dataset-level metadata (it's read as `auxiliary`).",
+        "properties": {
+          "observed": {
+            "description": "The observed timeseries it's built from",
+            "title": "Observed",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "variable": {
+            "title": "Variable",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observed",
+          "variable",
+          "unit"
+        ],
+        "title": "DerivedOut",
         "type": "object"
       },
       "DeviceFlowOut": {
@@ -4535,6 +4617,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/CrosswalkCreate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DerivedCreate"
                   }
                 ],
                 "title": "Body"
