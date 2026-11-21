@@ -301,7 +301,12 @@ def run_table(
             description=(
                 f"{RUN_TABLES[body.kind]} of evaluation '{run.task['evaluation']}' "
                 f"version {run.task['version']}"
-            ),
+                + (
+                    "; every run's rows (run_id says which)"
+                    if body.kind == "results"
+                    else "; the latest run's"
+                )
+            ),  # fmt: skip
             columns=columns,
             properties={
                 "evaluation": run.task["evaluation"],

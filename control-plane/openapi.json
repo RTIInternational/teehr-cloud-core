@@ -1882,7 +1882,7 @@
                 "type": "null"
               }
             ],
-            "description": "Where its results are: results_<slug>_v<version>",
+            "description": "The table its results are in: results_<slug>_v<version>, which keeps every run's rows (run_id says which); GET .../runs/{id}/results reads this run's",
             "title": "Results Dataset"
           },
           "started_at": {
@@ -5732,7 +5732,7 @@
         ]
       },
       "post": {
-        "description": "Run a version of the evaluation (default the latest) as a job acting as\nyou: it reads the inputs, runs the spec and writes results_<slug>_v<version>\n(replacing an earlier run's). The spec is planned again first, against the\ndatasets as they are now (422 if it no longer plans).\n\nA run is incremental when it can be: the version keeps state and only some\nmonths of its inputs changed since its last run (timeseries writes record the\nmonths they touch); it then recomputes only those. ``full`` recomputes all;\nthe run's ``result.mode`` says which it did, and why when full. A version runs\none at a time (409 while it has a run queued or running: its runs replace the\nsame tables). Needs the write role.",
+        "description": "Run a version of the evaluation (default the latest) as a job acting as\nyou: it reads the inputs, runs the spec and adds its rows to\nresults_<slug>_v<version> (which keeps every run's, by ``run_id``; read one\nrun's at ``GET .../runs/{id}/results``), replacing the version's pairs and\nstate. The spec is planned again first, against the\ndatasets as they are now (422 if it no longer plans).\n\nA run is incremental when it can be: the version keeps state and only some\nmonths of its inputs changed since its last run (timeseries writes record the\nmonths they touch); it then recomputes only those. ``full`` recomputes all;\nthe run's ``result.mode`` says which it did, and why when full. A version runs\none at a time (409 while it has a run queued or running: its runs write the\nsame tables). Needs the write role.",
         "operationId": "start_run",
         "parameters": [
           {
@@ -6826,6 +6826,243 @@
           }
         ],
         "summary": "Cancel Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1/projects/{name}/runs/{run_id}/results": {
+      "get": {
+        "description": "A succeeded run's results: its rows of its version's results table (which\nkeeps every run's), paged as reading a dataset. Needs the read role.",
+        "operationId": "read_run_results",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated columns to return (default: all)",
+            "in": "query",
+            "name": "columns",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated columns to return (default: all)",
+              "title": "Columns"
+            }
+          },
+          {
+            "description": "Rows to return, as when reading a dataset",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Rows to return, as when reading a dataset",
+              "title": "Filter"
+            }
+          },
+          {
+            "description": "Rows per page",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Rows per page",
+              "title": "Limit"
+            }
+          },
+          {
+            "description": "From the previous page",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "From the previous page",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Also count the matching rows",
+            "in": "query",
+            "name": "count",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also count the matching rows",
+              "title": "Count",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/vnd.apache.arrow.stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/vnd.apache.parquet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A page of the run's results: JSON by default, or Arrow / Parquet when the Accept header asks (as reading a dataset)."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor or a page too large)"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflicts with the project's current state"
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Gone: the read's snapshot has expired; start the read again"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "A Keycloak or Polaris call failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read Run Results",
         "tags": [
           "runs"
         ]

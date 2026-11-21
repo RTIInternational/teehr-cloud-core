@@ -12,7 +12,8 @@
    shard's state is kept and the parts merged per month.
 3. Add lineage to the results (``run_id``, ``spec_version``, ``engine_version``),
    have the results table created (``results_<slug>_v<version>``, job grant) and
-   write the rows as the caller, in the job, replacing an earlier run's rows; the
+   write the rows as the caller, in the job, beside earlier runs' (only this run's
+   rows are replaced: the table keeps every run's, by ``run_id``); the
    control plane records each commit (ADR-0016: run data doesn't pass through it). When the spec keeps pairs
    (``output.pairs: all``), the paired rows go to ``pairs_<slug>_v<version>`` the
    same way.
@@ -474,6 +475,16 @@ def store(
         client, tables, project, dataset, columns, rows, overwrite_filter, append
     )
     return {"dataset": dataset, "rows": rows.num_rows, "snapshot_id": snapshot}
+
+
+def store_results(
+    client: GrantClient, tables: Tables, project: str, table: pa.Table, run: dict
+) -> dict:
+    """Write the run's results beside earlier runs' (a version's results table keeps
+    every run's rows, by ``run_id``, as VeriRace's does): only this run's rows are
+    replaced, so a repeated write is safe. Pairs and state are replaced instead."""
+    return store(client, tables, project, "results", table, run,
+                 overwrite_filter=f"run_id = '{run['id']}'")  # fmt: skip
 
 
 def _parquet_bytes(table: pa.Table) -> bytes:
@@ -952,7 +963,7 @@ def _evaluate(
         out = {}
         if run.get("pairs") and pairs.num_rows:
             out["pairs"] = store(client, tables, project, "pairs", pairs, run)
-        out = {**store(client, tables, project, "results", stages[-1], run), **out}
+        out = {**store_results(client, tables, project, stages[-1], run), **out}
         return _finished(out, how, inputs, wh, dirty)
 
     # Shards: ranges of observed series keys (each shard's state merges).
@@ -1027,7 +1038,7 @@ def _evaluate(
 
     # Computed: now the shards' pairs, in one commit, then results and state.
     pairs_out = outputs.commit_pairs(months_filter(dirty) if incremental else None)
-    out = store(client, tables, project, "results", stages[-1], run)
+    out = store_results(client, tables, project, stages[-1], run)
     if pairs_out is not None:
         out["pairs"] = pairs_out
     out["state"] = {

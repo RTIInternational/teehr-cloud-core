@@ -148,6 +148,11 @@ An evaluation version gets its own tables in its project namespace:
 regenerated, never migrated (ADR-0006). The evaluation, its spec versions and its runs live in the
 control-plane DB.
 
+`results` keeps every run's rows, `run_id` saying which (each run replaces only its own rows, as
+VeriRace's results do). Read as a dataset it shows them all; `GET .../runs/{id}/results` reads one
+run's. `pairs` and `state` hold the latest run's (an incremental run replaces the months it
+recomputes); they're large, and incremental runs build on one current state.
+
 ## Lineage
 
 Every write: who, when, mode, rows, original unit, and the Iceberg snapshot it produced. Every

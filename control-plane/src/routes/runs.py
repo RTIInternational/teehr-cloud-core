@@ -4,23 +4,28 @@
 project's datasets (and ``public.<name>`` ones) and says what a run will do, or
 everything that stops it, as 422 ``errors``; nothing runs. Runs of a saved
 evaluation start at ``POST .../evaluations/{slug}/runs``; ``GET .../runs/{id}``
-follows one.
+follows one, and ``GET .../runs/{id}/results`` reads its results.
+
+A version's results table keeps every run's rows (``run_id`` says which; read as a
+dataset, it shows them all); pairs and state hold the latest run's.
 """
 
 import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from src.errors import problem
 from src.evaluations import SpecProblems, plan
+from src.formats import ARROW_STREAM, PARQUET
 from src.jobs import ACTIVE as ACTIVE_JOBS
 from src.jobs import cancel, reconcile
 from src.kube import Kube, KubeError, get_kube
 from src.models import Job, Role, Run
+from src.routes.datasets import TablesDep, read_dataset
 from src.routes.projects import (
     IdentityDep,
     ProjectName,
@@ -118,7 +123,10 @@ class RunOut(BaseModel):
     version: int | None = Field(description="The evaluation version it ran")
     status: str = Field(description="queued | running | succeeded | failed | cancelled")
     results_dataset: str | None = Field(
-        description="Where its results are: results_<slug>_v<version>"
+        description=(
+            "The table its results are in: results_<slug>_v<version>, which keeps every "
+            "run's rows (run_id says which); GET .../runs/{id}/results reads this run's"
+        )
     )
     result: dict[str, Any] | None = Field(
         description="When it succeeded: rows, each input's snapshot, engine version"
@@ -175,6 +183,65 @@ def get_run(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Run not found")
     sync(session, kube, run)
     return run_out(run)
+
+
+@router.get(
+    "/{run_id}/results",
+    operation_id="read_run_results",
+    responses={
+        **_errors(400, 401, 403, 404, 409, 410, 502, 503),
+        200: {
+            "description": (
+                "A page of the run's results: JSON by default, or Arrow / Parquet when "
+                "the Accept header asks (as reading a dataset)."
+            ),
+            "content": {
+                ARROW_STREAM: {"schema": {"type": "string", "format": "binary"}},
+                PARQUET: {"schema": {"type": "string", "format": "binary"}},
+            },
+        },
+    },
+)
+def read_run_results(
+    request: Request,
+    name: ProjectName,
+    run_id: uuid.UUID,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    tables: TablesDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+    columns: Annotated[
+        str | None,
+        Query(description="Comma-separated columns to return (default: all)"),
+    ] = None,
+    filter: Annotated[
+        str | None,
+        Query(max_length=2000, description="Rows to return, as when reading a dataset"),
+    ] = None,
+    limit: Annotated[int | None, Query(ge=1, description="Rows per page")] = None,
+    cursor: Annotated[str | None, Query(description="From the previous page")] = None,
+    count: Annotated[bool, Query(description="Also count the matching rows")] = False,
+):
+    """A succeeded run's results: its rows of its version's results table (which
+    keeps every run's), paged as reading a dataset. Needs the read role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    run = session.get(Run, run_id)
+    if run is None or run.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Run not found")
+    sync(session, kube, run)
+    dataset = (run.task or {}).get("results_dataset")
+    if run.status != "succeeded" or not dataset:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"The run is {run.status}; its results come once it succeeds",
+        )
+    mine = f"run_id = '{run.id}'"
+    return read_dataset(
+        request, name, dataset, session, identity, settings, tables,
+        columns=columns, filter=f"({filter}) AND {mine}" if filter else mine,
+        limit=limit, cursor=cursor, count=count, bbox=None,
+    )  # fmt: skip
 
 
 @router.post(
