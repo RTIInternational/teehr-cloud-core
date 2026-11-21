@@ -31,7 +31,7 @@ dependencies = [
     # The shared data model, expression allow-list and spec engine (DuckDB: plans
     # and runs evaluations). Pinned to a commit until
     # teehr-core is released (an archive URL: the image has no git).
-    "teehr-core[engine,iceberg] @ https://github.com/RTIInternational/teehr-core/archive/1c380b36a20c5f8d27f51001dce5abdfc904052c.zip",
+    "teehr-core[engine,iceberg] @ https://github.com/RTIInternational/teehr-core/archive/030f00944b50d4593e2a1bee9ff50342aa288bad.zip",
 ]
 
 [project.optional-dependencies]
