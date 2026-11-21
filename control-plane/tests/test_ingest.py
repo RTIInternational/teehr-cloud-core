@@ -766,3 +766,27 @@ def test_a_job_pod_is_indexed_and_starts_alone():
         "Indexed", 1, 1
     )  # fmt: skip
     assert spec["backoffLimitPerIndex"] == 0 and "backoffLimit" not in spec
+
+
+def test_a_loads_log_is_kept(client, staging, jobs, tables):  # noqa: F811
+    import logging
+
+    from src.jobs.logship import ship_logs
+
+    kube, _ = jobs
+    upload_id = inspected(client, staging)
+    ingest(client, upload_id)
+    job = InProcess(client, grant_of(kube.created[-1]), staging)
+    shipped = ship_logs(job, "upload-0")
+    try:
+        result = load_upload(job, job.task())
+    finally:
+        shipped.close()
+        logging.getLogger("src.jobs").removeHandler(shipped)
+    job.finish("succeeded", result=result)
+    body = client.get(f"{UPLOADS}/{upload_id}/logs", headers=ALICE).json()
+    messages = [line["message"] for line in body["lines"]]
+    assert body["ended"] is True
+    assert messages[0] == "read obs.csv: 3 rows, 4 columns"
+    assert "checked 3 rows for obs: no problems" in messages
+    assert any(m.startswith("wrote obs: 3 rows") for m in messages)

@@ -259,6 +259,25 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class JobLog(Base):
+    """A line a job logged (a run's plan, shards and writes; a load's steps), sent
+    through its grant so it outlives the job's pods. ``id`` orders a job's lines
+    across its pods; readers page with it."""
+
+    __tablename__ = "job_logs"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(_fk("jobs"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    level: Mapped[str] = mapped_column(String(16))
+    pod: Mapped[str | None] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text)
+
+
 class UploadStatus(StrEnum):
     AWAITING_FILE = "awaiting_file"  # created; the file may or may not be there yet
     INSPECTED = "inspected"  # read, mapping proposed

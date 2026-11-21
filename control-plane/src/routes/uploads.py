@@ -25,6 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src import job_logs
 from src.access import project_roles
 from src.dataset_types import (
     CROSSWALK,
@@ -71,7 +72,7 @@ from src.routes.projects import (
     _authorize,
     _errors,
 )
-from src.schemas import IngestRequest, UploadCreate, UploadOut
+from src.schemas import IngestRequest, LogsOut, UploadCreate, UploadOut
 from src.staging import StagedMissing, Staging, get_staging
 from src.uploads import (
     KIND_FORMATS,
@@ -756,6 +757,34 @@ def ingest_upload(
         raise
     session.refresh(upload)
     return UploadOut.model_validate(upload)
+
+
+@router.get(
+    "/{upload_id}/logs",
+    operation_id="read_upload_logs",
+    response_model=LogsOut,
+    responses=_errors(401, 404),
+)
+def read_upload_logs(
+    name: ProjectName,
+    upload_id: UploadId,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    kube: KubeDep,
+    after: Annotated[
+        int | None, Query(description="Only lines after this one (its `id`)")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=10_000)] = 1000,
+):
+    """A load's log, oldest first. Poll with ``after`` (the last line's ``id``) to
+    follow it until ``ended``. Needs the read role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    upload = _upload(session, project, upload_id)
+    _sync(session, kube, upload)
+    lines = job_logs.read(session, upload.job_id, after, limit) if upload.job_id else []
+    ended = upload.status not in (UploadStatus.QUEUED, UploadStatus.RUNNING)
+    return LogsOut(lines=lines, ended=ended)
 
 
 @router.post(

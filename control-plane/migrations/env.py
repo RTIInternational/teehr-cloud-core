@@ -16,7 +16,8 @@ from src.db import SCHEMA, Base, make_engine
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Leave the app's loggers on (e.g. a job's, in the same process as tests).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 def _only_control_plane_schema(name, type_, _parent_names) -> bool:

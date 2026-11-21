@@ -13,7 +13,9 @@
    gives one, is then set in the series table, the same way.
 """
 
+import logging
 import tempfile
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -35,6 +37,8 @@ from src.tables import DataMismatch, Tables, conform, duplicate_keys
 from src.uploads import read_csv_text
 
 __all__ = ["GrantClient", "LoadFailed", "load_upload"]
+
+log = logging.getLogger("src.jobs")
 
 STRING_TARGETS = ("series_key", "member", "quality")
 
@@ -351,10 +355,13 @@ def write_layer(
 def _commit(
     client: GrantClient, tables: Tables, project: str, name: str, data: pa.Table
 ) -> dict:
+    started = time.monotonic()
     result = as_caller(
         client, name, lambda token: tables.write(token, project, name, data, "upsert")
     )
     client.progress(data.num_rows)
+    log.info("wrote %s: %d rows, snapshot %s (%.1fs)", name, data.num_rows,
+             result.snapshot_id, time.monotonic() - started)  # fmt: skip
     return {"rows": data.num_rows, "snapshot_id": result.snapshot_id}
 
 
@@ -509,6 +516,8 @@ def load_upload(client: GrantClient, task: dict) -> dict:
             data = read_file(tmp.name, upload["format"], mapping.get("source_layer"))
         except (pa.ArrowInvalid, OSError, ValueError) as exc:
             raise LoadFailed([f"can't read the file: {exc}"]) from exc
+    log.info("read %s: %d rows, %d columns", upload["filename"], data.num_rows,
+             data.num_columns)  # fmt: skip
     tables = open_tables(task)
     if dataset.get("kind", "timeseries") != "timeseries":
         return load_other(client, tables, project, upload, data)
@@ -522,10 +531,12 @@ def load_upload(client: GrantClient, task: dict) -> dict:
     typed = check(
         mapped, target_columns(client, project, dataset), mapping.get("timezone")
     )
+    log.info("checked %d rows for %s: no problems", typed.num_rows, dataset["name"])
     created = False
     if not dataset.get("existing"):
         register(client, project, dataset)
         created = True
+        log.info("registered %s", dataset["name"])
     result = {
         "dataset": dataset["name"],
         "created": created,
@@ -536,6 +547,7 @@ def load_upload(client: GrantClient, task: dict) -> dict:
     if pairs is not None:
         notes = set_locations(client, tables, project, dataset, pairs)
         result["locations_set"] = pairs.num_rows
+        log.info("set %d series' locations", pairs.num_rows)
         if notes:
             result["notes"] = notes
     return result

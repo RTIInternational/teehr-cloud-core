@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from teehr_core.spec import load_spec
 
+from src import job_logs
 from src.errors import problem
 from src.evaluations import SpecProblems, plan
 from src.formats import ARROW_STREAM, PARQUET
@@ -36,6 +37,7 @@ from src.routes.projects import (
     _authorize,
     _errors,
 )
+from src.schemas import LogsOut
 
 router = APIRouter(prefix="/v1/projects/{name}/runs", tags=["runs"])
 
@@ -268,6 +270,36 @@ def read_run_results(
         columns=columns, filter=f"({filter}) AND {mine}" if filter else mine,
         limit=limit, cursor=cursor, count=count, bbox=None, place=place,
     )  # fmt: skip
+
+
+@router.get(
+    "/{run_id}/logs",
+    operation_id="read_run_logs",
+    response_model=LogsOut,
+    responses=_errors(401, 404),
+)
+def read_run_logs(
+    name: ProjectName,
+    run_id: uuid.UUID,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    kube: Annotated[Kube | None, Depends(get_kube)],
+    after: Annotated[
+        int | None, Query(description="Only lines after this one (its `id`)")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=10_000)] = 1000,
+):
+    """A run's log: its plan, each shard (from every pod), its writes and outcome,
+    oldest first. Poll with ``after`` (the last line's ``id``) to follow it until
+    ``ended``. Needs the read role."""
+    project, _ = _authorize(session, name, identity, settings, Role.READ)
+    run = session.get(Run, run_id)
+    if run is None or run.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Run not found")
+    sync(session, kube, run)
+    lines = job_logs.read(session, run.job_id, after, limit) if run.job_id else []
+    return LogsOut(lines=lines, ended=run.status not in ("queued", "running"))
 
 
 @router.post(

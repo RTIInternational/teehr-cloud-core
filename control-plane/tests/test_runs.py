@@ -3,6 +3,7 @@ which reads the inputs through the API, runs the spec with teehr-core's engine a
 writes results_<slug>_v<version> through the API."""
 
 import dataclasses
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -17,10 +18,11 @@ from src.config import get_settings
 from src.jobs.load import GrantClient
 from src.jobs.run import run_evaluation
 from src.main import app
+from src.models import Run
 from src.tables import ReadResult, get_tables, iceberg_schema
 from tests.test_datasets import ALICE, add_member
 from tests.test_datasets import tables as tables  # noqa: F401  (fixture)
-from tests.test_ingest import ALICE_NOW, grant_of
+from tests.test_ingest import ALICE_NOW, db, grant_of
 from tests.test_ingest import jobs as jobs  # noqa: F401  (fixture)
 from tests.test_runs_plan import datasets as datasets  # noqa: F401  (fixture)
 from tests.test_runs_plan import spec
@@ -1196,3 +1198,83 @@ def test_unknown_output_attributes_say_so(client, lake, jobs, tables):  # noqa: 
     run_job(client, kube)
     resp = client.get(f"/v1/projects/flood/runs/{run_id}/results", headers=ALICE)
     assert resp.status_code == 422 and "layer 'gauges' has no nope" in resp.text
+
+
+def test_a_runs_log_is_kept_and_read_in_order(client, lake, jobs, monkeypatch):  # noqa: F811
+    from src import job_logs
+    from src.jobs.logship import ship_logs
+
+    kube, _ = jobs
+    saved(client)
+    run = client.post(f"{EVALUATIONS}/e/runs", headers=ALICE_NOW).json()
+    url = f"/v1/projects/flood/runs/{run['id']}/logs"
+    before = client.get(url, headers=ALICE).json()
+    assert before == {"lines": [], "ended": False}
+
+    job = GrantClient("http://testserver", grant_of(kube.created[-1]), http=client)
+    shipped = ship_logs(job, "run-x-0")
+    try:
+        result = run_evaluation(job, job.task())
+    finally:
+        shipped.close()
+        logging.getLogger("src.jobs").removeHandler(shipped)
+    job.finish("succeeded", result=result)
+
+    body = client.get(url, headers=ALICE).json()
+    messages = [line["message"] for line in body["lines"]]
+    assert body["ended"] is True
+    assert any("observed series" in m and "shards" in m for m in messages), messages
+    assert any(m.startswith("shard 1/1 (try 1)") for m in messages)
+    assert any(m.startswith("wrote results_e_v1") for m in messages)
+    assert {line["pod"] for line in body["lines"]} == {"run-x-0"}
+    ids = [line["id"] for line in body["lines"]]
+    assert ids == sorted(ids)
+    # Following: only the lines after one already read.
+    rest = client.get(url, params={"after": ids[1]}, headers=ALICE).json()["lines"]
+    assert [line["id"] for line in rest] == ids[2:]
+
+    # A job can't flood it: past the limit, one line says so.
+    monkeypatch.setattr(job_logs, "MAX_LINES", len(ids) + 1)
+    with db() as session:
+        job_id = session.get(Run, uuid.UUID(run["id"])).job_id
+        kept = job_logs.add(session, job_id, "p", [
+            {"at": T0, "level": "INFO", "message": f"line {i}"} for i in range(5)
+        ])  # fmt: skip
+    assert kept == 1
+    tail = client.get(url, params={"after": ids[-1]}, headers=ALICE).json()["lines"]
+    assert [line["message"] for line in tail] == ["line 0", job_logs.TRUNCATED]
+
+
+def test_shipping_logs_keeps_order_and_never_fails_the_job():
+    from src.jobs.logship import GrantLogHandler
+
+    sent = []
+
+    class Grant:
+        fail = False
+
+        def _grant(self, method, path, json):
+            if self.fail:
+                raise RuntimeError("control plane away")
+            sent.append(json)
+
+    grant = Grant()
+    handler = GrantLogHandler(grant, "pod-1", every=3600)
+    logger = logging.getLogger("test.logship")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        for i in range(450):  # two full batches go as they fill
+            logger.info("line %d", i)
+        assert [len(b["lines"]) for b in sent] == [200, 200]
+        grant.fail = True
+        logger.info("lost")
+        handler.flush()  # doesn't raise
+        grant.fail = False
+        logger.warning("after")
+        handler.close()
+    finally:
+        logger.removeHandler(handler)
+    messages = [line["message"] for b in sent for line in b["lines"]]
+    assert messages[:3] == ["line 0", "line 1", "line 2"] and messages[-1] == "after"
+    assert sent[-1]["pod"] == "pod-1" and sent[-1]["lines"][-1]["level"] == "WARNING"
