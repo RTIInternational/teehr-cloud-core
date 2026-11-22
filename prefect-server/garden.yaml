@@ -11,6 +11,8 @@ spec:
   chart:
     name: prefect-server
     repo: https://prefecthq.github.io/prefect-helm
+    # Pinned: the chart changes often; move it with the Prefect image (prefectTag).
+    version: 2026.11.13192421
   values:
     global:
       prefect:
@@ -101,6 +103,8 @@ spec:
   chart:
     name: prefect-worker
     repo: https://prefecthq.github.io/prefect-helm
+    # Pinned: the chart changes often; move it with the Prefect image (prefectTag).
+    version: 2026.11.13192421
   values:
     worker:
       image:
