@@ -11,6 +11,32 @@ def _csv(value: str | None) -> tuple[str, ...]:
     return tuple(item.strip() for item in (value or "").split(",") if item.strip())
 
 
+def _node_selector(value: str | None) -> tuple[tuple[str, str], ...]:
+    """``key=value,...`` (as ``kubectl label``) as pairs."""
+    pairs = []
+    for item in _csv(value):
+        key, sep, val = item.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"JOB_NODE_SELECTOR: expected key=value, got {item!r}")
+        pairs.append((key.strip(), val.strip()))
+    return tuple(pairs)
+
+
+def _tolerations(value: str | None) -> tuple[tuple[str, str | None, str | None], ...]:
+    """``key[=value][:Effect],...`` (as ``kubectl taint``) as (key, value, effect):
+    without a value, any value of the key; without an effect, every effect."""
+    out = []
+    for item in _csv(value):
+        rest, _, effect = item.partition(":")
+        key, sep, val = rest.partition("=")
+        if not key.strip():
+            raise ValueError(
+                f"JOB_TOLERATIONS: expected key[=value][:Effect], got {item!r}"
+            )
+        out.append((key.strip(), val.strip() if sep else None, effect.strip() or None))
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: URL
@@ -93,6 +119,11 @@ class Settings:
     job_memory_limit: str = "4Gi"
     # CPU the job pod requests (e.g. "2"); None: none (it gets what's free).
     job_cpu_request: str | None = None
+    # Where job pods run: node labels they need (JOB_NODE_SELECTOR) and taints
+    # they tolerate (JOB_TOLERATIONS), e.g. a worker node group, so runs don't
+    # share nodes with the platform's services. Empty: any untainted node.
+    job_node_selector: tuple[tuple[str, str], ...] = ()
+    job_tolerations: tuple[tuple[str, str | None, str | None], ...] = ()
     # DuckDB threads for a job's reads (S3 requests run on them); None: DuckDB's
     # default (the cores it sees).
     job_threads: int | None = None
@@ -201,6 +232,8 @@ def get_settings() -> Settings:
         job_memory_request=os.getenv("JOB_MEMORY_REQUEST") or "1Gi",
         job_memory_limit=os.getenv("JOB_MEMORY_LIMIT") or "4Gi",
         job_cpu_request=os.getenv("JOB_CPU_REQUEST") or None,
+        job_node_selector=_node_selector(os.getenv("JOB_NODE_SELECTOR")),
+        job_tolerations=_tolerations(os.getenv("JOB_TOLERATIONS")),
         job_threads=int(os.getenv("JOB_THREADS") or 0) or None,
         run_rows_per_shard=int(os.getenv("RUN_ROWS_PER_SHARD") or 0) or None,
         job_ttl_seconds=int(os.getenv("JOB_TTL_SECONDS") or 86_400),

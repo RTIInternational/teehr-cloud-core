@@ -731,6 +731,48 @@ def test_job_pod_sizing_settings_reach_the_pod():
     assert {e["name"]: e["value"] for e in sized["env"]}["JOB_THREADS"] == "8"
 
 
+def test_job_pods_go_where_the_settings_say(monkeypatch):
+    from src.config import Settings, get_settings
+    from src.kube import job_manifest
+
+    def pod(settings):
+        return job_manifest(settings, "run", "j" * 36, "tjg_x")["spec"]["template"][
+            "spec"
+        ]
+
+    base = Settings(database_url="sqlite://")
+    assert "nodeSelector" not in pod(base) and "tolerations" not in pod(base)
+    monkeypatch.setenv("CONTROL_PLANE_DB_URL", "sqlite://")
+    monkeypatch.setenv(
+        "JOB_NODE_SELECTOR", "teehr-hub/nodegroup-name=driver-r5-2xlarge"
+    )
+    monkeypatch.setenv(
+        "JOB_TOLERATIONS",
+        "teehr-hub/dedicated=worker:NoSchedule, teehr-hub_dedicated=worker, spot:NoExecute",
+    )
+    get_settings.cache_clear()
+    try:
+        placed = pod(dataclasses.replace(get_settings(), database_url="sqlite://"))
+    finally:
+        get_settings.cache_clear()
+    assert placed["nodeSelector"] == {"teehr-hub/nodegroup-name": "driver-r5-2xlarge"}
+    assert placed["tolerations"] == [
+        {"key": "teehr-hub/dedicated", "operator": "Equal", "value": "worker",
+         "effect": "NoSchedule"},
+        {"key": "teehr-hub_dedicated", "operator": "Equal", "value": "worker"},
+        {"key": "spot", "operator": "Exists", "effect": "NoExecute"},
+    ]  # fmt: skip
+
+
+def test_a_bad_job_placement_setting_is_refused():
+    from src.config import _node_selector, _tolerations
+
+    with pytest.raises(ValueError, match="JOB_NODE_SELECTOR"):
+        _node_selector("driver-r5-2xlarge")
+    with pytest.raises(ValueError, match="JOB_TOLERATIONS"):
+        _tolerations("=worker:NoSchedule")
+
+
 def test_a_runs_job_is_pod_zeros_other_pods_dont_end_it():
     from src.kube import job_state
 
