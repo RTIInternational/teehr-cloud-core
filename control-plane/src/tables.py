@@ -16,6 +16,7 @@ from typing import Literal, Protocol, TypeVar
 import pyarrow as pa
 import pyarrow.compute as pc
 from pyiceberg.catalog import Catalog, load_catalog
+from pyiceberg.catalog.rest.auth import AuthManager
 from pyiceberg.exceptions import (
     CommitFailedException,
     ForbiddenError,
@@ -94,10 +95,26 @@ class ReadResult:
     snapshot_id: int | None
 
 
+#: The caller's access token, or a function that gives a current one. A function is asked on
+#: every catalog request, so a long write's commit doesn't go out with a token that expired
+#: while its files were written (Keycloak's last minutes; #228).
+Token = str | Callable[[], str]
+
+
+class TokenAuth(AuthManager):
+    """Catalog auth that asks ``token`` for the bearer token on every request."""
+
+    def __init__(self, token: Callable[[], str]):
+        self._token = token
+
+    def auth_header(self) -> str:
+        return f"Bearer {self._token()}"
+
+
 class Tables(Protocol):
     def create_table(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         columns: list[dict],
@@ -108,7 +125,7 @@ class Tables(Protocol):
 
     def read(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         *,
@@ -122,7 +139,7 @@ class Tables(Protocol):
 
     def count(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         row_filter: BooleanExpression | None,
@@ -131,14 +148,14 @@ class Tables(Protocol):
         """Rows matching ``row_filter`` in the snapshot, as the caller."""
 
     def insert_missing(
-        self, token: str, namespace: str, name: str, data: pa.Table
+        self, token: Token, namespace: str, name: str, data: pa.Table
     ) -> int:
         """Insert the rows whose key isn't in the table yet, leaving existing rows
         alone, as the caller. Returns how many were inserted."""
 
     def merge(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         data: pa.Table,
@@ -149,16 +166,16 @@ class Tables(Protocol):
         its current values in the others, as the caller."""
 
     def existing_keys(
-        self, token: str, namespace: str, name: str, column: str, values: list[str]
+        self, token: Token, namespace: str, name: str, column: str, values: list[str]
     ) -> set[str]:
         """Which of ``values`` are in the table's ``column``, as the caller."""
 
-    def drop_table(self, token: str, namespace: str, name: str) -> None:
+    def drop_table(self, token: Token, namespace: str, name: str) -> None:
         """Drop the table and its files, as the caller. A missing table is fine."""
 
     def write(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         data: pa.Table,
@@ -168,19 +185,19 @@ class Tables(Protocol):
         """Commit conformed data as the caller (one snapshot)."""
 
     def has_snapshot(
-        self, token: str, namespace: str, name: str, snapshot_id: int
+        self, token: Token, namespace: str, name: str, snapshot_id: int
     ) -> bool:
         """Whether ``snapshot_id`` is one of the table's snapshots, as the caller."""
 
     def write_file(
-        self, token: str, namespace: str, name: str, data: pa.Table, file_name: str
+        self, token: Token, namespace: str, name: str, data: pa.Table, file_name: str
     ) -> str:
         """Write conformed rows as a Parquet file in the table's data location, not
         yet part of the table (ADR-0017: a shard's output); returns its path."""
 
     def commit_files(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         paths: list[str],
@@ -189,7 +206,7 @@ class Tables(Protocol):
         """Replace the rows ``overwrite_filter`` keeps (all, when None) with the
         rows of files :meth:`write_file` wrote, in one commit, as the caller."""
 
-    def delete_files(self, token: str, namespace: str, name: str, paths: list[str]):
+    def delete_files(self, token: Token, namespace: str, name: str, paths: list[str]):
         """Delete files :meth:`write_file` wrote that won't be committed."""
 
 
@@ -238,12 +255,16 @@ class PolarisTables:
         tables._properties = dict(properties)
         return tables
 
-    def _catalog(self, token: str) -> Catalog:
+    def _catalog(self, token: Token) -> Catalog:
+        if callable(token):
+            auth = {"type": "custom", "impl": f"{__name__}.TokenAuth",
+                    "custom": {"token": token}}  # fmt: skip
+            return load_catalog("polaris", **self._properties, auth=auth)
         return load_catalog("polaris", **self._properties, token=token)
 
     def create_table(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         columns: list[dict],
@@ -272,7 +293,7 @@ class PolarisTables:
 
     def write(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         data: pa.Table,
@@ -301,7 +322,7 @@ class PolarisTables:
         return WriteResult(snapshot.snapshot_id if snapshot else None)
 
     def insert_missing(
-        self, token: str, namespace: str, name: str, data: pa.Table
+        self, token: Token, namespace: str, name: str, data: pa.Table
     ) -> int:
         return self._guard(
             lambda: wh.insert_missing(
@@ -311,7 +332,7 @@ class PolarisTables:
 
     def merge(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         data: pa.Table,
@@ -357,7 +378,7 @@ class PolarisTables:
 
     def read(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         *,
@@ -381,7 +402,7 @@ class PolarisTables:
 
     def count(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         row_filter: BooleanExpression | None,
@@ -396,7 +417,7 @@ class PolarisTables:
         return self._guard(run)
 
     def existing_keys(
-        self, token: str, namespace: str, name: str, column: str, values: list[str]
+        self, token: Token, namespace: str, name: str, column: str, values: list[str]
     ) -> set[str]:
         def run() -> set[str]:
             table = self._catalog(token).load_table((namespace, name))
@@ -414,7 +435,7 @@ class PolarisTables:
         return self._guard(run)
 
     def has_snapshot(
-        self, token: str, namespace: str, name: str, snapshot_id: int
+        self, token: Token, namespace: str, name: str, snapshot_id: int
     ) -> bool:
         def run() -> bool:
             table = self._catalog(token).load_table((namespace, name))
@@ -423,7 +444,7 @@ class PolarisTables:
         return self._guard(run)
 
     def write_file(
-        self, token: str, namespace: str, name: str, data: pa.Table, file_name: str
+        self, token: Token, namespace: str, name: str, data: pa.Table, file_name: str
     ) -> str:
         return self._guard(
             lambda: wh.write_file(
@@ -433,7 +454,7 @@ class PolarisTables:
 
     def commit_files(
         self,
-        token: str,
+        token: Token,
         namespace: str,
         name: str,
         paths: list[str],
@@ -445,7 +466,7 @@ class PolarisTables:
 
         return self._guard(run)
 
-    def delete_files(self, token: str, namespace: str, name: str, paths: list[str]):
+    def delete_files(self, token: Token, namespace: str, name: str, paths: list[str]):
         def run() -> None:
             table = self._catalog(token).load_table((namespace, name))
             for path in paths:
@@ -453,7 +474,7 @@ class PolarisTables:
 
         return self._guard(run)
 
-    def drop_table(self, token: str, namespace: str, name: str) -> None:
+    def drop_table(self, token: Token, namespace: str, name: str) -> None:
         try:
             self._catalog(token).purge_table((namespace, name))
         except NoSuchTableError:

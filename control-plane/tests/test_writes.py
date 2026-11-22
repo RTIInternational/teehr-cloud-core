@@ -290,3 +290,22 @@ def test_timezone_refuses_daylight_saving_gaps_and_repeats(client, obs, local):
 def test_unknown_timezone_is_422(client, obs):
     resp = write(client, arrow_bytes(rows()), timezone="Mars/Olympus")
     assert resp.status_code == 422 and "unknown time zone" in resp.json()["detail"]
+
+
+def test_a_token_function_is_asked_on_every_catalog_request(monkeypatch):
+    """A job's write gives the catalog a function, not a token: a commit after a long
+    write asks it again rather than reusing one that has since expired (#228)."""
+    import requests
+    from pyiceberg.catalog.rest import RestCatalog
+
+    from src.tables import PolarisTables, catalog_properties
+
+    monkeypatch.setattr(RestCatalog, "_fetch_config", lambda self: None)
+    issued = iter(["first", "second"])
+    polaris = PolarisTables.at(
+        catalog_properties("http://polaris.test/api/catalog", "wh", "realm")
+    )
+    catalog = polaris._catalog(lambda: next(issued))
+    request = requests.Request("GET", "http://polaris.test/v1/config").prepare()
+    for expected in ("Bearer first", "Bearer second"):
+        assert catalog._session.auth(request).headers["Authorization"] == expected
