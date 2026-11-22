@@ -103,6 +103,18 @@ def job_manifest(
             }
         ],
     }
+    if settings.job_node_selector:
+        pod["nodeSelector"] = dict(settings.job_node_selector)
+    if settings.job_tolerations:
+        pod["tolerations"] = [
+            {
+                "key": key,
+                **({"operator": "Equal", "value": value} if value is not None
+                   else {"operator": "Exists"}),
+                **({"effect": effect} if effect else {}),
+            }
+            for key, value, effect in settings.job_tolerations
+        ]  # fmt: skip
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",

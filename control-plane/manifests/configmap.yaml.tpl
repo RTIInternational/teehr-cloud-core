@@ -68,6 +68,11 @@ data:
   JOB_MEMORY_LIMIT: "${var.controlPlane.jobMemoryLimit || ''}"
   JOB_CPU_REQUEST: "${var.controlPlane.jobCpuRequest || ''}"
   JOB_THREADS: "${var.controlPlane.jobThreads || ''}"
+  # Where job pods run (kubectl label / taint syntax), e.g.
+  # "teehr-hub/nodegroup-name=driver-r5-2xlarge" and
+  # "teehr-hub/dedicated=worker:NoSchedule". Empty: any untainted node.
+  JOB_NODE_SELECTOR: "${var.controlPlane.jobNodeSelector || ''}"
+  JOB_TOLERATIONS: "${var.controlPlane.jobTolerations || ''}"
   RUN_ROWS_PER_SHARD: "${var.controlPlane.runRowsPerShard || ''}"
   # Runs across pods (ADR-0017): at most this many pods a run, an extra pod per
   # this many shards. Empty: one pod (off), 8.
