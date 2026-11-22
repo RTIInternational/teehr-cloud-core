@@ -9,6 +9,8 @@ request, or by the reconcile pass that runs when the service starts.
 """
 
 import logging
+import time
+from collections.abc import Callable
 from functools import lru_cache
 
 from sqlalchemy import select
@@ -248,6 +250,64 @@ def reconcile(
             )
             for project in projects
         )
+
+
+#: Seconds to wait between startup tries while a system project isn't ready, about
+#: three minutes in all: Polaris or Keycloak may still be starting (#261).
+STARTUP_RETRY_DELAYS = (5, 10, 20, 30, 60, 60)
+
+
+def _unready_system_projects(engine: Engine) -> list[str]:
+    with Session(engine) as session:
+        return list(
+            session.scalars(
+                select(Project.name)
+                .where(Project.kind == ProjectKind.SYSTEM)
+                .where(Project.status != ProjectStatus.READY)
+                .order_by(Project.name)
+            )
+        )
+
+
+def reconcile_on_start(
+    engine: Engine,
+    admin: PolarisAdmin | None,
+    keycloak: KeycloakAdmin | None = None,
+    settings: Settings | None = None,
+    *,
+    delays: tuple[float, ...] = STARTUP_RETRY_DELAYS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """:func:`reconcile`, tried again after each of ``delays`` while a system
+    project isn't ready (or the pass itself failed, e.g. the database isn't up).
+
+    Without this, a control plane that starts before Polaris leaves ``public`` and
+    ``platform`` failed until someone reprovisions them. Returns how many projects
+    were provisioned, over every try.
+    """
+    provisioned = 0
+    for delay in (*delays, None):
+        try:
+            provisioned += reconcile(engine, admin, keycloak, settings)
+            if admin is None:
+                return provisioned  # nothing to provision with; they stay pending
+            unready = _unready_system_projects(engine)
+        except Exception:
+            logger.exception("Startup reconcile failed")
+            unready = ["(reconcile failed)"]
+        if not unready:
+            return provisioned
+        names = ", ".join(unready)
+        if delay is None:
+            logger.error(
+                "System project(s) still not ready after %d tries: %s; "
+                "POST /v1/projects/{name}/provision to retry",
+                len(delays) + 1, names,
+            )  # fmt: skip
+            return provisioned
+        logger.warning("System project(s) not ready: %s; retrying in %gs", names, delay)
+        sleep(delay)
+    return provisioned
 
 
 def reconcile_access(
