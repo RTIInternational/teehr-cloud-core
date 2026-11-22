@@ -20,8 +20,8 @@ from src.db import get_engine
 from src.provisioning import (
     get_keycloak,
     get_polaris,
-    reconcile,
     reconcile_access,
+    reconcile_on_start,
 )
 from src.routes import (
     datasets,
@@ -44,7 +44,8 @@ LOGIN_SCHEME = "KeycloakLogin"
 
 def _reconcile_on_start() -> None:
     try:
-        count = reconcile(get_engine(), get_polaris(), get_keycloak())
+        # Retried for a few minutes while Polaris or Keycloak is still starting.
+        count = reconcile_on_start(get_engine(), get_polaris(), get_keycloak())
         if count:
             logger.info(
                 "Startup reconcile: provisioned %d project(s) (system + unready)", count

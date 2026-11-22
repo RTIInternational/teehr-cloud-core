@@ -4,6 +4,7 @@ readable by everyone, written by the platform, never deleted."""
 import dataclasses
 import uuid
 
+import httpx
 import pytest
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,7 @@ from src.db import make_engine
 from src.main import app
 from src.models import Project, ProjectKind, ProjectStatus, Role
 from src.polaris import catalog_role_name
-from src.provisioning import SYSTEM_PROJECTS, reconcile
+from src.provisioning import SYSTEM_PROJECTS, reconcile, reconcile_on_start
 from tests.conftest import ISSUER, auth
 from tests.fake_polaris import FakePolaris
 
@@ -149,3 +150,50 @@ def test_existing_tenant_named_like_a_system_project_is_left_alone(db_url):
         session.commit()
     reconcile(make_engine(db_url), None)
     assert _statuses(db_url)["platform"][0] == ProjectKind.TENANT
+
+
+def _refusing(fake: FakePolaris):
+    """Make ``fake`` refuse connections, as a Polaris that's still starting does."""
+
+    def refuse(request):
+        raise httpx.ConnectError("[Errno 111] Connection refused", request=request)
+
+    real = fake.handle
+    fake.handle = refuse
+    return real
+
+
+def test_startup_waits_for_polaris(db_url):
+    fake = FakePolaris()
+    real = _refusing(fake)
+    waits = []
+
+    def sleep(seconds):  # Polaris comes up during the first wait
+        waits.append(seconds)
+        fake.handle = real
+
+    engine = make_engine(db_url)
+    count = reconcile_on_start(
+        engine, fake.admin(), settings=SETTINGS, delays=(5, 10), sleep=sleep
+    )
+    assert waits == [5] and count == 4  # two failed, then two provisioned
+    assert all(s == ProjectStatus.READY for _, s in _statuses(db_url).values())
+
+
+def test_startup_gives_up_and_leaves_them_failed(db_url):
+    fake = FakePolaris()
+    _refusing(fake)
+    waits = []
+    reconcile_on_start(
+        make_engine(db_url), fake.admin(), settings=SETTINGS,
+        delays=(5, 10), sleep=waits.append,
+    )  # fmt: skip
+    assert waits == [5, 10]
+    statuses = _statuses(db_url)
+    assert all(s == ProjectStatus.FAILED for _, s in statuses.values())
+
+
+def test_startup_without_polaris_does_not_wait(db_url):
+    waits = []
+    assert reconcile_on_start(make_engine(db_url), None, sleep=waits.append) == 0
+    assert waits == []
