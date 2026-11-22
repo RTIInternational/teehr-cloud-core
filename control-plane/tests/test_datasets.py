@@ -194,6 +194,34 @@ def test_writer_can_register_but_not_delete(client, tables):
     assert ("flood", "bobs") in tables.tables
 
 
+def test_update_changes_the_description(client, tables):
+    register(client, description="old")
+    url = "/v1/projects/flood/datasets/obs"
+    resp = client.patch(url, json={"description": "gauge obs"}, headers=ALICE)
+    assert resp.status_code == 200 and resp.json()["description"] == "gauge obs"
+    assert client.get(url, headers=ALICE).json()["description"] == "gauge obs"
+    assert (
+        client.patch(url, json={}, headers=ALICE).json()["description"] == "gauge obs"
+    )
+    cleared = client.patch(url, json={"description": None}, headers=ALICE)
+    assert cleared.json()["description"] is None
+    assert client.patch(url, json={"name": "x"}, headers=ALICE).status_code == 422
+    assert [c[0] for c in tables.calls] == ["create"]  # the table is untouched
+
+
+def test_update_needs_write(client, tables):
+    register(client)
+    add_member(client, "bob", "read")
+    url = "/v1/projects/flood/datasets/obs"
+    assert client.patch(url, json={"description": "x"}, headers=BOB).status_code == 403
+    add_member(client, "bob", "write")
+    assert client.patch(url, json={"description": "x"}, headers=BOB).status_code == 200
+    missing = client.patch(
+        "/v1/projects/flood/datasets/nope", json={"description": "x"}, headers=ALICE
+    )
+    assert missing.status_code == 404
+
+
 def test_non_member_gets_404(client, tables):
     register(client)
     assert client.get("/v1/projects/flood/datasets", headers=BOB).status_code == 404

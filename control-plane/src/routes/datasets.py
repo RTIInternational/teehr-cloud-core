@@ -105,6 +105,7 @@ from src.schemas import (
     DatasetCreate,
     DatasetOut,
     DatasetRegistration,
+    DatasetUpdate,
     DerivedCreate,
     LayerCreate,
     TimeseriesCreate,
@@ -636,6 +637,27 @@ def get_dataset(
 ) -> DatasetOut:
     project, _ = _authorize(session, name, identity, settings, Role.READ)
     return DatasetOut.model_validate(_dataset(session, project, dataset))
+
+
+@router.patch(
+    "/{dataset}", operation_id="update_dataset", responses=_errors(401, 403, 404, 503)
+)
+def update_dataset(
+    name: ProjectName,
+    dataset: DatasetName,
+    body: DatasetUpdate,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+) -> DatasetOut:
+    """Change a dataset's description (the record only: the table is untouched)."""
+    project, _ = _authorize(session, name, identity, settings, Role.WRITE)
+    record = _dataset(session, project, dataset)
+    for field_name, value in body.model_dump(exclude_unset=True).items():
+        setattr(record, field_name, value)
+    session.commit()
+    session.refresh(record)
+    return DatasetOut.model_validate(record)
 
 
 @router.delete(
