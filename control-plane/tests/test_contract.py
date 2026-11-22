@@ -42,6 +42,7 @@ OPERATION_IDS = {
     "create_dataset",
     "list_datasets",
     "get_dataset",
+    "update_dataset",
     "delete_dataset",
     "write_dataset",
     "list_dataset_writes",

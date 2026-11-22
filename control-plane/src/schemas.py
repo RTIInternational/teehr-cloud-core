@@ -451,6 +451,10 @@ class DerivedOut(BaseModel):
     unit: str
 
 
+class DatasetUpdate(StrictInput):
+    description: str | None = Field(default=None, max_length=2000)
+
+
 class DatasetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

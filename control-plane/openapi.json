@@ -464,6 +464,25 @@
         "title": "DatasetOut",
         "type": "object"
       },
+      "DatasetUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "title": "DatasetUpdate",
+        "type": "object"
+      },
       "DerivedCreate": {
         "additionalProperties": false,
         "description": "A dataset derived from an observed timeseries, per its series (ADR-0019):\n`climatology` (mean per day of year and hour), `percentiles` (values at fixed\npercentiles of the record) or `naive_scale` (MASE's scale per lag). Its columns\nare fixed by its type; it takes the observed dataset's variable and unit. A build\nflow fills it (or replaces it) in one commit.",
@@ -4922,6 +4941,117 @@
           }
         ],
         "summary": "Get Dataset",
+        "tags": [
+          "datasets"
+        ]
+      },
+      "patch": {
+        "description": "Change a dataset's description (the record only: the table is untouched).",
+        "operationId": "update_dataset",
+        "parameters": [
+          {
+            "description": "Project name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Project name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Dataset name",
+            "in": "path",
+            "name": "dataset",
+            "required": true,
+            "schema": {
+              "description": "Dataset name",
+              "pattern": "^[a-z][a-z0-9_]{0,59}$",
+              "title": "Dataset",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Signed in, but without the project role this needs"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "No such project (or the caller isn't a member), member or user"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update Dataset",
         "tags": [
           "datasets"
         ]
