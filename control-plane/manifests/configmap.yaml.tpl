@@ -40,10 +40,12 @@ data:
   STORAGE_S3_ENDPOINT: "${var.polaris.catalogS3Endpoint}"
   STORAGE_S3_REGION: "${var.polaris.catalogS3Region}"
   STORAGE_S3_PATH_STYLE: "${var.polaris.catalogS3PathStyleAccess}"
-  # System projects (public, platform): every user reads (the default-group role);
-  # only ingest's prefect-polaris service account writes.
+  # System projects (public, platform): every user reads (the default-group role).
+  # Writers: the v1 flows' service account, a write member (ADR-0020); the legacy
+  # ingest's prefect-polaris by role, until it retires.
   SYSTEM_PROJECT_READER_ROLES: "teehr-read-only"
   SYSTEM_PROJECT_WRITER_ROLES: "teehr-platform-write"
+  SYSTEM_PROJECT_WRITERS: "service-account-teehr-platform-automation"
   # Keycloak admin API (teehr realm only), for the realm roles that carry project
   # access.
   KEYCLOAK_ADMIN_URL: "http://keycloak-service:8080"

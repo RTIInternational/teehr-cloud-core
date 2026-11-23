@@ -67,6 +67,12 @@ spec:
                   name: control-plane-secrets
                   key: jobs-client-secret
                   optional: true
+            - name: PLATFORM_AUTOMATION_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: control-plane-secrets
+                  key: automation-client-secret
+                  optional: true
             - name: SMTP_HOST
               valueFrom:
                 configMapKeyRef:

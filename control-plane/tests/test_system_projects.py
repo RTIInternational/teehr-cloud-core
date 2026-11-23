@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 from src.config import Settings, get_settings
 from src.db import make_engine
 from src.main import app
-from src.models import Project, ProjectKind, ProjectStatus, Role
-from src.polaris import catalog_role_name
+from src.models import Membership, Project, ProjectKind, ProjectStatus, Role
+from src.polaris import catalog_role_name, principal_role_name
 from src.provisioning import SYSTEM_PROJECTS, reconcile, reconcile_on_start
 from tests.conftest import ISSUER, auth
+from tests.fake_keycloak import FakeKeycloak
 from tests.fake_polaris import FakePolaris
 
 ALICE = auth("alice")
@@ -197,3 +198,42 @@ def test_startup_without_polaris_does_not_wait(db_url):
     waits = []
     assert reconcile_on_start(make_engine(db_url), None, sleep=waits.append) == 0
     assert waits == []
+
+
+BOT = "service-account-bot"
+
+
+def _members(db_url, project: str) -> dict[str, Role]:
+    with Session(make_engine(db_url)) as session:
+        rows = session.query(Membership).join(Project).filter(Project.name == project)
+        return {m.username: m.role for m in rows}
+
+
+def test_system_writers_become_write_members(client, polaris, db_url):
+    """ADR-0020: a configured writer (a service account) is a write member of both,
+    with the access that brings, so it can start runs as well as write tables."""
+    keycloak = FakeKeycloak(usernames=("alice", BOT))
+    settings = dataclasses.replace(SETTINGS, system_writers=(BOT, "not-yet"))
+    reconcile(make_engine(db_url), polaris.admin(), keycloak.admin(), settings)
+    for name in SYSTEM_PROJECTS:
+        assert _members(db_url, name) == {BOT: Role.WRITE}
+        assert principal_role_name(name, Role.WRITE) in keycloak.user_roles[BOT]
+        assert principal_role_name(name, Role.WRITE) in polaris.bindings[BOT]
+    assert all(s == ProjectStatus.READY for _, s in _statuses(db_url).values())
+    platform = client.get("/v1/projects/platform", headers=auth(BOT)).json()
+    assert platform["my_role"] == "write"
+
+
+def test_system_writers_are_kept_on_restart(polaris, db_url):
+    """Demoted by hand: back to write on restart. An admin stays an admin."""
+    keycloak = FakeKeycloak(usernames=("alice", BOT))
+    settings = dataclasses.replace(SETTINGS, system_writers=(BOT, "alice"))
+    engine = make_engine(db_url)
+    reconcile(engine, polaris.admin(), keycloak.admin(), settings)
+    with Session(engine) as session:
+        for m in session.query(Membership):
+            m.role = Role.READ if m.username == BOT else Role.ADMIN
+        session.commit()
+    reconcile(engine, polaris.admin(), keycloak.admin(), settings)
+    for name in SYSTEM_PROJECTS:
+        assert _members(db_url, name) == {BOT: Role.WRITE, "alice": Role.ADMIN}

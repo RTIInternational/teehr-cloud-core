@@ -80,7 +80,7 @@ so they have one source.
 | Key | Default behavior when unset |
 |---|---|
 | `irsa.jupyterRoleArn` | Jupyter's service account gets no IRSA role (no direct access to external, non-warehouse data). |
-| `controlPlane.enabled` | The project control plane isn't deployed, and its Keycloak clients, service-account roles and Polaris `service_admin` binding are off. Set `true` only with the keys below and a `control-plane-secrets` entry in the remote secrets (`client-secret`, `jobs-client-secret`, `job-token-key`). |
+| `controlPlane.enabled` | The project control plane isn't deployed, and its Keycloak clients, service-account roles and Polaris `service_admin` binding are off. Set `true` only with the keys below and a `control-plane-secrets` entry in the remote secrets (`client-secret`, `jobs-client-secret`, `automation-client-secret`, `job-token-key`). |
 | `irsa.controlPlaneRoleArn` | The control plane's service account has no IAM role, so uploads can't be staged. Terraform output `control_plane_role_arn`. |
 | `controlPlane.stagingBucket` | Uploads are disabled. Terraform output `upload_staging_bucket`. |
 | `controlPlane.projectCreatorRoles` | Any signed-in user may create a project. A dark launch sets `control-plane-admin`. |
