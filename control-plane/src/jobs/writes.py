@@ -32,14 +32,16 @@ def open_tables(task: dict) -> Tables:
 
 
 def as_caller(client: GrantClient, name: str, call):
-    """``call(token)`` as the caller: once more with a fresh token if it's refused
-    (the token may have gone stale), again after a short wait while another write
-    commits first; table errors as LoadFailed."""
+    """``call(token)`` as the caller, ``token`` giving a current access token on each
+    catalog request (a long write's commit doesn't carry one that expired while its
+    files were written, #228): once more with a fresh one if it's refused, again
+    after a short wait while another write commits first; table errors as
+    LoadFailed."""
 
-    def attempt(token):
+    def attempt():
         for tries in range(CONFLICT_TRIES):
             try:
-                return call(token)
+                return call(client.token)
             except WriteConflict:
                 if tries == CONFLICT_TRIES - 1:
                     raise
@@ -47,9 +49,10 @@ def as_caller(client: GrantClient, name: str, call):
 
     try:
         try:
-            return attempt(client.token())
+            return attempt()
         except TableForbidden:
-            return attempt(client.token(fresh=True))
+            client.token(fresh=True)  # refused: replace the cached token
+            return attempt()
     except TableForbidden:
         raise LoadFailed([f"writing {name}: the caller may not write it"]) from None
     except TableError as exc:
