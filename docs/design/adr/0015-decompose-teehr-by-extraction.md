@@ -92,7 +92,10 @@ functional seams stand; this changes the route.
 - **Amended 2026-11-23 (ADR-0019, #271):** deployment ingests don't submit through the API:
   they write `public` directly with teehr-core's writer (`teehr_core.warehouse`), as the v1
   flows' service account (ADR-0020), so bulk ingests aren't held to the API's request size.
-  The fetch package only produces rows (v1 timeseries and series tables as Arrow); a
-  standalone user can still submit them through the API. It is **`teehr.fetch`** on teehr's
-  `v1` branch, the `teehr[fetch]` extra; first source: USGS observations.
+  Fetching lives in **teehr-core** (`teehr_core.fetch`, the `teehr-core[fetch]` extra), next to
+  the data model its rows follow and the writer, so a producer needs no client SDK and other
+  deployments (teehr-fved, VeriRace) get it with teehr-core; `teehr[fetch]` pulls it in for
+  users. Sources only produce rows (v1 timeseries as Arrow); writing them is one teehr-core
+  call that works from a Prefect flow or a person's notebook, against any project they may
+  write. First source: USGS observations.
 - Open: whether a Spark backend is needed at all; which legacy derived fields get ported.
