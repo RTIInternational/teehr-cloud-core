@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (HEFS-FEWS profile images)
+
+### Summary
+- The remote profile generator takes the HEFS-FEWS images from the deploy target's registry instead of the
+  us-east-2 registry (#268).
+
+### What Changed
+- `jupyterhub-profiles/generate_profile_list.py`: HEFS-FEWS images are
+  `${var.remoteCluster.ecrRegistry}/hefs-fews-hub:...`, the same reference teehr-hub's generated `.tpl` has used
+  since RTIInternational/teehr-hub#488.
+
+### Why
+- RTIInternational/teehr-hub#488 changed only the generated `.tpl`, so regenerating the profile list would have
+  reverted it to us-east-2.
+
 ## Unreleased (Icechunk on Spark executors)
 
 ### Summary
