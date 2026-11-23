@@ -44,7 +44,7 @@ data:
           { "name": "control-plane-admin", "description": "Edit every project in the control plane. Very few people." },
           { "name": "control-plane-viewer", "description": "See every project and its members in the control plane; change nothing" },
           { "name": "polaris-service-admin", "description": "Polaris service_admin via token (with a named-principal binding). The control plane's service account only." },
-          { "name": "icechunk-read-only" },
+          { "name": "icechunk-read-only" }
         ]
       },
       "groups": [
@@ -420,7 +420,6 @@ data:
               }
             }
           ]
-        }
         },
         {
           "clientId": "teehr-platform-automation",
@@ -463,6 +462,7 @@ data:
               }
             }
           ]
+        }
       ],
       "users": [
         {
