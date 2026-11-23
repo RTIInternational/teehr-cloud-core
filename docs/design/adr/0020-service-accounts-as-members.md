@@ -1,6 +1,6 @@
 # ADR-0020: Project membership is the one source of access; service accounts are members
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-23
 - **Deciders:** TEEHR team
 - **Related:** #266, #167 (access model review), #206 (remote gates), ADR-0001 (system

@@ -94,6 +94,8 @@ class Settings:
     # platform): read for every user, write for the platform's writers (ingest).
     system_reader_roles: tuple[str, ...] = ()
     system_writer_roles: tuple[str, ...] = ()
+    # Usernames made write members of the system projects (ADR-0020).
+    system_writers: tuple[str, ...] = ()
     # Keycloak admin API, for the realm roles that carry project access.
     # None = membership isn't turned into data access.
     keycloak_admin_url: str | None = None
@@ -218,6 +220,7 @@ def get_settings() -> Settings:
         max_page_rows_binary=int(os.getenv("MAX_PAGE_ROWS_BINARY") or 1_000_000),
         system_reader_roles=_csv(os.getenv("SYSTEM_PROJECT_READER_ROLES")),
         system_writer_roles=_csv(os.getenv("SYSTEM_PROJECT_WRITER_ROLES")),
+        system_writers=_csv(os.getenv("SYSTEM_PROJECT_WRITERS")),
         keycloak_admin_url=os.getenv("KEYCLOAK_ADMIN_URL") or None,
         keycloak_realm=os.getenv("KEYCLOAK_REALM", "teehr"),
         staging_bucket=os.getenv("STAGING_BUCKET") or None,

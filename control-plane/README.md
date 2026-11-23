@@ -40,8 +40,11 @@ legacy `teehr` namespace is untouched, and its data is copied into `public` late
 
 - **Read**: every user, via `SYSTEM_PROJECT_READER_ROLES` (`teehr-read-only`, the
   Keycloak default group).
-- **Write**: `SYSTEM_PROJECT_WRITER_ROLES` (`teehr-platform-write`, held only by
-  ingest's `prefect-polaris` service account).
+- **Write**: the users in `SYSTEM_PROJECT_WRITERS`
+  (`service-account-teehr-platform-automation`, the v1 flows' client), made write
+  members on every restart (ADR-0020), so they can start runs as well as write
+  tables. Also `SYSTEM_PROJECT_WRITER_ROLES` (`teehr-platform-write`, held only by
+  the legacy ingest's `prefect-polaris`), which retires with it.
 - Platform admins manage them (edit, members, re-provision); nobody can delete them.
 
 The grants follow these settings exactly on every restart: a role removed from a

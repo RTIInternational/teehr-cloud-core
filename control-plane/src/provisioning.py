@@ -26,7 +26,7 @@ from src.access import (
 )
 from src.config import Settings, get_settings
 from src.keycloak_admin import KeycloakAdmin, KeycloakError
-from src.models import Project, ProjectKind, ProjectStatus, Role
+from src.models import Membership, Project, ProjectKind, ProjectStatus, Role
 from src.polaris import PolarisAdmin, PolarisError, provision
 
 logger = logging.getLogger("control-plane.provisioning")
@@ -114,6 +114,35 @@ def ensure_system_projects(session: Session) -> None:
             session.rollback()
 
 
+def ensure_system_writers(
+    project: Project, keycloak: KeycloakAdmin, writers: tuple[str, ...]
+) -> None:
+    """Make each of ``writers`` (usernames) at least a write member of a system
+    project (ADR-0020). A writer not in Keycloak yet is skipped with a warning (its
+    client may not be imported yet); restart or reprovision once it is."""
+    members = {m.subject: m for m in project.members}
+    for username in writers:
+        user = keycloak.find_user(username)
+        if user is None:
+            logger.warning(
+                "System writer '%s' isn't a Keycloak user; not a member of '%s'",
+                username, project.name,
+            )  # fmt: skip
+            continue
+        member = members.get(user["id"])
+        if member is None:
+            project.members.append(
+                Membership(
+                    subject=user["id"],
+                    username=user["username"],
+                    role=Role.WRITE,
+                    added_by=SYSTEM_CREATOR,
+                )
+            )
+        elif member.role.rank < Role.WRITE.rank:
+            member.role = Role.WRITE
+
+
 def _grant_members(
     project: Project, polaris: PolarisAdmin, keycloak: KeycloakAdmin
 ) -> None:
@@ -143,7 +172,7 @@ def provision_project(
     """Provision one project and commit its new status.
 
     A system project's roles are also given to the configured system reader and
-    writer roles (``settings``).
+    writer roles, and its configured writers are made write members (``settings``).
 
     Holds a row lock on the project for the duration, so two workers (or a user's
     retry and the startup reconcile) never provision the same project at once and
@@ -161,16 +190,16 @@ def provision_project(
         session.commit()  # release the lock
         return False
     location = project.storage_location
-    also_granted = (
-        system_access(settings or get_settings())
-        if project.kind == ProjectKind.SYSTEM
-        else None
-    )
+    settings = settings or get_settings()
+    system = project.kind == ProjectKind.SYSTEM
+    also_granted = system_access(settings) if system else None
     try:
         location = provision(
             admin, project.name, str(project.id), admin.warehouse, also_granted
         )
         if keycloak is not None:
+            if system:
+                ensure_system_writers(project, keycloak, settings.system_writers)
             _grant_members(project, admin, keycloak)
     except (PolarisError, KeycloakError, AccessError) as exc:
         logger.error("Provisioning '%s' failed: %s", project.name, exc)
@@ -226,7 +255,7 @@ def reconcile(
     project that is still pending or failed.
 
     System projects are provisioned every time, so a change to the system reader
-    or writer roles takes effect on restart. Safe to run from several workers at
+    or writer roles, or the system writers, takes effect on restart. Safe to run from several workers at
     once: each project is provisioned under its row lock, and a tenant another
     worker already finished is skipped.
     """

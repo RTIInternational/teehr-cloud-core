@@ -421,6 +421,48 @@ data:
             }
           ]
         }
+        },
+        {
+          "clientId": "teehr-platform-automation",
+          "name": "Platform automation (v1 flows)",
+          "description": "The v1 Prefect flows' service account, a write member of the system projects (ADR-0020). Refresh tokens for client credentials so a run it starts can act as it (ADR-0014). On where the control plane is (local; var.controlPlane.enabled).",
+          "enabled": ${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? "true" : "false"},
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "attributes": {
+            "client_credentials.use_refresh_token": "true"
+          },
+          "secret": "${(environment.name == 'local' || (var.controlPlane.enabled || false)) ? '$(env:PLATFORM_AUTOMATION_CLIENT_SECRET)' : ''}",
+          "protocolMappers": [
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            },
+            {
+              "name": "audience-teehr-control-plane-jobs",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.custom.audience": "teehr-control-plane-jobs",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
+          ]
       ],
       "users": [
         {
