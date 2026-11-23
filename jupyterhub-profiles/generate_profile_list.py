@@ -18,7 +18,7 @@ PREVIOUS_IMAGE = "${actions.build.teehr-jupyter-driver-image-previous.outputs.de
 EDGE_IMAGE = "${actions.build.teehr-jupyter-driver-image-edge.outputs.deploymentImageId}"
 # Built outside the deployment (RTIInternational/hefs-fews-hub) and pushed to
 # each cluster's registry, which the deploy target sets.
-HEFS_V031_IMAGE = "${var.remoteCluster.ecrRegistry}/hefs-fews-hub:v0.3.1"
+HEFS_V033_IMAGE = "${var.remoteCluster.ecrRegistry}/hefs-fews-hub:v0.3.3"
 HEFS_DEV_IMAGE = "${var.remoteCluster.ecrRegistry}/hefs-fews-hub:dev"
 FRACTIONAL_4XL_MEM_LIMIT = "127G"
 FRACTIONAL_4XL_CPU_LIMIT = 15.5
@@ -123,7 +123,7 @@ def _hefs_choices(*, suffix: str) -> dict[str, Any]:
     return {
         "hefs-v0-3-0": _choice(
             "HEFS-FEWS v0.3.x - XL (4 cores, 16 GB memory)",
-            HEFS_V031_IMAGE,
+            HEFS_V033_IMAGE,
             xlarge,
             "32G",
             4,

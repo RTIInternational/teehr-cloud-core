@@ -5,15 +5,19 @@
 ### Summary
 - The remote profile generator takes the HEFS-FEWS images from the deploy target's registry instead of the
   us-east-2 registry (#268).
+- The HEFS-FEWS v0.3.x choice uses hefs-fews-hub `v0.3.3`, which reads the HEFS data from the new us-east-1
+  bucket (RTIInternational/hefs-fews-hub#19, RTIInternational/teehr-cloud-platform#41).
 
 ### What Changed
 - `jupyterhub-profiles/generate_profile_list.py`: HEFS-FEWS images are
   `${var.remoteCluster.ecrRegistry}/hefs-fews-hub:...`, the same reference teehr-hub's generated `.tpl` has used
   since RTIInternational/teehr-hub#488.
+- `HEFS_V031_IMAGE` renamed to `HEFS_V033_IMAGE` and moved from `v0.3.1` to `v0.3.3`.
 
 ### Why
 - RTIInternational/teehr-hub#488 changed only the generated `.tpl`, so regenerating the profile list would have
   reverted it to us-east-2.
+- `v0.3.1` reads from `ciroh-rti-hefs-data` in us-east-2, so every read crossed regions.
 
 ## Unreleased (Icechunk on Spark executors)
 
