@@ -28,6 +28,7 @@ from src.routes import (
     domains,
     evaluations,
     job_grants,
+    me,
     projects,
     runs,
     tokens,
@@ -98,6 +99,7 @@ app.include_router(job_grants.router)
 app.include_router(runs.router)
 app.include_router(evaluations.router)
 app.include_router(tokens.router)
+app.include_router(me.router)
 errors.install(app)
 
 
