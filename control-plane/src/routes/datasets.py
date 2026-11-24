@@ -54,8 +54,14 @@ from src.dataset_types import (
     timeseries_columns,
 )
 from src.domains import convert, lookup
-from src.errors import APIError
-from src.expressions import compile_filter, overwrite_expression
+from src.errors import APIError, problem
+from src.expressions import (
+    Factor,
+    NotConvertible,
+    compile_filter,
+    in_units,
+    overwrite_expression,
+)
 from src.formats import (
     ARROW_STREAM,
     JSON,
@@ -1186,6 +1192,7 @@ def list_dataset_writes(
 NEXT_CURSOR = "X-Next-Cursor"
 TOTAL_ROWS = "X-Total-Rows"
 SNAPSHOT_ID = "X-Snapshot-Id"
+UNIT = "X-Unit"
 
 
 def _bad_request(detail: str) -> HTTPException:
@@ -1243,7 +1250,8 @@ def read_dataset(
                 "comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, "
                 "CASE, and allow-listed functions such as hour(), date_trunc(), "
                 "ln(), coalesce()), e.g. series_key = 'usgs-01' AND "
-                "hour(value_time) = 0. Numbers are in the column's stored unit."
+                "hour(value_time) = 0. Numbers are in `unit` when it's given, else "
+                "in the column's stored unit."
             ),
         ),
     ] = None,
@@ -1265,6 +1273,16 @@ def read_dataset(
             )
         ),
     ] = None,
+    unit: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Timeseries: return `value` in this unit (UCUM, e.g. [cft_i]/s), "
+                "converted from the dataset's; the filter's numbers are in it too. "
+                "The response's unit is in X-Unit (and `unit` in a JSON body)."
+            )
+        ),
+    ] = None,
 ) -> Response:
     """Read a dataset's rows, as the caller, a page at a time.
 
@@ -1275,12 +1293,57 @@ def read_dataset(
     return _read_dataset(
         request, name, dataset, session, identity, settings, tables,
         columns=columns, filter=filter, limit=limit, cursor=cursor, count=count,
-        bbox=bbox,
+        bbox=bbox, unit=unit,
     )  # fmt: skip
 
 
 #: Adds a page's places: a ``geometry`` column (WKB) and attribute columns.
 Placer = Callable[[pa.Table], pa.Table]
+#: A run's results: their unit (the evaluation unit; None when it can't be told),
+#: and each column's conversion from it to another unit (teehr-core's
+#: ``result_factors``, which needs the scale and offset).
+ResultUnits = tuple[str | None, Callable[[float, float], dict[str, Factor]]]
+
+
+def _unit_problem(detail: str) -> Response:
+    return problem(422, detail, errors=[{"loc": ["query", "unit"], "msg": detail,
+                                         "type": "value_error"}])  # fmt: skip
+
+
+def _conversion(
+    session: Session, project: Project, stored: str, wanted: str
+) -> tuple[float, float] | str:
+    """``(scale, offset)`` from ``stored`` to ``wanted``, or why not."""
+    source = lookup(session, Unit, stored, project.id)
+    target = lookup(session, Unit, wanted, project.id)
+    if target is None:
+        return f"unknown unit '{wanted}'"
+    if source is None:
+        return f"the values' unit '{stored}' isn't defined here"
+    if source.dimension != target.dimension:
+        return (
+            f"{wanted} ({target.dimension}) isn't a unit of these values "
+            f"({stored}, {source.dimension})"
+        )
+    return (
+        source.to_si / target.to_si,
+        (source.offset - target.offset) / target.to_si,
+    )
+
+
+def _converted(rows: pa.Table, factors: dict[str, Factor]) -> pa.Table:
+    """``rows`` with each column that has a factor converted (numbers only)."""
+    for name, factor in factors.items():
+        if factor is None or factor == (1.0, 0.0) or name not in rows.column_names:
+            continue
+        i = rows.schema.get_field_index(name)
+        column = rows.column(i)
+        if not (pa.types.is_floating(column.type) or pa.types.is_integer(column.type)):
+            continue
+        scale, offset = factor
+        values = pc.add(pc.multiply(pc.cast(column, pa.float64()), scale), offset)
+        rows = rows.set_column(i, name, values)
+    return rows
 
 
 def _read_dataset(
@@ -1299,6 +1362,8 @@ def _read_dataset(
     count: bool,
     bbox: str | None,
     place: Placer | None = None,
+    unit: str | None = None,
+    results: ResultUnits | None = None,
 ) -> Response:
     """:func:`read_dataset`, with ``place`` giving each page's rows a geometry
     (a run's results with ``output.geometry``): then JSON rows carry GeoJSON
@@ -1320,11 +1385,41 @@ def _read_dataset(
         )
     if geojson and selected and "geometry" not in selected and place is None:
         selected = (*selected, "geometry")
+    # Units: a timeseries' values are in its unit, results in the evaluation unit.
+    stored_unit = (
+        (record.properties or {}).get("unit")
+        if record.kind == TIMESERIES
+        else (results[0] if results else None)
+    )
+    factors: dict[str, Factor] = {}
+    if unit is not None:
+        if record.kind != TIMESERIES and results is None:
+            return _unit_problem("unit applies to timeseries and run results")
+        if stored_unit is None:
+            return _unit_problem(
+                "these results' unit can't be told; read them as stored"
+            )
+        conversion = _conversion(session, project, stored_unit, unit)
+        if isinstance(conversion, str):
+            return _unit_problem(conversion)
+        if results is None:
+            factors = {"value": conversion}
+        else:
+            factors = results[1](*conversion)
+        returned = selected or tuple(c["name"] for c in declared)
+        blocked = [c for c in returned if c in factors and factors[c] is None]
+        if blocked:
+            return problem(422, str(NotConvertible(blocked)),
+                           code="unit_not_convertible")  # fmt: skip
     try:
+        if filter and factors:
+            filter = in_units(filter, factors)
         if bbox is not None:
             spatial = bbox_filter(bbox)
             filter = f"({filter}) and {spatial}" if filter else spatial
         compiled = compile_filter(filter, declared) if filter else None
+    except NotConvertible as exc:
+        return problem(422, str(exc), code="unit_not_convertible")
     except DataMismatch as exc:
         raise _unprocessable(str(exc)) from exc
     expression = compiled.pushdown if compiled else None
@@ -1399,7 +1494,7 @@ def _read_dataset(
             detail="The catalog could not read the table",
         ) from exc
 
-    rows = matched.slice(offset, page)
+    rows = _converted(matched.slice(offset, page), factors)
     if place is not None:
         rows = place(rows)
     more = matched.num_rows > offset + page
@@ -1411,6 +1506,9 @@ def _read_dataset(
     headers = {}
     if result.snapshot_id is not None:
         headers[SNAPSHOT_ID] = str(result.snapshot_id)
+    shown_unit = unit or stored_unit
+    if shown_unit is not None:
+        headers[UNIT] = shown_unit
     has_geometry = "geometry" in rows.column_names and (
         record.kind == LAYER or place is not None
     )
@@ -1434,6 +1532,8 @@ def _read_dataset(
         body = {"rows": out, "next_cursor": next_cursor}
         if total is not None:
             body["total"] = total
+        if shown_unit is not None:
+            body["unit"] = shown_unit
         return JSONResponse(body, headers=headers)
     if next_cursor:
         headers[NEXT_CURSOR] = next_cursor

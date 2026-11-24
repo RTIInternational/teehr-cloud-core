@@ -1394,3 +1394,68 @@ def test_a_run_reads_a_percentiles_dataset_for_a_threshold(client, lake, jobs, t
     hits = next(c for c in rows["usgs-a"] if c.startswith("hit"))
     # usgs-a: obs >= 2.5 at hours 2, 3; sim (nwm-1) only at hour 3. usgs-b: both at 2, 3.
     assert (rows["usgs-a"][hits], rows["usgs-b"][hits]) == (1, 2)
+
+
+def test_results_come_in_the_unit_asked_for(client, lake, jobs, tables):  # noqa: F811
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "rmse", "relative_median"]
+    saved(client, body)
+    run = client.post(f"{EVALUATIONS}/e/runs", json={"full": True}, headers=ALICE_NOW)
+    run_job(client, kube)
+    lake.put("results_e_v1", tables.written[("flood", "results_e_v1")][-1])
+    url = f"/v1/projects/flood/runs/{run.json()['id']}/results"
+
+    stored = client.get(url, headers=ALICE)
+    assert stored.headers["X-Unit"] == "m3/s"
+    cfs = client.get(url, params={"unit": "[cft_i]/s"}, headers=ALICE)
+    assert cfs.status_code == 200, cfs.text
+    assert cfs.headers["X-Unit"] == "[cft_i]/s" and cfs.json()["unit"] == "[cft_i]/s"
+    before = {r["primary_series_key"]: r for r in stored.json()["rows"]}
+    for row in cfs.json()["rows"]:
+        was = before[row["primary_series_key"]]
+        assert row["count"] == was["count"]  # invariant
+        assert row["relative_median"] == pytest.approx(was["relative_median"])  # ratio
+        assert row["root_mean_square_error"] == pytest.approx(  # difference
+            was["root_mean_square_error"] / 0.028316846592
+        )
+    # The filter's numbers are in the unit asked for too.
+    worst = max(r["root_mean_square_error"] for r in cfs.json()["rows"])
+    narrowed = client.get(url, headers=ALICE, params={
+        "unit": "[cft_i]/s", "filter": f"root_mean_square_error >= {worst * 0.999}"})  # fmt: skip
+    assert [r["root_mean_square_error"] for r in narrowed.json()["rows"]] == (
+        pytest.approx([worst])
+    )
+    wrong = client.get(url, params={"unit": "Cel"}, headers=ALICE)
+    assert wrong.status_code == 422
+
+
+def test_results_that_cant_be_converted_are_named(
+    client,
+    lake,
+    jobs,
+    tables,
+    monkeypatch,  # noqa: F811
+):
+    from src.routes import runs as run_routes
+
+    kube, _ = jobs
+    body = spec()
+    body["aggregate"][0]["metrics"] = ["count", "relative_median"]
+    saved(client, body)
+    run = client.post(f"{EVALUATIONS}/e/runs", json={"full": True}, headers=ALICE_NOW)
+    run_job(client, kube)
+    lake.put("results_e_v1", tables.written[("flood", "results_e_v1")][-1])
+    url = f"/v1/projects/flood/runs/{run.json()['id']}/results"
+    # As across an offset (e.g. Fahrenheit to Celsius): a ratio can't be converted.
+    monkeypatch.setattr(run_routes, "result_factors",
+                        lambda spec, conv: {"count": (1.0, 0.0), "relative_median": None})  # fmt: skip
+    resp = client.get(url, params={"unit": "L/s"}, headers=ALICE)
+    assert resp.status_code == 422 and resp.json()["code"] == "unit_not_convertible"
+    assert "relative_median" in resp.json()["detail"]
+    ok = client.get(url, params={"unit": "L/s", "columns": "primary_series_key,count"},
+                    headers=ALICE)  # fmt: skip
+    assert ok.status_code == 200 and ok.headers["X-Unit"] == "L/s"
+    filtered = client.get(url, params={"unit": "L/s", "columns": "count",
+                                       "filter": "relative_median > 1"}, headers=ALICE)  # fmt: skip
+    assert filtered.json()["code"] == "unit_not_convertible"

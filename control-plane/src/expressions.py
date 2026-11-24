@@ -7,7 +7,7 @@ column with literals, ``IN``, ``BETWEEN``, ``IS [NOT] NULL``, and ``AND`` / ``OR
 ``NOT`` of those), so Iceberg still skips files, and the rest (functions,
 arithmetic, ``CASE``, comparisons between columns), evaluated with Arrow on the rows
 the scan returns. A number is read in the column's stored unit (a timeseries'
-canonical unit).
+canonical unit), or, for a read in another unit, in that unit (:func:`in_units`).
 """
 
 from collections.abc import Callable
@@ -392,3 +392,87 @@ def overwrite_expression(
             "BETWEEN, IS NULL, AND/OR/NOT), so the table can apply it"
         )
     return compiled.pushdown
+
+
+# --- units --------------------------------------------------------------------
+
+#: A column's conversion to the requested unit, ``scale × x + offset`` (None: it
+#: can't be converted).
+Factor = tuple[float, float] | None
+
+
+class NotConvertible(DataMismatch):
+    """A filter or read names columns that can't be converted to the unit asked for."""
+
+    def __init__(self, columns: list[str]):
+        self.columns = columns
+        super().__init__(
+            f"{', '.join(columns)} can't be converted to this unit (it divides by "
+            "levels of the variable, or a transform's offset differs); leave it out "
+            "or evaluate in this unit (output.unit)"
+        )
+
+
+def in_units(text: str, factors: dict[str, Factor]) -> str:
+    """``text`` as it reads stored values when its numbers are in the requested unit.
+
+    A comparison of a converted column with numbers (``value > 1000``, ``BETWEEN``,
+    ``IN``) gets its numbers converted back to the stored unit, so it's still pushed
+    down to the scan; any other use of the column is replaced by its conversion
+    (``value`` → ``(scale * value + offset)``). Raises :class:`NotConvertible` for a
+    column that can't be converted.
+    """
+    tree = sqlglot.parse_one(text)
+    named = {c.name for c in tree.find_all(exp.Column) if c.name in factors}
+    blocked = sorted(c for c in named if factors[c] is None)
+    if blocked:
+        raise NotConvertible(blocked)
+    moving = {c: f for c, f in factors.items() if f is not None and f != (1.0, 0.0)}
+    if not moving.keys() & named:
+        return text
+
+    def column(node) -> str | None:
+        return (
+            node.name if isinstance(node, exp.Column) and node.name in moving else None
+        )
+
+    def stored(name: str, node) -> exp.Expression | None:
+        value = _literal(node)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        scale, offset = moving[name]
+        number = (value - offset) / scale
+        literal = exp.Literal.number(repr(abs(number)))
+        return exp.Neg(this=literal) if number < 0 else literal
+
+    def kept(node: exp.Column) -> exp.Column:
+        node = node.copy()
+        node.meta["stored"] = True  # compared in the stored unit: leave it be
+        return node
+
+    def literals(node):
+        if type(node) in _COMPARE:
+            left, right = node.this, node.expression
+            if column(left) and (new := stored(left.name, right)) is not None:
+                return node.__class__(this=kept(left), expression=new)
+            if column(right) and (new := stored(right.name, left)) is not None:
+                return node.__class__(this=new, expression=kept(right))
+        if isinstance(node, exp.Between) and column(node.this):
+            low = stored(node.this.name, node.args["low"])
+            high = stored(node.this.name, node.args["high"])
+            if low is not None and high is not None:
+                return exp.Between(this=kept(node.this), low=low, high=high)
+        if isinstance(node, exp.In) and column(node.this) and node.expressions:
+            values = [stored(node.this.name, v) for v in node.expressions]
+            if all(v is not None for v in values):
+                return exp.In(this=kept(node.this), expressions=values)
+        return node
+
+    def columns(node):
+        name = column(node)
+        if name is None or node.meta.get("stored"):
+            return node
+        scale, offset = moving[name]
+        return exp.Paren(this=sqlglot.parse_one(f"{scale!r} * {name} + ({offset!r})"))
+
+    return tree.transform(literals).transform(columns).sql()

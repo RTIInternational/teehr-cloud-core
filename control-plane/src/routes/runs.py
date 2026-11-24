@@ -17,6 +17,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
+from teehr_core.metrics.units import result_factors
+from teehr_core.model.units import Conversion
 from teehr_core.spec import load_spec
 
 from src import job_logs
@@ -241,6 +243,18 @@ def read_run_results(
             )
         ),
     ] = True,
+    unit: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Return the results in this unit (UCUM) instead of the evaluation "
+                "unit: each metric converts by its kind (errors by scale alone, "
+                "squares by its square, ratios not across an offset); the filter's "
+                "numbers are in it too. 422 unit_not_convertible names the columns "
+                "that can't be. The response's unit is in X-Unit."
+            )
+        ),
+    ] = None,
 ):
     """A succeeded run's results: its rows of its version's results table (which
     keeps every run's), paged as reading a dataset. With ``output.geometry`` each
@@ -265,11 +279,30 @@ def read_run_results(
         place = placer(
             session, project, identity, _require_tables(tables), load_spec(version.spec)
         )
+    units = _result_units(session, project, version) if version is not None else None
     return _read_dataset(
         request, name, dataset, session, identity, settings, tables,
         columns=columns, filter=f"({filter}) AND {mine}" if filter else mine,
         limit=limit, cursor=cursor, count=count, bbox=None, place=place,
+        unit=unit, results=units,
     )  # fmt: skip
+
+
+def _result_units(session: Session, project, version: EvaluationVersion):
+    """The results' unit (the evaluation unit: output.unit, else the primary's, as
+    the datasets are now) and each column's conversion from it."""
+    spec = load_spec(version.spec)
+    unit = spec.output.unit
+    if unit is None:
+        try:
+            unit = plan(session, project, version.spec).unit
+        except SpecProblems:
+            unit = None  # a dataset it read is gone: the unit can't be told
+
+    def factors(scale: float, offset: float):
+        return result_factors(spec, Conversion(scale, offset))
+
+    return unit, factors
 
 
 @router.get(
