@@ -1,6 +1,6 @@
 # ADR-0015: Decompose `teehr` by extraction; legacy `teehr` frozen until cutover
 
-- **Status:** Proposed
+- **Status:** Proposed; fetch package amended by ADR-0019 (2026-11-23)
 - **Date:** 2026-11-17
 - **Deciders:** TEEHR team
 - **Related:** #133, #148, #246, ADR-0018 (`teehr auth login`), [phased plan](https://claude.ai/artifact/NDYWNmX5biKrBvPuZAdsNE), ADR-0002, ADR-0007, ADR-0008, ADR-0013, [`../teehr-core.md`](../teehr-core.md), teehr#871
@@ -89,5 +89,13 @@ functional seams stand; this changes the route.
 - teehr#871 (adopt teehr-core in `teehr`) is closed or rewritten to the freeze.
 - [`../teehr-core.md`](../teehr-core.md) step 7 is amended: VeriRace and the control plane adopt
   teehr-core; `teehr` does not.
-- Open: the fetch package's name and first sources (USGS, NWM operational points); whether a
-  Spark backend is needed at all; which legacy derived fields get ported.
+- **Amended 2026-11-23 (ADR-0019, #271):** deployment ingests don't submit through the API:
+  they write `public` directly with teehr-core's writer (`teehr_core.warehouse`), as the v1
+  flows' service account (ADR-0020), so bulk ingests aren't held to the API's request size.
+  Fetching lives in **teehr-core** (`teehr_core.fetch`, the `teehr-core[fetch]` extra), next to
+  the data model its rows follow and the writer, so a producer needs no client SDK and other
+  deployments (teehr-fved, VeriRace) get it with teehr-core; `teehr[fetch]` pulls it in for
+  users. Sources only produce rows (v1 timeseries as Arrow); writing them is one teehr-core
+  call that works from a Prefect flow or a person's notebook, against any project they may
+  write. First source: USGS observations.
+- Open: whether a Spark backend is needed at all; which legacy derived fields get ported.
