@@ -34,7 +34,7 @@ XPUBLISH_API_URL = os.getenv("XPUBLISH_API_URL", "http://xpublish-api:8000").rst
 USE_STS = os.getenv("ICECHUNK_USE_STS", "false").strip().lower() == "true"
 # Renew a minute early, so a read never starts with credentials about to expire
 EXPIRY_MARGIN = timedelta(seconds=60)
-# Names the ingest flows write into repos; see docs/gridded-repo-contract.md
+# Names the ingest flows write into repos; see teehr-icechunk's spec/gridded-repo-contract.md
 DATA_GROUP_ATTR = "data_group"
 DEFAULT_DATA_GROUP = "/data"
 APPEND_DIM_ATTR = "append_dim"
