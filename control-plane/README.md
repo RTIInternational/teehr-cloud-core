@@ -89,7 +89,7 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
 - **Timeseries** (`type: timeseries`, `docs/design/warehouse-data-model.md`):
   register `role`, `variable`, `statistic`, `period` (default `instant` for
   `inst`), `optional_columns` (`reference_time`, on for forecasts; `member`;
-  `quantile`; `quality`), `extra_columns` and `time_partition` (`month`, `year`,
+  `quantile`; `approval_status`; `qualifier`), `extra_columns` and `time_partition` (`month`, `year`,
   `none`). The API builds the columns, key, partitioning (on `reference_time` for
   forecasts, else `value_time`), sort order and Iceberg properties, and checks
   the metadata against the domains. Values are stored in the variable's canonical
@@ -148,7 +148,7 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   keys not yet in the series table are added first (with the dataset's default
   layer; existing series rows are left alone). A timeseries write sends every
   column of the dataset (null where there's no value): a row is a whole record, so
-  a revised record replaces the old one, quality code included, and leaving a
+  a revised record replaces the old one, approval status and qualifiers included, and leaving a
   column out is refused rather than wiping it. A series-table upsert changes only
   the columns sent; the rest keep their values.
 - **Reads**: `GET .../datasets/{dataset}/data`, as the caller, a page at a time:
@@ -292,12 +292,12 @@ enabled only in the local environment.
 **Seeded data.** Every local deploy seeds (`control-plane-local-seed`, `seed/seed.py`;
 safe to run again):
 
-- `public`: `usgs_gauges` (layer), `usgs_streamflow` (observed), `nwm31_short_range`
+- `public`: `usgs_gages` (layer), `usgs_streamflow` (observed), `nwm31_short_range`
   and `nwm31_medium_range_mem1` (forecasts, one series table), `usgs_nwm31`
-  (crosswalk). Three USGS gauges and their NWM 3.1 reaches, a few days in October
+  (crosswalk). Three USGS gages and their NWM 3.1 reaches, a few days in October
   2026 (teehr-core's hydro test fixture).
 - `demo`: `user` is a writer; evaluations `nwm31_vs_usgs` (by gauge; keeps pairs),
-  `nwm31_by_lead_time` (6-hour lead bins), `nwm31_by_state` (the gauges' state, a
+  `nwm31_by_lead_time` (6-hour lead bins), `nwm31_by_state` (the gages' state, a
   location attribute) and `nwm31_skill_vs_persistence` (RMSE skill
   against persistence, with a Diebold-Mariano test), each run once: results in
   `results_<slug>_v<n>`.

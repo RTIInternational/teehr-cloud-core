@@ -353,21 +353,21 @@ def public(client, tables, db_url):  # noqa: F811
     with Session(make_engine(db_url)) as session:
         ensure_system_projects(session)
     client.post("/v1/projects/public/provision", headers=ROOT)
-    resp = create(client, {"type": "layer", "name": "usgs_gauges"}, "public", ROOT)
+    resp = create(client, {"type": "layer", "name": "usgs_gages"}, "public", ROOT)
     assert resp.status_code == 201, resp.text
     return tables
 
 
 def test_public_layers_are_referred_to_as_public_name(client, public):
-    body = timeseries(client, "obs", location_layer="public.usgs_gauges")
-    assert body["timeseries"]["location_layer"] == "public.usgs_gauges"
+    body = timeseries(client, "obs", location_layer="public.usgs_gages")
+    assert body["timeseries"]["location_layer"] == "public.usgs_gages"
     # A bare name means this project's own, which doesn't have one.
     resp = create(client, {"type": "timeseries", "name": "obs2", "role": "observed",
                            "variable": "streamflow", "statistic": "inst",
-                           "location_layer": "usgs_gauges"})  # fmt: skip
+                           "location_layer": "usgs_gages"})  # fmt: skip
     assert resp.status_code == 422
     # Public's layer can't be deleted while a project uses it.
-    resp = client.delete("/v1/projects/public/datasets/usgs_gauges", headers=ROOT)
+    resp = client.delete("/v1/projects/public/datasets/usgs_gages", headers=ROOT)
     assert resp.status_code == 409 and "flood.obs" in resp.text
 
 

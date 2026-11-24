@@ -76,7 +76,7 @@ def test_ensemble_quantile_forecast(client, tables):
         client,
         "nwm_medium_range",
         role="forecast",
-        optional_columns=["member", "quantile", "quality"],
+        optional_columns=["member", "quantile", "qualifier"],
         extra_columns=[{"name": "lead_hours", "type": "int32"}],
         time_partition="year",
     )
@@ -89,7 +89,7 @@ def test_ensemble_quantile_forecast(client, tables):
         "member",
         "quantile",
         "value",
-        "quality",
+        "qualifier",
         "lead_hours",
     ]
     assert body["key_columns"] == [
@@ -379,12 +379,12 @@ def register_layer(client, name):
 
 
 def test_new_series_keys_are_added_to_the_series_table(client, tables):
-    register_layer(client, "usgs_gauges")
-    register(client, location_layer="usgs_gauges")
+    register_layer(client, "usgs_gages")
+    register(client, location_layer="usgs_gages")
     resp = write(client, ROWS)
     assert resp.json()["series_added"] == 1
     series = tables.rows[("flood", "usgs_obs_series")]
-    assert series["usgs-01"]["location_layer"] == "usgs_gauges"
+    assert series["usgs-01"]["location_layer"] == "usgs_gages"
     assert series["usgs-01"]["location_key"] is None
     # Known keys aren't added (or touched) again; new ones are.
     more = [{**ROWS[0], "series_key": "usgs-02"}, ROWS[1]]
@@ -421,20 +421,20 @@ def test_series_table_writes_dont_add_series(client, tables):
 
 
 def test_timeseries_writes_must_send_every_column(client, tables):
-    register(client, optional_columns=["quality"])
-    resp = write(client, ROWS)  # no quality column
+    register(client, optional_columns=["qualifier"])
+    resp = write(client, ROWS)  # no qualifier column
     assert resp.status_code == 422
-    assert "missing: quality" in resp.json()["detail"]
-    rows = [{**ROWS[0], "quality": "P"}, {**ROWS[1], "quality": None}]
+    assert "missing: qualifier" in resp.json()["detail"]
+    rows = [{**ROWS[0], "qualifier": "P"}, {**ROWS[1], "qualifier": None}]
     assert write(client, rows).status_code == 201
 
 
 def test_a_revised_quality_code_replaces_the_old_one(client, tables):
-    register(client, optional_columns=["quality"])
-    write(client, [{**ROWS[0], "quality": "P"}])
-    assert write(client, [{**ROWS[0], "quality": "A"}]).status_code == 201
+    register(client, optional_columns=["qualifier"])
+    write(client, [{**ROWS[0], "qualifier": "P"}])
+    assert write(client, [{**ROWS[0], "qualifier": "A"}]).status_code == 201
     mode, _, data = tables.writes[-1]
-    assert mode == "upsert" and data.column("quality").to_pylist() == ["A"]
+    assert mode == "upsert" and data.column("qualifier").to_pylist() == ["A"]
 
 
 def test_series_writes_keep_columns_left_out(client, tables):

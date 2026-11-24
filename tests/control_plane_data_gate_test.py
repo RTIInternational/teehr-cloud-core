@@ -128,7 +128,7 @@ def register_gate(p):
         "user",
         "POST",
         f"/projects/{p}/datasets",
-        json={"type": "layer", "name": "usgs_gauges"},
+        json={"type": "layer", "name": "usgs_gages"},
     )
     check("a member registers a layer", r.status_code == 201, r.text[:120])
     r = api(
@@ -141,7 +141,7 @@ def register_gate(p):
             "role": "observed",
             "variable": "streamflow",
             "statistic": "inst",
-            "location_layer": "usgs_gauges",
+            "location_layer": "usgs_gages",
             "series_attributes": [{"name": "basin", "type": "string"}],
         },
     )
@@ -247,12 +247,12 @@ def write_read_gate(p):
     )
     check(
         "an attribute write keeps the columns it left out",
-        series.get("usgs-01", {}).get("location_layer") == "usgs_gauges",
+        series.get("usgs-01", {}).get("location_layer") == "usgs_gages",
         series.get("usgs-01"),
     )
     check(
         "new series get the dataset's layer",
-        series.get("usgs-02", {}).get("location_layer") == "usgs_gauges",
+        series.get("usgs-02", {}).get("location_layer") == "usgs_gages",
     )
 
     paged, cursor, snapshots = [], None, set()
@@ -335,7 +335,7 @@ def cleanup(p):
     print("\n🧹 Cleanup")
     r = api("user", "DELETE", f"/projects/{p}/datasets/obs")
     check("the owner deletes the dataset", r.status_code == 204, str(r.status_code))
-    r = api("user", "DELETE", f"/projects/{p}/datasets/usgs_gauges")
+    r = api("user", "DELETE", f"/projects/{p}/datasets/usgs_gages")
     check("then the layer it used", r.status_code == 204, str(r.status_code))
     left = api("user", "GET", f"/projects/{p}/datasets").json()
     check("its series table went with it", left == [], [d["name"] for d in left])

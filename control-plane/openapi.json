@@ -889,6 +889,17 @@
         "additionalProperties": false,
         "description": "Changes to the mapping inspect proposed (a field left out keeps it).",
         "properties": {
+          "approval_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Status"
+          },
           "attributes": {
             "anyOf": [
               {
@@ -1017,7 +1028,7 @@
             "description": "Layer: column with names",
             "title": "Name"
           },
-          "quality": {
+          "qualifier": {
             "anyOf": [
               {
                 "type": "string"
@@ -1026,7 +1037,7 @@
                 "type": "null"
               }
             ],
-            "title": "Quality"
+            "title": "Qualifier"
           },
           "quantile": {
             "anyOf": [
@@ -2332,7 +2343,8 @@
                 "reference_time",
                 "member",
                 "quantile",
-                "quality"
+                "approval_status",
+                "qualifier"
               ],
               "type": "string"
             },
@@ -2469,7 +2481,8 @@
                 "reference_time",
                 "member",
                 "quantile",
-                "quality"
+                "approval_status",
+                "qualifier"
               ],
               "type": "string"
             },

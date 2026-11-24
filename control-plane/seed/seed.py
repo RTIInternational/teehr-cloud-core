@@ -3,10 +3,10 @@
 Through the API, as the local ``admin`` user (password = username, as every local
 user), so seeding exercises the same paths a client uses:
 
-- ``public``: a ``usgs_gauges`` layer, ``usgs_streamflow`` observations,
+- ``public``: a ``usgs_gages`` layer, ``usgs_streamflow`` observations,
   ``nwm31_short_range`` and ``nwm31_medium_range_mem1`` forecasts (one series
   table) and a ``usgs_nwm31`` crosswalk. The data is teehr-core's hydro test fixture:
-  three USGS gauges and their NWM 3.1 reaches, a few days in October 2026.
+  three USGS gages and their NWM 3.1 reaches, a few days in October 2026.
 - ``demo``: a project with ``user`` as a writer and two saved evaluations of the
   public datasets, each run once so results are there to look at.
 
@@ -132,29 +132,29 @@ def seed_public(api: Api) -> None:
     series = pq.read_table(HERE / "usgs_streamflow__series.parquet")
 
     ensure_dataset(api, "public", {
-        "type": "layer", "name": "usgs_gauges", "source": SOURCE,
-        "description": "USGS stream gauges",
+        "type": "layer", "name": "usgs_gages", "source": SOURCE,
+        "description": "USGS stream gages",
         "attributes": [{"name": "state_code", "type": "string"},
                        {"name": "drainage_area_mi2", "type": "float64"}],
     })  # fmt: skip
-    gauges = [
+    gages = [
         {"location_key": r["location_key"], "name": r["name"],
          "geometry": {"type": "Point", "coordinates": [r["longitude"], r["latitude"]]},
          "state_code": r["state_code"], "drainage_area_mi2": r["drainage_area_mi2"]}
         for r in series.to_pylist()
     ]  # fmt: skip
-    if api.empty("public", "usgs_gauges"):
-        api.write_json("public", "usgs_gauges", gauges)
+    if api.empty("public", "usgs_gages"):
+        api.write_json("public", "usgs_gages", gages)
 
     ensure_dataset(api, "public", {
         "type": "timeseries", "name": "usgs_streamflow", "role": "observed",
-        "variable": "streamflow", "statistic": "inst", "optional_columns": ["quality"],
-        "location_layer": "usgs_gauges", "source": SOURCE,
+        "variable": "streamflow", "statistic": "inst", "optional_columns": ["approval_status"],
+        "location_layer": "usgs_gages", "source": SOURCE,
         "description": "USGS instantaneous streamflow",
     })  # fmt: skip
     obs = pq.read_table(HERE / "usgs_streamflow.parquet")
     written = api.write_arrow("public", "usgs_streamflow",
-                              obs.select(["series_key", "value_time", "value", "quality"]),
+                              obs.select(["series_key", "value_time", "value", "approval_status"]),
                               unit="[cft_i]/s")  # fmt: skip
     if written:  # its series' locations, once the writes have added the series
         api.write_json("public", "usgs_streamflow_series", [
@@ -186,7 +186,7 @@ def seed_public(api: Api) -> None:
     ensure_dataset(api, "public", {
         "type": "crosswalk", "name": "usgs_nwm31", "left": "usgs_streamflow",
         "right": "nwm31_short_range", "source": "USGS NLDI",
-        "description": "USGS gauges to their NWM 3.1 reaches",
+        "description": "USGS gages to their NWM 3.1 reaches",
     })  # fmt: skip
     links = pq.read_table(HERE / "usgs_nwm31_crosswalk.parquet")
     api.write_arrow("public", "usgs_nwm31", links.select(["left_key", "right_key"]))

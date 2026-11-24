@@ -142,7 +142,7 @@ def test_ingest_starts_a_job_acting_as_the_caller(client, staging, jobs):
     body = resp.json()
     assert body["status"] == "queued"
     assert body["dataset"]["name"] == "obs" and body["dataset"]["existing"] is False
-    assert body["dataset"]["optional_columns"] == ["quality"]
+    assert body["dataset"]["optional_columns"] == ["qualifier"]
     assert body["mapping"]["series_key"] == "site_no"
     # The caller's own token was exchanged.
     assert delegation.exchanged == [ALICE_NOW["Authorization"].removeprefix("Bearer ")]
@@ -225,9 +225,9 @@ def test_loading_into_an_existing_dataset_must_fit_it(client, staging, jobs):
     )  # fmt: skip
     upload_id = inspected(client, staging)
     resp = ingest(client, upload_id, {"name": "obs", "unit": "[cft_i]/s"})
-    assert resp.status_code == 422  # the file has qualifiers; obs has no quality
+    assert resp.status_code == 422  # the file has qualifiers; obs has no qualifier
     resp = ingest(client, upload_id, {"name": "obs", "unit": "[cft_i]/s"},
-                  {"quality": None})  # fmt: skip
+                  {"qualifier": None})  # fmt: skip
     assert resp.status_code == 202, resp.text
     assert resp.json()["dataset"]["existing"] is True
 
@@ -474,7 +474,7 @@ def test_load_registers_and_writes_as_the_caller(client, staging, jobs, tables):
     assert result == {"dataset": "obs", "created": True, "rows": 3, "series_added": 2,
                       "snapshot_id": result["snapshot_id"]}  # fmt: skip
     dataset = client.get("/v1/projects/flood/datasets/obs", headers=ALICE).json()
-    assert dataset["timeseries"]["optional_columns"] == ["quality"]
+    assert dataset["timeseries"]["optional_columns"] == ["qualifier"]
     # Written in the job (ADR-0016): cfs converted to m3/s, keys kept as text.
     mode, _, data = tables.writes[-1]
     assert mode == "upsert"
