@@ -43,6 +43,7 @@ superseded one is marked `Superseded by ADR-NNNN` rather than edited away.
 | [0018](0018-credentials.md) | Credentials: delegated sessions in the control plane; personal tokens and a CLI login | Accepted |
 | [0019](0019-derived-datasets-and-v1-flows.md) | Platform producers write the warehouse directly with a shared writer; runs find changes in Iceberg metadata | Accepted |
 | [0020](0020-service-accounts-as-members.md) | Project membership is the one source of access; service accounts are members | Accepted (2026-11-23) |
+| [0021](0021-gridded-data-products.md) | Gridded data products live in teehr-icechunk, outside the evaluation system | Proposed (2026-11-22) |
 
 ## Phase 0 exit checklist
 
