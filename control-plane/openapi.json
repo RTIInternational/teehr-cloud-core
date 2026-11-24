@@ -1334,6 +1334,55 @@
         "title": "LogsOut",
         "type": "object"
       },
+      "MeOut": {
+        "properties": {
+          "platform": {
+            "$ref": "#/components/schemas/PlatformOut"
+          },
+          "projects": {
+            "description": "Projects the caller is a member of, with their role",
+            "items": {
+              "$ref": "#/components/schemas/MembershipOut"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsedOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the request used a personal token"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "subject",
+          "username",
+          "platform",
+          "projects"
+        ],
+        "title": "MeOut",
+        "type": "object"
+      },
       "MemberAdd": {
         "additionalProperties": false,
         "properties": {
@@ -1420,6 +1469,23 @@
           "role"
         ],
         "title": "MemberPut",
+        "type": "object"
+      },
+      "MembershipOut": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "project",
+          "role"
+        ],
+        "title": "MembershipOut",
         "type": "object"
       },
       "MetricOut": {
@@ -1886,6 +1952,31 @@
           "columns"
         ],
         "title": "PlannedStageOut",
+        "type": "object"
+      },
+      "PlatformOut": {
+        "properties": {
+          "admin": {
+            "description": "A platform admin: every project, every role",
+            "title": "Admin",
+            "type": "boolean"
+          },
+          "can_create_projects": {
+            "title": "Can Create Projects",
+            "type": "boolean"
+          },
+          "viewer": {
+            "description": "A platform viewer: reads every project",
+            "title": "Viewer",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "admin",
+          "viewer",
+          "can_create_projects"
+        ],
+        "title": "PlatformOut",
         "type": "object"
       },
       "Poll": {
@@ -2829,6 +2920,54 @@
           "name"
         ],
         "title": "TokenRequest",
+        "type": "object"
+      },
+      "TokenUsedOut": {
+        "description": "The personal token this request used (its limits apply on top of roles).",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projects": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The only projects it may act on (null: any)",
+            "title": "Projects"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "scopes",
+          "expires_at"
+        ],
+        "title": "TokenUsedOut",
         "type": "object"
       },
       "UnitCreate": {
@@ -4105,6 +4244,63 @@
         "summary": "Add Variable",
         "tags": [
           "domains"
+        ]
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "description": "The caller: their platform roles, project memberships and, when they signed\nin with a personal token, that token's limits.",
+        "operationId": "get_me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Missing or invalid access token"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorOut"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Provisioning or user lookup isn't configured, or Keycloak is down"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Me",
+        "tags": [
+          "me"
         ]
       }
     },
