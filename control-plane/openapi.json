@@ -5314,7 +5314,7 @@
             }
           },
           {
-            "description": "Rows to return, in the shared expression language (a SQL subset: comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, CASE, and allow-listed functions such as hour(), date_trunc(), ln(), coalesce()), e.g. series_key = 'usgs-01' AND hour(value_time) = 0. Numbers are in the column's stored unit.",
+            "description": "Rows to return, in the shared expression language (a SQL subset: comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, CASE, and allow-listed functions such as hour(), date_trunc(), ln(), coalesce()), e.g. series_key = 'usgs-01' AND hour(value_time) = 0. Numbers are in `unit` when it's given, else in the column's stored unit.",
             "in": "query",
             "name": "filter",
             "required": false,
@@ -5328,7 +5328,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Rows to return, in the shared expression language (a SQL subset: comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, CASE, and allow-listed functions such as hour(), date_trunc(), ln(), coalesce()), e.g. series_key = 'usgs-01' AND hour(value_time) = 0. Numbers are in the column's stored unit.",
+              "description": "Rows to return, in the shared expression language (a SQL subset: comparisons, AND/OR/NOT, IN, BETWEEN, IS NULL, LIKE, arithmetic, CASE, and allow-listed functions such as hour(), date_trunc(), ln(), coalesce()), e.g. series_key = 'usgs-01' AND hour(value_time) = 0. Numbers are in `unit` when it's given, else in the column's stored unit.",
               "title": "Filter"
             }
           },
@@ -5397,6 +5397,24 @@
               ],
               "description": "Layers: minx,miny,maxx,maxy (longitude/latitude); the locations whose bounds overlap it",
               "title": "Bbox"
+            }
+          },
+          {
+            "description": "Timeseries: return `value` in this unit (UCUM, e.g. [cft_i]/s), converted from the dataset's; the filter's numbers are in it too. The response's unit is in X-Unit (and `unit` in a JSON body).",
+            "in": "query",
+            "name": "unit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Timeseries: return `value` in this unit (UCUM, e.g. [cft_i]/s), converted from the dataset's; the filter's numbers are in it too. The response's unit is in X-Unit (and `unit` in a JSON body).",
+              "title": "Unit"
             }
           }
         ],
@@ -7709,6 +7727,24 @@
               "description": "With output.geometry: give each row its place (and output.attributes); false leaves them out",
               "title": "Geometry",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Return the results in this unit (UCUM) instead of the evaluation unit: each metric converts by its kind (errors by scale alone, squares by its square, ratios not across an offset); the filter's numbers are in it too. 422 unit_not_convertible names the columns that can't be. The response's unit is in X-Unit.",
+            "in": "query",
+            "name": "unit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return the results in this unit (UCUM) instead of the evaluation unit: each metric converts by its kind (errors by scale alone, squares by its square, ratios not across an offset); the filter's numbers are in it too. 422 unit_not_convertible names the columns that can't be. The response's unit is in X-Unit.",
+              "title": "Unit"
             }
           }
         ],
