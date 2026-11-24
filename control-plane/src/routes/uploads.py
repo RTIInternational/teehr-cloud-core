@@ -304,8 +304,8 @@ def _sync(session: Session, kube: Kube | None, upload: Upload) -> None:
 
 
 TARGETS = ("series_key", "value_time", "value", "reference_time", "member",
-           "quantile", "quality", "location_key")  # fmt: skip
-OPTIONAL = ("reference_time", "member", "quantile", "quality")
+           "quantile", "approval_status", "qualifier", "location_key")  # fmt: skip
+OPTIONAL = ("reference_time", "member", "quantile", "approval_status", "qualifier")
 
 
 # Which ingest fields each kind of upload takes.

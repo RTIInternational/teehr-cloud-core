@@ -95,7 +95,7 @@ One rule for every place a dataset names another (a series' `location_layer`, a 
 a spec's inputs):
 
 - `<name>`: a dataset in the current project.
-- `public.<name>`: a dataset in `public` (e.g. `public.usgs_gauges`), so every project can use the
+- `public.<name>`: a dataset in `public` (e.g. `public.usgs_gages`), so every project can use the
   shared ones without copying.
 - `<project>.<name>` for any other project the caller can read may come later; the dotted form
   leaves room for it. Not in this phase.

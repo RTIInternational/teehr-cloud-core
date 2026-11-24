@@ -890,7 +890,7 @@ def write_dataset(
             data = prepare_layer(data)
         if record.kind == TIMESERIES:
             # A timeseries row is a whole record from its source: leaving a column
-            # out would null it (e.g. wipe a quality code), so it's refused.
+            # out would null it (e.g. wipe a qualifier code), so it's refused.
             absent = [c["name"] for c in columns if c["name"] not in provided]
             if absent:
                 raise DataMismatch(

@@ -55,7 +55,7 @@ Code enums, not tables: `role` (`observed` \| `simulated` \| `forecast`), `stati
 
 There is **no `configuration` domain**: a dataset's name identifies its source/configuration
 (`usgs_observations`, `nwm30_retrospective`), and `role` says what kind it is. There is **no
-`quality` domain** in v1 (see below).
+qualifier domain** in v1 (see below).
 
 ## `timeseries`
 
@@ -70,7 +70,7 @@ There is **no `configuration` domain**: a dataset's name identifies its source/c
 | `unit` | the variable's canonical unit (uploads in another unit of the same dimension are converted) |
 | `statistic` | `inst` \| `mean` \| `sum` \| `min` \| `max` |
 | `period` | a registered period. Default `instant` for `inst`; required otherwise; `instant` only with `inst` (ADR-0012 rule 4) |
-| optional columns | which of `reference_time` (always on for `forecast`), `member`, `quantile`, `quality` are present; `period_start`/`period_end` are on exactly when the period's form is `absolute` |
+| optional columns | which of `reference_time` (always on for `forecast`), `member`, `quantile`, `approval_status`, `qualifier` are present; `period_start`/`period_end` are on exactly when the period's form is `absolute` |
 | extra columns | named and typed at registration |
 | `series_table` | default: the dataset's own; may name an existing one shared by a family (e.g. NWM forecast ranges) |
 | `location_layer` | optional default layer for the dataset's series |
@@ -90,7 +90,8 @@ claims different values is refused.
 | `reference_time` | timestamptz, not null | forecasts (issue time) |
 | `member` | string, not null | ensembles |
 | `quantile` | decimal(5,4), not null | quantile forecasts; 4 decimal places in both systems |
-| `quality` | string | optional: the source's own code(s), several joined with commas |
+| `approval_status` | string | optional: the source's review state of a value, in its words (e.g. USGS `Provisional`, `Approved`); null where none |
+| `qualifier` | string | optional: the source's own code(s), several joined with commas; null where none |
 | `period_start`, `period_end` | timestamptz, not null | only for `absolute` periods |
 | extra columns | as declared | as declared |
 
@@ -174,5 +175,5 @@ Specs mean the same on both because every unit-bearing spec parameter carries it
 ## Deferred
 
 - Partition/sort tuning (storage spike, real query shapes).
-- A quality domain (per-source codes, multiple qualifiers per value).
+- A qualifier domain (per-source codes, multiple qualifiers per value).
 - Multiple `layer` geometries per location, and gridded data.

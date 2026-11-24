@@ -208,7 +208,9 @@ class DatasetCreate(StrictInput):
 
 TimeseriesRole = Literal["observed", "simulated", "forecast"]
 Statistic = Literal["inst", "mean", "sum", "min", "max"]
-OptionalColumn = Literal["reference_time", "member", "quantile", "quality"]
+OptionalColumn = Literal[
+    "reference_time", "member", "quantile", "approval_status", "qualifier"
+]
 TimePartition = Literal["month", "year", "none"]
 
 # Columns every timeseries has or may have; extra columns can't reuse them.
@@ -220,7 +222,8 @@ TIMESERIES_COLUMNS = frozenset(
         "reference_time",
         "member",
         "quantile",
-        "quality",
+        "approval_status",
+        "qualifier",
         "period_start",
         "period_end",
     }
@@ -771,7 +774,8 @@ class IngestMapping(StrictInput):
     reference_time: str | None = None
     member: str | None = None
     quantile: str | None = None
-    quality: str | None = None
+    approval_status: str | None = None
+    qualifier: str | None = None
     location_key: str | None = Field(
         default=None,
         description=(

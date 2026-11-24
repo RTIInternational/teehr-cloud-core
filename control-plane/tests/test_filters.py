@@ -20,7 +20,7 @@ SERIES = [
     {"name": "series_key", "type": "string", "required": True},
     {"name": "value_time", "type": "timestamptz", "required": True},
     {"name": "value", "type": "float64"},
-    {"name": "quality", "type": "string"},
+    {"name": "qualifier", "type": "string"},
 ]
 
 
@@ -30,7 +30,7 @@ SERIES = [
         ("series_key = 'a'", True, False),
         ("value_time >= '2026-01-01T00:00:00Z'", True, False),  # Z binds as +00:00
         ("series_key IN ('a', 'b') AND value BETWEEN 1 AND 2", True, False),
-        ("quality IS NOT NULL OR value > 3", True, False),
+        ("qualifier IS NOT NULL OR value > 3", True, False),
         ("hour(value_time) = 0", False, True),
         ("series_key = 'a' AND value * 2 > 3", True, True),
         ("series_key = 'a' OR hour(value_time) = 0", False, True),
@@ -68,7 +68,7 @@ def table():
             "series_key": ["a", "b", "a"],
             "value_time": pa.array(times, pa.timestamp("us", tz="UTC")),
             "value": [1.0, 2.0, None],
-            "quality": ["P", None, "A"],
+            "qualifier": ["P", None, "A"],
         }
     )
 
@@ -81,8 +81,8 @@ def table():
         ("coalesce(value, 0) = 0", ["a"]),
         ("CASE WHEN value > 1 THEN 1 ELSE 0 END = 1", ["b"]),
         ("ln(value) >= 0 AND log10(value) < 1", ["a", "b"]),
-        ("lower(quality) LIKE 'p%'", ["a"]),
-        ("series_key || coalesce(quality, '') = 'aA'", ["a"]),
+        ("lower(qualifier) LIKE 'p%'", ["a"]),
+        ("series_key || coalesce(qualifier, '') = 'aA'", ["a"]),
         ("extract(hour FROM value_time) = 2", ["a"]),
         ("date_trunc('hour', value_time) = '2026-01-01T01:00:00Z'", ["b"]),
         (
@@ -90,7 +90,7 @@ def table():
             "AND minute(value_time) = 0",
             ["b", "a"],
         ),  # fmt: skip
-        ("abs(value - 2) < 0.5 OR quality = 'A'", ["b", "a"]),
+        ("abs(value - 2) < 0.5 OR qualifier = 'A'", ["b", "a"]),
         ("CAST(value > 1 AS BOOLEAN)", ["b"]),
         ("value_time + INTERVAL '1' HOUR = '2026-01-01T02:00:00Z'", ["b"]),
         ("value_time - INTERVAL '90' MINUTE >= '2026-01-01T00:00:00Z'", ["a"]),

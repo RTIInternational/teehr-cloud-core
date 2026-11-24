@@ -45,7 +45,8 @@ CANDIDATES: dict[str, tuple[str, ...]] = {
     ),
     "member": ("member", "ensemble_member", "ens_member", "trace"),
     "quantile": ("quantile", "probability", "percentile"),
-    "quality": ("quality", "qualifier", "qualifiers", "qc", "flag", "flags"),
+    "approval_status": ("approval_status", "approval", "approval_code"),
+    "qualifier": ("qualifier", "qualifiers", "quality", "qc", "flag", "flags"),
 }  # fmt: skip
 MAPPED = tuple(CANDIDATES)
 _LEADING_ZERO = re.compile(r"^\s*[+-]?0\d")
@@ -503,7 +504,7 @@ def _wide_columns(head: pa.Table, mapping: dict) -> list[str] | None:
     if mapping["series_key"] is not None or mapping["value_time"] is None:
         return None
     used = {mapping[t] for t in ("value_time", "reference_time", "member",
-                                 "quantile", "quality")} - {None}  # fmt: skip
+                                 "quantile", "approval_status", "qualifier")} - {None}  # fmt: skip
     numeric = [
         n for n in head.column_names
         if n not in used and looks_like(head[n]) in ("integer", "number")

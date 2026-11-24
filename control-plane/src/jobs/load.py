@@ -40,7 +40,7 @@ __all__ = ["GrantClient", "LoadFailed", "load_upload"]
 
 log = logging.getLogger("src.jobs")
 
-STRING_TARGETS = ("series_key", "member", "quality")
+STRING_TARGETS = ("series_key", "member", "approval_status", "qualifier")
 
 
 def read_file(path: str, fmt: str, layer: str | None = None) -> pa.Table:
@@ -87,7 +87,7 @@ def unpivot(data: pa.Table, mapping: dict) -> pa.Table:
     else:
         target = pa.float64()
     shared = [t for t in ("reference_time", "value_time", "member", "quantile",
-                          "quality") if mapping.get(t)]  # fmt: skip
+                          "approval_status", "qualifier") if mapping.get(t)]  # fmt: skip
     parts = []
     for name, column in zip(series, columns, strict=True):
         part = {"series_key": pa.array([name] * data.num_rows, pa.string())}
@@ -96,7 +96,7 @@ def unpivot(data: pa.Table, mapping: dict) -> pa.Table:
         part["value"] = column.cast(target)
         parts.append(pa.table(part))
     long = pa.concat_tables(parts)
-    for name in ("member", "quality"):
+    for name in ("member", "approval_status", "qualifier"):
         if name in long.column_names and not pa.types.is_string(long[name].type):
             long = long.set_column(
                 long.column_names.index(name), name, long[name].cast(pa.string())
@@ -113,7 +113,7 @@ def apply_mapping(data: pa.Table, mapping: dict) -> pa.Table:
             [mapping["series_key_value"]] * data.num_rows, pa.string()
         )
     for target in ("series_key", "reference_time", "value_time", "member",
-                   "quantile", "value", "quality"):  # fmt: skip
+                   "quantile", "value", "approval_status", "qualifier"):  # fmt: skip
         source = mapping.get(target)
         if not source or target in columns:
             continue
