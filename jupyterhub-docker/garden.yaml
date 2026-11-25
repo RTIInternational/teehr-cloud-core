@@ -2,6 +2,9 @@ kind: Build
 type: container
 name: teehr-jupyter-driver-image-edge
 description: Build TEEHR Jupyter Driver Image
+# A full build takes ~9-10 min plus the push, past Garden's 600 s default when the builder's cache is
+# empty (e.g. after garden-buildkit is redeployed)
+timeout: 1800
 spec:
   dockerfile: Dockerfile.jupyter-driver
   localId: jupyter-driver
@@ -16,6 +19,7 @@ kind: Build
 type: container
 name: teehr-jupyter-driver-image-stable
 description: Build TEEHR Jupyter Driver Image
+timeout: 1800
 spec:
   dockerfile: Dockerfile.jupyter-driver
   localId: jupyter-driver
@@ -31,6 +35,7 @@ kind: Build
 type: container
 name: teehr-jupyter-driver-image-previous
 description: Build TEEHR Jupyter Driver Image
+timeout: 1800
 spec:
   dockerfile: Dockerfile.jupyter-driver
   localId: jupyter-driver
