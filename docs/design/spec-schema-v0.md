@@ -12,7 +12,7 @@ This file keeps only what is TEEHR's own.
 - **Dataset references across projects:** a reference may carry a system-project prefix,
   `public.` (open input data) or `platform.` (platform-owned evaluations). No prefix means the
   project's own namespace. One spec may mix them (your forecast against
-  `public.usgs_streamflow`). Applies to `dataset`, `relation` and `reference`.
+  `public.usgs_inst_streamflow`). Applies to `dataset`, `relation` and `reference`.
 - **Validation** runs against the control-plane registries (datasets, units, periods, variables;
   `warehouse-data-model.md`) and the metric kernel registry (ADR-0002).
 - **Evaluation outputs** are written to `{pairs|results|groups|state}_{slug}_v{version}` tables
