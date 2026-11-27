@@ -117,6 +117,12 @@ class FakeTables:
         self.merged = (key_columns, provided, data)
         return self.write(token, namespace, name, data, "upsert")
 
+    def add_columns(self, token, namespace, name, columns):
+        self.calls.append(("add_columns", token, namespace, name))
+        if self.fail_with:
+            raise self.fail_with
+        self.tables[(namespace, name)] = [*self.tables[(namespace, name)], *columns]
+
     def drop_table(self, token, namespace, name):
         self.calls.append(("drop", token, namespace, name))
         if self.fail_with:

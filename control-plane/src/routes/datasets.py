@@ -106,6 +106,7 @@ from src.routes.projects import (
 )
 from src.schemas import (
     PROJECT_NAME_PATTERN,
+    ColumnsAdd,
     CrosswalkCreate,
     DataPageOut,
     DatasetCreate,
@@ -661,6 +662,73 @@ def update_dataset(
     record = _dataset(session, project, dataset)
     for field_name, value in body.model_dump(exclude_unset=True).items():
         setattr(record, field_name, value)
+    session.commit()
+    session.refresh(record)
+    return DatasetOut.model_validate(record)
+
+
+@router.post(
+    "/{dataset}/columns",
+    operation_id="add_dataset_columns",
+    responses=_errors(401, 403, 404, 409, 502, 503),
+)
+def add_dataset_columns(
+    name: ProjectName,
+    dataset: DatasetName,
+    body: ColumnsAdd,
+    session: SessionDep,
+    identity: IdentityDep,
+    settings: SettingsDep,
+    tables: TablesDep,
+) -> DatasetOut:
+    """Add attribute columns to a layer or series table, as the caller.
+
+    Optional columns only: the rows already there read null for them until written
+    (a series table's upsert keeps the columns a write leaves out, so they can be
+    filled a few rows at a time). Iceberg schema evolution (ADR-0006): no data is
+    rewritten.
+    """
+    project, my_role = _authorize_dataset_op(
+        session, name, identity, settings, Role.WRITE
+    )
+    tables = _require_tables(tables)
+    record = _dataset(session, project, dataset)
+    if record.kind not in (LAYER, SERIES):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Columns can be added to layers and series tables, "
+                f"not {record.kind} datasets"
+            ),
+        )
+    have = {c["name"].lower() for c in record.columns or []}
+    clash = [c.name for c in body.columns if c.name.lower() in have]
+    if clash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{record.name}' already has {', '.join(clash)}",
+        )
+    new = [c.model_dump() for c in body.columns]
+    try:
+        tables.add_columns(identity.token, project.name, record.name, new)
+    except TableForbidden as exc:
+        raise _forbidden(project, my_role, Role.WRITE) from exc
+    except TableMissing as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dataset '{record.name}' has no table in the catalog",
+        ) from exc
+    except WriteConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another change committed first; retry",
+        ) from exc
+    except TableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The catalog could not change the table",
+        ) from exc
+    record.columns = [*(record.columns or []), *new]
     session.commit()
     session.refresh(record)
     return DatasetOut.model_validate(record)

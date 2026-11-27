@@ -119,7 +119,14 @@ columns (`string`, `int32`, `int64`, `float32`, `float64`, `boolean`, `date`,
   The API never touches project data with its own identity.
 - `key_columns` (optional) name the columns that identify a row; they become the
   table's Iceberg identifier fields and are what upserts match on (load jobs).
-- Register needs the write role, delete needs admin, list/get need read.
+- **Adding columns**: `POST .../datasets/{dataset}/columns` with `{"columns": [...]}`
+  adds optional attribute columns to a layer or series table (Iceberg schema
+  evolution, ADR-0006: no data is rewritten). Rows already there read null until
+  written; a series table's upsert keeps the columns a write leaves out, so a new
+  column can be filled a few series at a time (e.g. `source_id`, pinning a USGS
+  time series).
+- Register and adding columns need the write role, delete needs admin, list/get
+  need read.
 - Untyped datasets (`type: table`, the default) are a test path, not part of the
   data model. Only platform admins may register them
   (`UNTYPED_DATASETS_FOR_MEMBERS=true` opens it to project members).

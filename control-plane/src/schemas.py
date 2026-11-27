@@ -163,6 +163,24 @@ def _unique_names(columns: list[DatasetColumn]) -> list[DatasetColumn]:
     return columns
 
 
+class ColumnsAdd(StrictInput):
+    """Attribute columns to add to a layer or series table. Optional only: the rows
+    already there have no value for them (null until written)."""
+
+    columns: list[DatasetColumn] = Field(min_length=1, max_length=100)
+
+    @field_validator("columns")
+    @classmethod
+    def _optional(cls, columns: list[DatasetColumn]):
+        for col in columns:
+            if col.required:
+                raise ValueError(
+                    f"'{col.name}' can't be required: the rows already there have "
+                    "no value for it"
+                )
+        return _unique_names(columns)
+
+
 class DatasetCreate(StrictInput):
     """An untyped dataset (`table`): any columns. A test path, not part of the
     data model; platform admins only unless configured otherwise."""

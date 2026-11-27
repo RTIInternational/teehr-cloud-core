@@ -170,6 +170,12 @@ class Tables(Protocol):
     ) -> set[str]:
         """Which of ``values`` are in the table's ``column``, as the caller."""
 
+    def add_columns(
+        self, token: Token, namespace: str, name: str, columns: list[dict]
+    ) -> None:
+        """Add optional columns to the table's schema, as the caller (Iceberg schema
+        evolution: no data is rewritten). Columns it already has are left alone."""
+
     def drop_table(self, token: Token, namespace: str, name: str) -> None:
         """Drop the table and its files, as the caller. A missing table is fine."""
 
@@ -473,6 +479,23 @@ class PolarisTables:
                 table.io.delete(path)
 
         return self._guard(run)
+
+    def add_columns(
+        self, token: Token, namespace: str, name: str, columns: list[dict]
+    ) -> None:
+        def run() -> None:
+            table = self._catalog(token).load_table((namespace, name))
+            have = {f.name for f in table.schema().fields}
+            new = [c for c in columns if c["name"] not in have]
+            if not new:  # a retry after the record's commit failed
+                return
+            with table.update_schema() as update:
+                for col in new:
+                    update.add_column(
+                        col["name"], COLUMN_TYPES[col["type"]], doc=col.get("doc")
+                    )
+
+        self._guard(run)
 
     def drop_table(self, token: Token, namespace: str, name: str) -> None:
         try:
