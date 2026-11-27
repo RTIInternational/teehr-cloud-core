@@ -292,7 +292,7 @@ enabled only in the local environment.
 **Seeded data.** Every local deploy seeds (`control-plane-local-seed`, `seed/seed.py`;
 safe to run again):
 
-- `public`: `usgs_gages` (layer), `usgs_streamflow` (observed), `nwm31_short_range`
+- `public`: `usgs_gages` (layer), `usgs_inst_streamflow` (observed), `nwm31_short_range`
   and `nwm31_medium_range_mem1` (forecasts, one series table), `usgs_nwm31`
   (crosswalk). Three USGS gages and their NWM 3.1 reaches, a few days in October
   2026 (teehr-core's hydro test fixture).

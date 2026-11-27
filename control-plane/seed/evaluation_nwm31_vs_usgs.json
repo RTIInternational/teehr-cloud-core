@@ -3,7 +3,7 @@
   "name": "nwm31-vs-usgs",
   "inputs": {
     "primary": {
-      "dataset": "public.usgs_streamflow"
+      "dataset": "public.usgs_inst_streamflow"
     },
     "secondary": [
       {

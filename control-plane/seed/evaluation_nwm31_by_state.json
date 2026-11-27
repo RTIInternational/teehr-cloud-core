@@ -2,7 +2,7 @@
   "version": 1,
   "name": "nwm31-by-state",
   "inputs": {
-    "primary": {"dataset": "public.usgs_streamflow"},
+    "primary": {"dataset": "public.usgs_inst_streamflow"},
     "secondary": [
       {"dataset": "public.nwm31_short_range"},
       {"dataset": "public.nwm31_medium_range_mem1"}

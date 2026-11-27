@@ -3,7 +3,7 @@
   "name": "nwm31-by-lead-time",
   "inputs": {
     "primary": {
-      "dataset": "public.usgs_streamflow"
+      "dataset": "public.usgs_inst_streamflow"
     },
     "secondary": [
       {
